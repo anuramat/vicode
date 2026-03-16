@@ -1,0 +1,149 @@
+use anyhow::Result;
+use tracing::debug;
+use tracing::error;
+use tracing::instrument;
+
+use crate::agent::Agent;
+use crate::agent::AgentId;
+use crate::agent::TaskId;
+use crate::agent::TaskResult;
+use crate::agent::replica;
+use crate::llm::history;
+use crate::llm::history::HistoryEvent;
+use crate::llm::message::AssistantItem;
+use crate::project::PROJECT;
+
+#[derive(Debug)]
+pub enum AgentEvent {
+    TaskDone(TaskId, TaskResult),
+    Submit(UserPrompt),
+    HistoryEvent(HistoryEvent),
+    /// backend error
+    ResponseFailed(String),
+    /// frontend error
+    TurnError(String),
+    /// delete agent, e.g. when deleting a tab
+    Delete,
+    DuplicateRequest(AgentId),
+}
+
+#[derive(Debug)]
+pub enum ParentEvent {
+    AttachAgent(AgentId),
+    InfoUpdate(AgentId),
+    HistoryUpdate(AgentId, HistoryEvent),
+    TurnComplete(AgentId),
+}
+
+#[derive(Debug)]
+pub struct UserPrompt {
+    pub text: Option<String>,
+    pub multiplier: usize,
+    pub loc: usize,
+}
+
+impl Agent {
+    #[instrument(skip(self))]
+    pub async fn handle(
+        &mut self,
+        event: AgentEvent,
+    ) -> Result<()> {
+        use AgentEvent::*;
+
+        debug!(event = ?event, "handling agent event");
+
+        match event {
+            TaskDone(loc, result) => {
+                self.apply_task_result(loc, result).await?;
+                if self.tskmgr.pending.is_empty() {
+                    if self.state.context.history.needs_another_turn() {
+                        self.start_turn();
+                    } else {
+                        self.parent
+                            .send(ParentEvent::TurnComplete(self.id.clone()))
+                            .await?;
+                    }
+                }
+                self.parent
+                    .send(ParentEvent::InfoUpdate(self.id.clone()))
+                    .await?;
+            }
+            DuplicateRequest(aid) => {
+                self.try_duplicate(aid).await?;
+            }
+            Submit(UserPrompt {
+                text,
+                multiplier,
+                loc,
+            }) => {
+                if let Some(text) = text {
+                    self.handle_history(history::HistoryEvent::UserMessage(loc, text))
+                        .await?;
+                }
+                if self.tskmgr.pending.is_empty() {
+                    if multiplier <= 1 {
+                        self.start_turn();
+                    } else {
+                        // TODO insert a developer message <n replicas pending>
+                        let replicas: Vec<_> = (0..multiplier).map(|_| AgentId::new()).collect();
+                        self.state.topology.children.extend(replicas.clone());
+                        self.save().await?;
+                        self.start_replica_turns(replicas);
+                    }
+                }
+            }
+            HistoryEvent(event) => {
+                self.handle_history(event).await?;
+            }
+            Delete => {
+                PROJECT.delete_agent(&self.id).await?;
+            }
+            TurnError(msg) | ResponseFailed(msg) => {
+                error!("error in agent {}: {}", self.id.0, msg);
+                // TODO better handling
+            }
+        }
+        // TODO if we error out, tell the app that we're dead
+        Ok(())
+    }
+
+    pub async fn handle_history(
+        &mut self,
+        event: HistoryEvent,
+    ) -> Result<()> {
+        // TODO verify
+        self.parent
+            .send(ParentEvent::HistoryUpdate(self.id.clone(), event.clone()))
+            .await?;
+        self.state.context.history.handle(event.clone());
+        if let HistoryEvent::ResponseItem(loc, ref item) = event
+            && let AssistantItem::ToolCall(mut call) = (**item).clone()
+            && call.task.output().is_none()
+        {
+            call.task.prepare(self)?;
+            self.tskmgr.spawn(self.tx.clone(), async move {
+                call.task.run().await;
+                TaskResult::ToolCall(loc, call)
+            });
+        }
+
+        self.save().await?;
+        Ok(())
+    }
+
+    fn start_replica_turns(
+        &mut self,
+        replicas: Vec<AgentId>,
+    ) {
+        let parent = self.id.clone();
+        let context = self.state.context.clone();
+        self.tskmgr.spawn(self.tx.clone(), async move {
+            // TODO error handling
+            TaskResult::ReplicaRun(
+                replica::run_replicas(parent, context, replicas)
+                    .await
+                    .unwrap(),
+            )
+        });
+    }
+}

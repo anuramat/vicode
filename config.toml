@@ -1,0 +1,78 @@
+[api]
+
+# base_url = "https://openrouter.ai/api/v1"
+# key_path = "/run/agenix/openrouter"
+# model_name = "CHANGE_ME"
+
+# base_url = "http://anuramat-bgm5:11343/v1"
+# model_name = "dummy"
+# developer_as_user = true
+
+# base_url = "https://api.openai.com/v1"
+# key_path = "/run/agenix/openai"
+# model_name = "gpt-5.1-codex-mini"
+# effort = "low"
+
+# TODO -- add passthrough params; cerebras-specific -- clear_thinking: false
+base_url = "https://api.cerebras.ai/v1"
+key_path = "/run/agenix/cerebras"
+model_name = "zai-glm-4.7"
+kind = "chat_completions"
+reasoning_key = "reasoning"
+reasoning_as_output = "think"
+
+# base_url = "https://api.z.ai/api/coding/paas/v4"
+# key_path = "/run/agenix/zai"
+# model_name = "glm-5"
+# kind = "chat_completions"
+# reasoning_key = "reasoning_content"
+
+concurrency = 1
+rps = 1
+retries = 5
+backoff_ms = 1000
+
+[bash]
+  cmd = [
+    "bash",
+    "-lc",
+  ]
+  [bash.bwrap]
+    bin = "bwrap"
+    args = [
+      "--die-with-parent",
+      "--proc",
+      "/proc",
+      "--dev",
+      "/dev",
+    ]
+    [[bash.bwrap.stages]]
+      ro = [
+        "/nix",
+        "/bin",
+        "/usr",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/run/current-system",
+        "/run/systemd/resolve/stub-resolv.conf",
+
+        "$XDG_CONFIG_HOME",
+        "~/.bashrc",
+        "~/.bash_profile",
+        "~/.profile",
+
+        "$GHQ_ROOT",
+      ]
+      tmpfs = [
+        "/tmp",
+        "$TMPDIR",
+
+        "$XDG_CACHE_HOME",
+        "$XDG_STATE_HOME",
+        "$XDG_DATA_HOME",
+      ]
+    [[bash.bwrap.stages]]
+      rw = [
+        "$CARGO_HOME",
+      ]

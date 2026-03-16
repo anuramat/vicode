@@ -1,0 +1,59 @@
+pub mod candidate;
+
+use anyhow::Result;
+use tokio::sync::mpsc::channel;
+use tokio::task::JoinSet;
+
+use crate::agent::Agent;
+use crate::agent::AgentContext;
+use crate::agent::AgentEvent;
+use crate::agent::AgentId;
+use crate::agent::AgentKind;
+use crate::agent::AgentState;
+use crate::agent::AgentTopology;
+use crate::agent::handle::ParentEvent;
+use crate::agent::handle::UserPrompt;
+use crate::agent::init::duplicate;
+
+pub async fn run_child(
+    parent: &AgentId,
+    aid: &AgentId,
+    context: &AgentContext,
+    text: Option<String>,
+) -> Result<String> {
+    let state = AgentState {
+        topology: AgentTopology {
+            kind: AgentKind::Subagent {
+                parent: parent.clone(),
+            },
+            children: Vec::new(),
+        },
+        context: context.clone(),
+    };
+    duplicate(parent, aid, &state, false).await?;
+
+    let (parent_tx, mut parent_rx) = channel(100);
+    let agent = Agent::load(parent_tx, aid.clone()).await?;
+    let child_tx = agent.tx.clone();
+    let mut tasks = JoinSet::new();
+    tasks.spawn(agent.run());
+
+    child_tx
+        .send(AgentEvent::Submit(UserPrompt {
+            text,
+            multiplier: 1,
+            loc: context.history.len(),
+        }))
+        .await?;
+
+    loop {
+        match parent_rx.recv().await {
+            Some(ParentEvent::TurnComplete(completed)) if completed == *aid => break,
+            Some(_) => continue,
+            None => anyhow::bail!("subagent channel closed before turn completion"),
+        }
+    }
+    tasks.abort_all();
+
+    candidate::response(parent, aid).await
+}
