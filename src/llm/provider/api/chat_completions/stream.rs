@@ -16,7 +16,7 @@ use futures::Stream;
 use serde_json::Value;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::llm::api::event::StreamEvent;
+use crate::llm::provider::event::StreamEvent;
 use crate::llm::delta::Delta;
 use crate::llm::delta::DeltaContent;
 use crate::llm::message::AssistantItem;
@@ -239,7 +239,7 @@ mod tests {
 
     use super::ChatCompletionsStream;
     use super::StreamState;
-    use crate::llm::api::event::StreamEvent;
+    use crate::llm::provider::event::StreamEvent;
     use crate::llm::message::AssistantItem;
 
     #[test]

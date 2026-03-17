@@ -5,7 +5,7 @@ use tokio::sync::mpsc::channel;
 
 use crate::agent::task::AgentTaskManager;
 use crate::agent::*;
-use crate::llm::api::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::history::History;
 use crate::project::PROJECT;
 

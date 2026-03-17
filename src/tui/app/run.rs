@@ -7,8 +7,8 @@ use tokio::time::Duration;
 use tokio::time::sleep_until;
 
 use super::App;
-use crate::llm::api::assistant::ASSISTANT_POOL;
-use crate::llm::api::assistant::AssistantPool;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::AssistantPool;
 use crate::project::PROJECT;
 use crate::tui::app::handle::AppEvent;
 

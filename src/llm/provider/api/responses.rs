@@ -12,23 +12,23 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
-use crate::config::ApiConfig;
-use crate::llm::api::backend::AssistantModelConfig;
-use crate::llm::api::backend::AssistantStream;
-use crate::llm::api::backend::Backend;
-use crate::llm::api::event::StreamEvent;
+use crate::config::ModelConfig;
+use crate::config::ProviderConfig;
 use crate::llm::history::History;
 use crate::llm::message::*;
+use crate::llm::provider::api::Api;
+use crate::llm::provider::api::AssistantStream;
+use crate::llm::provider::event::StreamEvent;
 
-pub struct ResponsesBackend {
+pub struct ResponsesApi {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
 }
 
-impl ResponsesBackend {
+impl ResponsesApi {
     pub fn new(
         client: Client<OpenAIConfig>,
-        config: ApiConfig,
+        config: ProviderConfig,
     ) -> Self {
         Self {
             client,
@@ -38,11 +38,11 @@ impl ResponsesBackend {
 }
 
 #[async_trait]
-impl Backend for ResponsesBackend {
+impl Api for ResponsesApi {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
-        model: AssistantModelConfig,
+        model: ModelConfig,
         instructions: String,
         history: History,
         tools: ToolSchemas,
@@ -57,7 +57,7 @@ impl Backend for ResponsesBackend {
 }
 
 fn request(
-    model: AssistantModelConfig,
+    model: ModelConfig,
     instructions: String,
     history: History,
     tools: ToolSchemas,
@@ -94,9 +94,9 @@ fn request(
     }
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
-        messages
-            .iter_mut()
-            .for_each(move |message| crate::llm::api::compat::reasoning_to_output(&tag, message));
+        messages.iter_mut().for_each(move |message| {
+            crate::llm::provider::compat::reasoning_to_output(&tag, message)
+        });
     }
 
     builder.stream(true);

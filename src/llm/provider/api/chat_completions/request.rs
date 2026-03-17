@@ -14,7 +14,7 @@ use async_openai::types::chat::CreateChatCompletionRequestArgs;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
-use crate::config::AssistantModelConfig;
+use crate::config::ModelConfig;
 use crate::llm::history::History;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
@@ -26,7 +26,7 @@ use crate::llm::message::ToolCallItem;
 use crate::llm::message::UserMessage;
 
 pub fn request(
-    assistant: AssistantModelConfig,
+    assistant: ModelConfig,
     instructions: String,
     history: History,
     tools: ToolSchemas,
@@ -46,9 +46,9 @@ pub fn request(
     );
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
-        items
-            .iter_mut()
-            .for_each(move |message| crate::llm::api::compat::reasoning_to_output(&tag, message));
+        items.iter_mut().for_each(move |message| {
+            crate::llm::provider::compat::reasoning_to_output(&tag, message)
+        });
     }
 
     if compat.developer_as_user {

@@ -20,7 +20,7 @@ use tokio::sync::mpsc::Sender;
 use crate::agent::handle::ParentEvent;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::api::assistant::Assistant;
+use crate::llm::provider::assistant::Assistant;
 use crate::llm::history::*;
 use crate::new_id;
 

@@ -1,5 +1,5 @@
 pub mod assistant;
-pub mod backend;
+pub mod api;
 pub mod compat;
 pub mod delta;
 pub mod event;

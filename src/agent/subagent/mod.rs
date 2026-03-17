@@ -14,7 +14,7 @@ use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::init::duplicate;
-use crate::llm::api::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
 
 pub async fn run_child(
     parent: &AgentId,

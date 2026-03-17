@@ -9,8 +9,8 @@ use tokio::sync::AcquireError;
 use tracing::instrument;
 
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::api::assistant::Assistant;
-use crate::llm::api::backend::AssistantStream;
+use crate::llm::provider::api::AssistantStream;
+use crate::llm::provider::assistant::Assistant;
 use crate::llm::history::History;
 
 impl Assistant {
@@ -23,10 +23,10 @@ impl Assistant {
     ) -> Result<AssistantStream> {
         retry(
             || async {
-                self.api.ratelimiter.until_ready().await;
-                let permit = self.api.semaphore.clone().acquire_owned().await?;
-                self.api
-                    .backend
+                self.provider.ratelimiter.until_ready().await;
+                let permit = self.provider.semaphore.clone().acquire_owned().await?;
+                self.provider
+                    .api
                     .stream(
                         permit,
                         self.config.model.clone(),
@@ -36,8 +36,8 @@ impl Assistant {
                     )
                     .await
             },
-            self.api.config.backoff_ms,
-            self.api.config.retries,
+            self.provider.config.backoff_ms,
+            self.provider.config.retries,
         )
         .await
     }

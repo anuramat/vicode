@@ -23,7 +23,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AssistantModelConfig {
+pub struct ModelConfig {
     pub model: String,
     pub effort: Option<ReasoningEffort>,
 }
@@ -31,7 +31,7 @@ pub struct AssistantModelConfig {
 // TODO make sure these are required
 #[derive(Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ApiKind {
+pub enum ApiType {
     #[default]
     Responses,
     ChatCompletions,
@@ -51,8 +51,8 @@ pub struct ApiCompatConfig {
 
 #[derive(Deserialize, Debug, Clone, SmartDefault)]
 #[serde(default)]
-pub struct ApiConfig {
-    pub kind: ApiKind,
+pub struct ProviderConfig {
+    pub api: ApiType,
     /// base URL for the api; expands env vars
     #[default = "localhost"]
     pub base_url: String,
@@ -82,7 +82,7 @@ pub struct ApiConfig {
     pub backoff_ms: u64,
 }
 
-impl ApiConfig {
+impl ProviderConfig {
     pub fn base_url(&self) -> Result<String> {
         Ok(shellexpand::full(&self.base_url)?.into_owned())
     }
@@ -90,9 +90,9 @@ impl ApiConfig {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct AssistantConfig {
-    pub api: String,
+    pub provider: String,
     #[serde(flatten)]
-    pub model: AssistantModelConfig,
+    pub model: ModelConfig,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -112,7 +112,7 @@ pub struct Config {
     #[serde(default)]
     pub context_files: Vec<String>,
 
-    pub apis: IndexMap<String, ApiConfig>,
+    pub providers: IndexMap<String, ProviderConfig>,
     pub assistants: IndexMap<String, AssistantConfig>,
     pub primary_assistant: Vec<String>,
     #[serde(default)]
@@ -144,9 +144,9 @@ impl Config {
     fn validate(&self) -> Result<()> {
         for (id, assistant) in &self.assistants {
             anyhow::ensure!(
-                self.apis.contains_key(&assistant.api),
-                "assistant '{id:?}' references unknown api '{:?}'",
-                assistant.api
+                self.providers.contains_key(&assistant.provider),
+                "assistant '{id:?}' references unknown provider '{:?}'",
+                assistant.provider
             );
         }
 
@@ -180,12 +180,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_multi_api_config() {
+    fn parses_multi_provider_config() {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast", "deep"]
 
-            [apis.main]
+            [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rps = 1
@@ -193,11 +193,11 @@ mod tests {
             backoff_ms = 10
 
             [assistants.fast]
-            api = "main"
+            provider = "main"
             model = "gpt-fast"
 
             [assistants.deep]
-            api = "main"
+            provider = "main"
             model = "gpt-deep"
             effort = "low"
 
@@ -205,8 +205,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.apis.len(), 1);
-        assert_eq!(config.assistants["deep"].api, "main");
+        assert_eq!(config.providers.len(), 1);
+        assert_eq!(config.assistants["deep"].provider, "main");
     }
 
     #[test]
@@ -215,7 +215,7 @@ mod tests {
             r#"
             primary_assistant = ["missing"]
 
-            [apis.main]
+            [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rps = 1
@@ -223,7 +223,7 @@ mod tests {
             backoff_ms = 10
 
             [assistants.fast]
-            api = "main"
+            provider = "main"
             model = "gpt-fast"
 
             [bash]

@@ -7,26 +7,26 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
-use crate::config::ApiConfig;
-use crate::config::AssistantModelConfig;
-use crate::llm::api::backend::AssistantStream;
-use crate::llm::api::backend::Backend;
+use crate::config::ModelConfig;
+use crate::config::ProviderConfig;
 use crate::llm::history::History;
+use crate::llm::provider::api::Api;
+use crate::llm::provider::api::AssistantStream;
 
 mod convert;
 mod request;
 mod stream;
 
-pub struct ChatCompletionsBackend {
+pub struct ChatCompletionsApi {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
     reasoning_key: Option<String>,
 }
 
-impl ChatCompletionsBackend {
+impl ChatCompletionsApi {
     pub fn new(
         client: Client<OpenAIConfig>,
-        config: ApiConfig,
+        config: ProviderConfig,
     ) -> Self {
         Self {
             client,
@@ -37,11 +37,11 @@ impl ChatCompletionsBackend {
 }
 
 #[async_trait]
-impl Backend for ChatCompletionsBackend {
+impl Api for ChatCompletionsApi {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
-        config: AssistantModelConfig,
+        config: ModelConfig,
         instructions: String,
         history: History,
         tools: ToolSchemas,

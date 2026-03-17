@@ -5,7 +5,7 @@ use tracing::instrument;
 use tracing::trace;
 
 use super::*;
-use crate::llm::api::event::StreamEvent;
+use crate::llm::provider::event::StreamEvent;
 use crate::llm::delta::*;
 use crate::llm::history::HistoryEvent;
 use crate::llm::message::AssistantItem;

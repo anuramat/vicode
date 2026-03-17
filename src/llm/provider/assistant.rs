@@ -14,27 +14,27 @@ use governor::RateLimiter;
 use tokio::sync::OnceCell;
 use tokio::sync::Semaphore;
 
-use crate::config::ApiConfig;
+use crate::config::ProviderConfig;
 use crate::config::AssistantConfig;
 use crate::config::CONFIG;
 use crate::config::Config;
 use crate::config::SubagentAssistantConfig;
-use crate::llm::api::backend::Backend;
-use crate::llm::api::backend::chat_completions::ChatCompletionsBackend;
-use crate::llm::api::backend::responses::ResponsesBackend;
+use crate::llm::provider::api::Api;
+use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
+use crate::llm::provider::api::responses::ResponsesApi;
 
 // TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
 pub static ASSISTANT_POOL: OnceCell<AssistantPool> = OnceCell::const_new();
 
-pub struct ApiRuntime {
-    pub config: ApiConfig,
+pub struct Provider {
+    pub config: ProviderConfig,
     pub ratelimiter: DefaultDirectRateLimiter,
-    pub backend: Arc<dyn Backend>, // XXX api/backend -- confusing naming
+    pub api: Arc<dyn Api>,
     pub semaphore: Arc<Semaphore>,
 }
 
 pub struct Assistant {
-    pub api: Arc<ApiRuntime>,
+    pub provider: Arc<Provider>,
     pub config: AssistantConfig,
 }
 
@@ -54,36 +54,37 @@ enum SubagentSelector {
     RoundRobin(RoundRobin),
 }
 
-impl ApiRuntime {
-    async fn new(api_config: ApiConfig) -> Result<Self> {
+impl Provider {
+    async fn new(provider_config: ProviderConfig) -> Result<Self> {
         let openai_config = {
-            let mut openai_config = OpenAIConfig::new().with_api_base(&api_config.base_url()?);
-            if let Some(key) = Self::key(api_config.key_command.as_deref()).await? {
+            let mut openai_config =
+                OpenAIConfig::new().with_api_base(&provider_config.base_url()?);
+            if let Some(key) = Self::key(provider_config.key_command.as_deref()).await? {
                 openai_config = openai_config.with_api_key(key);
             }
             openai_config
         };
 
         let client = Client::with_config(openai_config);
-        let backend: Arc<dyn Backend> = match api_config.kind {
-            crate::config::ApiKind::Responses => {
-                Arc::new(ResponsesBackend::new(client, api_config.clone()))
+        let api: Arc<dyn Api> = match provider_config.api {
+            crate::config::ApiType::Responses => {
+                Arc::new(ResponsesApi::new(client, provider_config.clone()))
             }
-            crate::config::ApiKind::ChatCompletions => {
-                Arc::new(ChatCompletionsBackend::new(client, api_config.clone()))
+            crate::config::ApiType::ChatCompletions => {
+                Arc::new(ChatCompletionsApi::new(client, provider_config.clone()))
             }
         };
 
         Ok(Self {
             ratelimiter: RateLimiter::direct(Quota::per_second(
-                api_config
+                provider_config
                     .rps
                     .try_into()
                     .with_context(|| "invalid rps provided")?,
             )),
-            backend,
-            semaphore: Arc::new(Semaphore::new(api_config.concurrency)),
-            config: api_config,
+            api,
+            semaphore: Arc::new(Semaphore::new(provider_config.concurrency)),
+            config: provider_config,
         })
     }
 
@@ -116,11 +117,11 @@ impl AssistantPool {
     }
 
     async fn from_config(config: &Config) -> Result<Self> {
-        let apis: HashMap<_, _> =
+        let providers: HashMap<_, _> =
             {
-                let futures = config.apis.iter().map(
-                    async |(id, config)| -> Result<(String, Arc<ApiRuntime>)> {
-                        Ok((id.clone(), Arc::new(ApiRuntime::new(config.clone()).await?)))
+                let futures = config.providers.iter().map(
+                    async |(id, config)| -> Result<(String, Arc<Provider>)> {
+                        Ok((id.clone(), Arc::new(Provider::new(config.clone()).await?)))
                     },
                 );
                 try_join_all(futures).await?.into_iter().collect()
@@ -133,10 +134,10 @@ impl AssistantPool {
                 Ok((
                     id.clone(),
                     Arc::new(Assistant {
-                        api: apis
-                            .get(&config.api)
+                        provider: providers
+                            .get(&config.provider)
                             .cloned()
-                            .with_context(|| format!("unknown api {:?}", config.api))?,
+                            .with_context(|| format!("unknown provider {:?}", config.provider))?,
                         config: config.clone(),
                     }),
                 ))
@@ -210,12 +211,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assistants_share_api_runtime() {
+    async fn assistants_share_provider() {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast", "deep"]
 
-            [apis.main]
+            [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rps = 1
@@ -223,11 +224,11 @@ mod tests {
             backoff_ms = 10
 
             [assistants.fast]
-            api = "main"
+            provider = "main"
             model = "gpt-fast"
 
             [assistants.deep]
-            api = "main"
+            provider = "main"
             model = "gpt-deep"
             effort = "low"
 
@@ -238,7 +239,7 @@ mod tests {
         let pool = AssistantPool::from_config(&config).await.unwrap();
         let fast = pool.assistant("fast").unwrap();
         let deep = pool.assistant("deep").unwrap();
-        assert!(Arc::ptr_eq(&fast.api, &deep.api));
+        assert!(Arc::ptr_eq(&fast.provider, &deep.provider));
         assert_eq!(pool.next_subagent("fast"), "fast");
     }
 
@@ -249,7 +250,7 @@ mod tests {
             primary_assistant = ["fast"]
             subagent_assistant = ["deep", "fast"]
 
-            [apis.main]
+            [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rps = 1
@@ -257,11 +258,11 @@ mod tests {
             backoff_ms = 10
 
             [assistants.fast]
-            api = "main"
+            provider = "main"
             model = "gpt-fast"
 
             [assistants.deep]
-            api = "main"
+            provider = "main"
             model = "gpt-deep"
 
             [bash]
