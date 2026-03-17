@@ -8,7 +8,6 @@
 - compact
   - would be cool if we could mark specific messages for compaction
 - skills
-- human-readable user-facing ids (use `names`/`petname` crate)
 
 # ui
 
