@@ -27,6 +27,7 @@ pub struct UserMessage {
 
 #[derive(Clone, Serialize, Deserialize, Debug, Into, From, Default)]
 pub struct AssistantMessage {
+    // TODO store start time and finish time/last update time maybe? idk
     pub finish_reason: AssistantMessageStatus,
     #[serde(with = "indexmap::map::serde_seq")]
     pub content: IndexMap<String, AssistantItem>,

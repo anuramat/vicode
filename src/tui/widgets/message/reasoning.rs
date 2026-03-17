@@ -15,6 +15,7 @@ fn style() -> Style {
 #[derive(From, Debug, Clone)]
 struct ReasoningWidget {
     widget: Paragraph<'static>,
+    ms: Option<u64>,
     char_count: usize,
 }
 
@@ -39,7 +40,12 @@ impl HeightComputable for ReasoningWidget {
         if !ctx.hide_reasoning {
             return self.widget.render_ref(area, buf);
         }
-        let text = format!("reasoning: {} chars", self.char_count);
+        let mut text = format!("reasoning: {} chars", self.char_count);
+        if let Some(ms) = self.ms {
+            let s: f64 = (ms as f64) / 1000_f64;
+            let str = format!(", {:.1}s", s);
+            text.push_str(&str)
+        }
         Paragraph::new(text)
             .style(style().italic())
             .render(area, buf)
@@ -67,11 +73,13 @@ impl From<&ReasoningItem> for Element {
         }
 
         let char_count = text.chars().count();
+        let seconds = item.finished_at_ms.map(|ms| ms - item.started_at_ms);
         let widget = ReasoningWidget {
             widget: Paragraph::new(text)
                 .style(style())
                 .wrap(Wrap { trim: false }),
             char_count,
+            ms: seconds,
         };
         widget.into()
     }

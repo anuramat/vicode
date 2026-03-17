@@ -7,6 +7,8 @@ use ratatui::widgets::Block;
 
 use crate::tui::widgets::container::empty::EmptyElement;
 
+// TODO rename the trait
+
 clone_trait_object!(HeightComputable);
 pub trait HeightComputable: Debug + DynClone {
     fn height(
