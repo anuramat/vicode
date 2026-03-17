@@ -20,11 +20,11 @@ use tokio::sync::mpsc::Sender;
 use crate::agent::handle::ParentEvent;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
+use crate::define_uuid;
 use crate::llm::history::*;
 use crate::llm::provider::assistant::Assistant;
-use crate::new_id;
 
-new_id!(AgentId);
+define_uuid!(AgentId);
 
 pub struct Agent {
     pub id: AgentId,

@@ -1,5 +1,5 @@
 #[macro_export]
-macro_rules! new_id {
+macro_rules! define_uuid {
     ($name:ident) => {
         #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         pub struct $name(pub uuid::Uuid);
@@ -16,7 +16,6 @@ macro_rules! new_id {
             }
         }
 
-        // TODO use anyhow? also
         impl TryFrom<String> for $name {
             type Error = uuid::Error;
 

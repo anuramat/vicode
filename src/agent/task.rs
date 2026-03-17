@@ -9,12 +9,12 @@ use tokio::task::JoinSet;
 use crate::agent::Agent;
 use crate::agent::AgentEvent;
 use crate::agent::replica::ReplicaResult;
+use crate::define_uuid;
 use crate::llm::history::HistoryEvent;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::ToolCallItem;
-use crate::new_id;
 
-new_id!(TaskId);
+define_uuid!(TaskId);
 
 #[derive(Debug)]
 pub enum TaskResult {
