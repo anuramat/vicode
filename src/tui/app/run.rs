@@ -3,6 +3,7 @@ use std::future::pending;
 use anyhow::Result;
 use crossterm::event::Event;
 use futures::future::join_all;
+use futures::future::try_join_all;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 
@@ -69,19 +70,8 @@ impl<'a> App<'a> {
     async fn cleanup(&self) -> Result<()> {
         PROJECT.save_app_state(self).await?;
         self.reset_osc7();
-        let results = join_all(self.agents.keys().map(|i| PROJECT.unmount(i))).await;
-        let errors: Vec<String> = results
-            .into_iter()
-            .filter_map(Result::err)
-            .map(|e| e.to_string())
-            .collect();
-        if errors.is_empty() {
-            return Ok(());
-        }
-        Err(anyhow::anyhow!(
-            "multiple errors occured:\n{}",
-            errors.join("\n")
-        ))
+        try_join_all(self.agents.keys().map(|i| PROJECT.unmount(i))).await?;
+        Ok(())
     }
 
     fn spawn_term_translator(&mut self) {
