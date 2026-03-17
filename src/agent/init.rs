@@ -5,8 +5,8 @@ use tokio::sync::mpsc::channel;
 
 use crate::agent::task::AgentTaskManager;
 use crate::agent::*;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::history::History;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
 
 const CHANNEL_CAPACITY: usize = 100;
@@ -168,7 +168,9 @@ mod tests {
         let _ = ASSISTANT_POOL.set(AssistantPool::from_config(&config).await.unwrap());
 
         let aid = AgentId::new().await.unwrap();
-        tokio::fs::create_dir_all(PROJECT.agent(&aid)).await.unwrap();
+        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+            .await
+            .unwrap();
 
         let state = AgentState {
             topology: Default::default(),
@@ -180,7 +182,9 @@ mod tests {
             },
         };
         let (parent_tx, _) = channel(1);
-        let mut agent = Agent::from_state(parent_tx, aid.clone(), state).await.unwrap();
+        let mut agent = Agent::from_state(parent_tx, aid.clone(), state)
+            .await
+            .unwrap();
 
         agent.set_assistant("deep").await.unwrap();
 
@@ -188,6 +192,8 @@ mod tests {
         assert_eq!(agent.assistant.config.model.model, "gpt-deep");
         let saved = PROJECT.load_agent_state(&aid).await.unwrap();
         assert_eq!(saved.context.assistant_id, "deep");
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid)).await.unwrap();
+        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+            .await
+            .unwrap();
     }
 }

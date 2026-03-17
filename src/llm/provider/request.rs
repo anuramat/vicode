@@ -9,9 +9,9 @@ use tokio::sync::AcquireError;
 use tracing::instrument;
 
 use crate::agent::tool::registry::ToolSchemas;
+use crate::llm::history::History;
 use crate::llm::provider::api::AssistantStream;
 use crate::llm::provider::assistant::Assistant;
-use crate::llm::history::History;
 
 impl Assistant {
     #[instrument(skip(self, history, tools, instructions))]
