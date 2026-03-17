@@ -66,7 +66,7 @@ impl<'a> App<'a> {
         line.push_span(Span::styled("/", Style::new().dark_gray()));
         line.push_span(Span::raw(tab.name));
 
-        let remaining: usize = (width as usize) - line.width();
+        let remaining: usize = (width as usize).saturating_sub(line.width());
         if tab.assistant.len() + 3 < remaining {
             let spacing: usize = remaining - tab.assistant.len();
             line.push_span(" ".repeat(spacing));
