@@ -8,6 +8,9 @@
 - compact
   - would be cool if we could mark specific messages for compaction
 - skills
+- fix agent state persistence
+  - use jsonl for storage
+  - debounce file writes
 
 # ui
 
