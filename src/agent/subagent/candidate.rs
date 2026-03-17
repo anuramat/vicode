@@ -28,7 +28,7 @@ pub async fn response(
     let diff = diff(parent, aid)?;
     Ok(format!(
         "<implementation id={}>\n{}\n```diff\n{}```\n</implementation>",
-        aid.0, text, diff
+        aid, text, diff
     ))
 }
 

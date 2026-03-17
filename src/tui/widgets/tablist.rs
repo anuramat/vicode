@@ -31,7 +31,7 @@ impl<'a> TabList<'a> {
     ) {
         let items = tabs
             .iter()
-            .map(|i| ListItem::new(i.0.0.to_string()))
+            .map(|i| ListItem::new(i.0.to_string()))
             .collect::<Vec<_>>();
         self.widget = List::new(items).highlight_style(*SELECTION_STYLE).into();
     }

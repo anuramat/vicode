@@ -1,3 +1,6 @@
+use std::fmt::Debug;
+use std::fmt::Display;
+
 use anyhow::Result;
 use derive_more::From;
 use derive_more::Into;
@@ -9,7 +12,7 @@ use serde::Serialize;
 use crate::project::PROJECT;
 
 #[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct AgentId(pub String);
+pub struct AgentId(String);
 
 lazy_static::lazy_static! {
     static ref GENERATOR: petname::Petnames<'static> = petname::Petnames::small();
@@ -28,5 +31,14 @@ impl AgentId {
             }
         }
         anyhow::bail!("{} name collisions when generating AgentId", PATIENCE);
+    }
+}
+
+impl Display for AgentId {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }

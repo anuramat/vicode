@@ -108,13 +108,12 @@ impl Agent {
                 PROJECT.delete_agent(&self.id).await?;
             }
             TurnError(msg) | ResponseFailed(msg) => {
-                error!("error in agent {}: {}", self.id.0, msg);
+                error!("error in agent {}: {}", self.id, msg);
                 self.parent
                     .send(ParentEvent::Error(self.id.clone(), msg))
                     .await?;
             }
         }
-        // TODO if we error out, tell the app that we're dead
         Ok(())
     }
 

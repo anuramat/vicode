@@ -39,7 +39,7 @@ impl<'a> App<'a> {
             {
                 tab.render(inner[1], frame.buffer_mut(), self.ctx);
                 tab_info = Some(TabInfo {
-                    name: tab.aid.0.to_string(),
+                    name: tab.aid.to_string(),
                     assistant: tab.agent_state.context.assistant_id.clone(),
                 });
             } else {

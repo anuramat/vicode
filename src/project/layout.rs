@@ -30,7 +30,7 @@ impl Project {
     }
 
     pub fn worktree_name(aid: &AgentId) -> String {
-        format!("{}{}", WORKTREE_NAME_PREFIX, aid.0)
+        format!("{}{}", WORKTREE_NAME_PREFIX, aid)
     }
 
     pub fn overlay(
@@ -62,8 +62,7 @@ impl Project {
         &self,
         aid: &AgentId,
     ) -> PathBuf {
-        let name = aid.0.to_string();
-        self.agents().join(name)
+        self.agents().join(aid.to_string())
     }
 
     pub fn agent_workdir(
