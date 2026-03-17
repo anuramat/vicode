@@ -27,22 +27,32 @@ use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;
 
 pub struct App<'a> {
-    pub ctx: RenderContext,
-    pub dirty: bool,
     pub should_exit: bool,
+
     pub rx: Receiver<AppEvent>,
     pub tx: Sender<AppEvent>,
-    pub parent_tx: Sender<ParentEvent>,
+    /// agents, event translation
+    pub joinset: JoinSet<Result<()>>,
+
+    /// hide tool calls, etc
+    pub ctx: RenderContext,
+    /// true if we received an event but didn't redraw yet
+    pub dirty: bool,
     pub terminal: DefaultTerminal,
 
+    /// channel for primary agents to report to
+    pub parent_tx: Sender<ParentEvent>,
+    /// primary agents
     pub agents: HashMap<AgentId, Sender<AgentEvent>>,
+    /// UI for primary agents
     pub tabs: IndexMap<AgentId, Tab<'a>>,
+
+    /// project name shown in status line
+    pub project_name: String,
     pub tablist: TabList<'a>,
 
+    // TODO we should probably drop this
     pub repo: Repository,
-
-    pub project_name: String,
-    pub joinset: JoinSet<Result<()>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
