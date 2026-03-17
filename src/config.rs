@@ -28,17 +28,12 @@ pub struct ModelConfig {
     pub effort: Option<ReasoningEffort>,
 }
 
-// TODO make sure these are required
-#[derive(Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiType {
     #[default]
     Responses,
     ChatCompletions,
-}
-
-fn context_files() -> Vec<String> {
-    vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()]
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -119,9 +114,7 @@ pub struct Config {
     pub subagent_assistant: SubagentAssistantConfig,
 }
 
-// TODO recursively drop default?
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
-#[serde(default)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct BashConfig {
     pub bwrap: BwrapConfig,
     pub cmd: Vec<String>,

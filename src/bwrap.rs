@@ -10,8 +10,7 @@ use tokio::process::Command;
 
 use crate::config::CONFIG;
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
-#[serde(default)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct BwrapConfig {
     pub bin: String,
     pub args: Vec<String>,
