@@ -1,39 +1,39 @@
-primary_assistant = ["main"]
+primary_assistant = ["cerebras"]
 
 [assistants.cerebras]
-api = "cerebras"
+provider = "cerebras"
 model = "zai-glm-4.7"
 [assistants.gpt]
-api = "openai"
+provider = "openai"
 model = "gpt-5.1-codex-mini"
 effort = "low"
 [assistants.llama]
-api = "llama"
+provider = "llama"
 model = "dummy"
 [assistants.zai]
-api = "zai"
+provider = "zai"
 model = "glm-5"
 
-[apis.openrouter]
+[providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
 key_command = "cat /run/agenix/openrouter"
-[apis.llama]
+[providers.llama]
 base_url = "http://anuramat-bgm5:11343/v1"
 developer_as_user = true
-[apis.openai]
+[providers.openai]
 base_url = "https://api.openai.com/v1"
 key_command = "cat /run/agenix/openai"
-[apis.cerebras]
+[providers.cerebras]
 # TODO -- add passthrough params; cerebras-specific -- clear_thinking: false
 base_url = "https://api.cerebras.ai/v1"
 key_command = "cat /run/agenix/cerebras"
-kind = "chat_completions"
+api = "chat_completions"
 reasoning_key = "reasoning"
 reasoning_as_output = "think"
-[apis.zai]
+[providers.zai]
 base_url = "https://api.z.ai/api/coding/paas/v4"
 key_command = "cat /run/agenix/zai"
-kind = "chat_completions"
+api = "chat_completions"
 reasoning_key = "reasoning_content"
 
 [bash]
