@@ -13,7 +13,7 @@ const CONSTRAINTS: [Constraint; 2] = [Constraint::Length(TAB_PANE_WIDTH), Constr
 // TODO skip tablist and info pane if terminal is too small
 
 impl<'a> App<'a> {
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, term))]
     pub fn draw(
         &mut self,
         term: &mut DefaultTerminal,
