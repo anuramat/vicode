@@ -41,6 +41,7 @@ pub struct App<'a> {
 
     pub repo: Repository,
 
+    pub project_name: String,
     pub joinset: JoinSet<Result<()>>,
 }
 
@@ -62,7 +63,15 @@ impl<'a> App<'a> {
             parent_rx,
         ));
 
+        let project_name = crate::project::PROJECT
+            .root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
         Ok(Self {
+            project_name,
             ctx: Default::default(),
             dirty: true,
             tx,

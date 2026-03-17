@@ -29,16 +29,16 @@ impl<'a> App<'a> {
                 .split(outer[0]);
             frame.render_stateful_widget(&self.tablist.widget, inner[0], &mut self.tablist.state);
 
-            let line;
+            let mut tab_name = None;
             if let Some(tabnum) = selected
                 && let Some((_, tab)) = self.tabs.get_index_mut(tabnum)
             {
-                line = StatusLine::new();
                 tab.render(inner[1], frame.buffer_mut(), self.ctx);
+                tab_name = Some(tab.aid.0.to_string());
             } else {
-                line = StatusLine::new();
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
+            let line = StatusLine::new(self.project_name.clone(), tab_name);
             frame.render_widget(&line, outer[1]);
         })?;
         Ok(())

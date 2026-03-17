@@ -1,31 +1,34 @@
 use ratatui::buffer::Buffer;
 use ratatui::prelude::*;
 use ratatui::text::Line;
+use ratatui::widgets::WidgetRef;
 
 #[derive(Clone)]
-pub struct StatusLine {
-    pub text: String,
+pub struct StatusLine<'a> {
+    pub line: Line<'a>,
 }
 
-impl StatusLine {
-    pub fn new() -> Self {
-        let status_text = crate::project::PROJECT
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        Self { text: status_text }
+impl<'a> StatusLine<'a> {
+    pub fn new(
+        project_name: String,
+        tab_name: Option<String>,
+    ) -> Self {
+        let mut line = Line::raw("");
+        line.push_span(Span::styled(project_name, Style::new().dark_gray()));
+        if let Some(tab_name) = tab_name {
+            line.push_span(Span::styled("/", Style::new().dark_gray()));
+            line.push_span(Span::raw(tab_name));
+        };
+        Self { line }
     }
 }
 
-impl Widget for &StatusLine {
-    fn render(
-        self,
+impl<'a> WidgetRef for StatusLine<'a> {
+    fn render_ref(
+        &self,
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let line = Line::from(self.text.as_str());
-        line.render(area, buf);
+        self.line.render_ref(area, buf);
     }
 }
