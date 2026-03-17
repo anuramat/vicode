@@ -7,7 +7,6 @@ pub mod tabs;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use git2::Repository;
 pub use handle::AppEvent;
 use indexmap::IndexMap;
 use ratatui::DefaultTerminal;
@@ -21,7 +20,6 @@ use tokio::task::JoinSet;
 use crate::agent::AgentEvent;
 use crate::agent::AgentId;
 use crate::agent::handle::ParentEvent;
-use crate::project::PROJECT;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;

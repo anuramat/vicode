@@ -1,7 +1,6 @@
 use anyhow::Result;
 use crossterm::event::Event;
 use futures::future::join_all;
-use tokio::spawn;
 use tokio::time::Duration;
 
 use super::App;
