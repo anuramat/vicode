@@ -4,7 +4,6 @@ use std::fmt::Display;
 use anyhow::Result;
 use derive_more::From;
 use derive_more::Into;
-use derive_more::{self};
 use petname::Generator;
 use serde::Deserialize;
 use serde::Serialize;
