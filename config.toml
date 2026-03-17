@@ -1,3 +1,4 @@
+context_files = ["AGENTS.md"]
 primary_assistant = ["cerebras"]
 
 [assistants.cerebras]
