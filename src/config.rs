@@ -65,10 +65,9 @@ pub struct ProviderConfig {
     /// max number of concurrent requests
     #[default = 1]
     pub concurrency: usize,
-    // TODO float
-    /// max requests per second
-    #[default = 1]
-    pub rps: u32,
+    /// max requests per minute
+    #[default = 60]
+    pub rpm: u32,
     /// max retries
     #[default = 5]
     pub retries: usize,
@@ -181,7 +180,7 @@ mod tests {
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
-            rps = 1
+            rpm = 1
             retries = 2
             backoff_ms = 10
 
@@ -211,7 +210,7 @@ mod tests {
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
-            rps = 1
+            rpm = 1
             retries = 2
             backoff_ms = 10
 

@@ -14,10 +14,10 @@ use governor::RateLimiter;
 use tokio::sync::OnceCell;
 use tokio::sync::Semaphore;
 
-use crate::config::ProviderConfig;
 use crate::config::AssistantConfig;
 use crate::config::CONFIG;
 use crate::config::Config;
+use crate::config::ProviderConfig;
 use crate::config::SubagentAssistantConfig;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
@@ -57,8 +57,7 @@ enum SubagentSelector {
 impl Provider {
     async fn new(provider_config: ProviderConfig) -> Result<Self> {
         let openai_config = {
-            let mut openai_config =
-                OpenAIConfig::new().with_api_base(&provider_config.base_url()?);
+            let mut openai_config = OpenAIConfig::new().with_api_base(&provider_config.base_url()?);
             if let Some(key) = Self::key(provider_config.key_command.as_deref()).await? {
                 openai_config = openai_config.with_api_key(key);
             }
@@ -76,11 +75,11 @@ impl Provider {
         };
 
         Ok(Self {
-            ratelimiter: RateLimiter::direct(Quota::per_second(
+            ratelimiter: RateLimiter::direct(Quota::per_minute(
                 provider_config
-                    .rps
+                    .rpm
                     .try_into()
-                    .with_context(|| "invalid rps provided")?,
+                    .with_context(|| "invalid rpm provided")?,
             )),
             api,
             semaphore: Arc::new(Semaphore::new(provider_config.concurrency)),
@@ -117,15 +116,14 @@ impl AssistantPool {
     }
 
     async fn from_config(config: &Config) -> Result<Self> {
-        let providers: HashMap<_, _> =
-            {
-                let futures = config.providers.iter().map(
-                    async |(id, config)| -> Result<(String, Arc<Provider>)> {
-                        Ok((id.clone(), Arc::new(Provider::new(config.clone()).await?)))
-                    },
-                );
-                try_join_all(futures).await?.into_iter().collect()
-            };
+        let providers: HashMap<_, _> = {
+            let futures = config.providers.iter().map(
+                async |(id, config)| -> Result<(String, Arc<Provider>)> {
+                    Ok((id.clone(), Arc::new(Provider::new(config.clone()).await?)))
+                },
+            );
+            try_join_all(futures).await?.into_iter().collect()
+        };
 
         let assistants: HashMap<_, _> = config
             .assistants
@@ -219,7 +217,7 @@ mod tests {
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
-            rps = 1
+            rpm = 1
             retries = 2
             backoff_ms = 10
 
@@ -253,7 +251,7 @@ mod tests {
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
-            rps = 1
+            rpm = 1
             retries = 2
             backoff_ms = 10
 
