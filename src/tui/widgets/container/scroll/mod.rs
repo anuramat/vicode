@@ -12,6 +12,8 @@ use crate::tui::widgets::container::element::RenderContext;
 #[derive(Default, Clone, Debug)]
 struct StartLocation {
     idx: usize,
+    /// Last height of the element
+    height: u16,
     /// How many lines to skip, or equivalently, the index of the first line rendered;
     /// Invariant: (offset < height) || (height == offset == 0)
     offset: u16,

@@ -15,7 +15,10 @@ where
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
+        self.width = area.width;
+        self.height = area.height;
         self.ctx = ctx;
+
         if self.len() == 0 || area.area() == 0 {
             return;
         }
@@ -66,26 +69,34 @@ where
             idx,
             offset,
             relative_offset: None,
+            ..self.start
         }
     }
 
+    /// keeps the same relative offset when the height of the widget changes
     #[tracing::instrument(skip(self))]
     fn track_resize(
         &mut self,
         area: Rect,
     ) {
-        if self.width != area.width {
-            let relative = if let Some(relative) = self.start.relative_offset {
-                relative
-            } else {
-                let relative = (self.start.offset as f32) / (self.height(self.start.idx) as f32);
-                self.start.relative_offset = Some(relative);
-                relative
-            };
-            self.width = area.width;
-            self.start.offset = (relative * (self.height(self.start.idx) as f32)) as u16;
+        let new_height = self.height(self.start.idx);
+        if new_height == self.start.height {
+            return;
         }
-        self.height = area.height;
+        let relative = if let Some(relative) = self.start.relative_offset {
+            relative
+        } else {
+            let relative = (self.start.offset as f32) / (self.start.height as f32);
+            self.start.relative_offset = Some(relative);
+            relative
+        };
+        let max_offset = new_height.saturating_sub(1);
+        let new_offset = (relative * (new_height as f32)) as u16;
+        self.start = StartLocation {
+            offset: new_offset.min(max_offset),
+            height: new_height,
+            ..self.start
+        }
     }
 
     #[tracing::instrument(skip(self, buf))]
