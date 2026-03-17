@@ -8,8 +8,8 @@ use tracing::instrument;
 use crate::agent::Agent;
 use crate::agent::AgentEvent;
 use crate::agent::AgentId;
+use crate::agent::AgentState;
 use crate::agent::handle::ParentEvent;
-use crate::llm::history::History;
 use crate::project::PROJECT;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -30,11 +30,14 @@ impl<'a> App<'a> {
             .load_app_state()
             .await
             .expect("failed to load app state");
-        let tabs: IndexMap<AgentId, Tab<'_>> = state
-            .primary_agents
-            .iter()
-            .map(|aid| (aid.clone(), Tab::loading_tab(self.tx.clone(), aid.clone())))
-            .collect();
+        let mut tabs = IndexMap::new();
+        for aid in &state.primary_agents {
+            let agent_state = PROJECT.load_agent_state(aid).await?;
+            tabs.insert(
+                aid.clone(),
+                Tab::loading_tab(self.tx.clone(), aid.clone(), agent_state),
+            );
+        }
         self.tabs = tabs;
         self.rebuild_tablist();
 
@@ -55,14 +58,14 @@ impl<'a> App<'a> {
     async fn insert_tab(
         &mut self,
         id: AgentId,
-        history: History,
+        agent_state: AgentState,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), id.clone(), history).await?;
+        let tab = Tab::loading_tab(self.tx.clone(), id.clone(), agent_state);
         let idx = self
             .selected_tab()
             .map(|x| x + 1)
             .unwrap_or(self.tabs.len());
-        self.tabs.shift_insert(idx, id.clone(), tab);
+        self.tabs.shift_insert(idx, id, tab);
         self.select_tab(Some(idx));
         self.rebuild_tablist();
         Ok(())
@@ -87,12 +90,7 @@ impl<'a> App<'a> {
             Agent::new(self.parent_tx.clone(), aid.clone(), commit, instructions).await?
         };
 
-        let tab = Tab::new(
-            self.tx.clone(),
-            aid.clone(),
-            agent.state.context.history.clone(),
-        )
-        .await?;
+        let tab = Tab::new(self.tx.clone(), aid.clone(), agent.state.clone()).await?;
         self.tabs.insert(agent.id.clone(), tab);
         self.agents.insert(agent.id.clone(), agent.tx.clone());
         self.joinset.spawn(agent.run());
@@ -101,19 +99,19 @@ impl<'a> App<'a> {
 
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
-        let (history, tx) = if let Some((aid, tab)) =
+        let (agent_state, tx) = if let Some((aid, tab)) =
             self.selected_tab().and_then(|idx| self.tabs.get_index(idx))
             && let Some(tx) = self.agents.get(aid)
         {
             if !matches!(tab.state, TabState::Idle) {
                 return Ok(());
             }
-            (tab.history.data.clone(), tx.clone())
+            (tab.agent_state.clone(), tx.clone())
         } else {
             return Ok(());
         };
         let aid = AgentId::new();
-        self.insert_tab(aid.clone(), history).await?;
+        self.insert_tab(aid.clone(), agent_state).await?;
         tx.send(AgentEvent::DuplicateRequest(aid.clone())).await?;
         Ok(())
     }

@@ -20,8 +20,8 @@ use tokio::sync::mpsc::Sender;
 use crate::agent::handle::ParentEvent;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::provider::assistant::Assistant;
 use crate::llm::history::*;
+use crate::llm::provider::assistant::Assistant;
 use crate::new_id;
 
 new_id!(AgentId);
@@ -43,19 +43,19 @@ pub struct Agent {
     pub tools: ToolSchemas,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct AgentState {
     pub topology: AgentTopology,
     pub context: AgentContext,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct AgentTopology {
     pub kind: AgentKind,
     pub children: Vec<AgentId>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct AgentContext {
     pub commit: String,
     pub history: History,
@@ -63,9 +63,14 @@ pub struct AgentContext {
     pub assistant_id: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub enum AgentKind {
+    #[default]
     Primary,
-    Replica { parent: AgentId },
-    Subagent { parent: AgentId },
+    Replica {
+        parent: AgentId,
+    },
+    Subagent {
+        parent: AgentId,
+    },
 }

@@ -64,7 +64,7 @@ impl<'a> Tab<'a> {
         let prompt = UserPrompt {
             text: Some(text.clone()),
             multiplier: self.multiplier,
-            loc: self.history.data.len(),
+            loc: self.agent_state.context.history.len(),
         };
         self.state = TabState::InProgress;
         self.tx

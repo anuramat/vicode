@@ -22,7 +22,7 @@ use tokio::sync::mpsc::Sender;
 use tui_textarea::TextArea;
 
 use crate::agent::AgentId;
-use crate::llm::history::History;
+use crate::agent::AgentState;
 use crate::llm::message::Message;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::widgets::container::element::RenderContext;
@@ -36,8 +36,9 @@ const INFO_PANE_WIDTH: u16 = 32;
 pub struct Tab<'a> {
     pub tx: Sender<AppEvent>,
     pub aid: AgentId,
+    pub agent_state: AgentState,
 
-    pub history: ScrollElements<History, Message>,
+    pub scroll: ScrollElements<Message>,
     pub insert_mode: bool, // TODO use enum
     pub user_input: UserInput<'a>,
     pub info: InfoWidget,
@@ -57,12 +58,13 @@ impl<'a> Tab<'a> {
     pub async fn new(
         tx: Sender<AppEvent>,
         aid: AgentId,
-        history: History,
+        agent_state: AgentState,
     ) -> Result<Self> {
         let tab = Self {
             tx,
             aid,
-            history: ScrollElements::new(history),
+            agent_state,
+            scroll: ScrollElements::<Message>::new(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),
@@ -75,11 +77,13 @@ impl<'a> Tab<'a> {
     pub fn loading_tab(
         tx: Sender<AppEvent>,
         aid: AgentId,
+        agent_state: AgentState,
     ) -> Self {
         Self {
             tx,
             aid,
-            history: ScrollElements::new(History::default()),
+            agent_state,
+            scroll: ScrollElements::<Message>::new(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),
@@ -125,7 +129,8 @@ impl<'a> Tab<'a> {
             .constraints(vec![Constraint::Min(0), Constraint::Length(input_height)])
             .split(area);
 
-        self.history.render(
+        self.scroll.render(
+            self.agent_state.context.history.as_ref(),
             layout[0].inner(ratatui::layout::Margin {
                 horizontal: 1,
                 vertical: 0,

@@ -4,14 +4,13 @@ use tracing::debug;
 
 use super::*;
 
-impl<T, U> ScrollElements<T, U>
-where
-    T: AsRef<[U]>,
-    U: IntoElement,
+impl<U> ScrollElements<U>
+where U: IntoElement
 {
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     pub fn render(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
         ctx: RenderContext,
@@ -19,43 +18,46 @@ where
         self.width = area.width;
         self.height = area.height;
         self.ctx = ctx;
+        self.set_len(data.len());
 
-        if self.len() == 0 || area.area() == 0 {
+        if data.is_empty() || area.area() == 0 {
             return;
         }
 
-        self.track_resize(area);
+        self.track_resize(data, area);
 
         debug!("starting render, mode: {:?}", self.mode);
-        if matches!(self.mode, Mode::Tail) || self.render_from_line(area, buf) > 0 {
+        if matches!(self.mode, Mode::Tail) || self.render_from_line(data, area, buf) > 0 {
             // two renders will only happen when history fits on screen && the user tries to scroll
             self.bottom();
-            self.render_tail(area, buf);
+            self.render_tail(data, area, buf);
         }
     }
 
     // TODO check and refactor below
 
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     fn render_from_line(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
     ) -> u16 {
         Clear.render(area, buf);
-        let mut remaining = self.render_first(area, buf);
+        let mut remaining = self.render_first(data, area, buf);
         let mut idx = self.start.idx;
-        while remaining > 0 && idx < self.len() - 1 {
+        while remaining > 0 && idx < data.len() - 1 {
             idx += 1;
-            remaining = self.render_down(area, buf, idx, remaining);
+            remaining = self.render_down(data, area, buf, idx, remaining);
         }
         debug!("render done; {remaining} empty lines");
         remaining
     }
 
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     fn render_tail(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
     ) {
@@ -63,10 +65,10 @@ where
         Clear.render(area, buf);
         let mut offset = 0;
         let mut remaining = area.height;
-        let mut idx = self.len();
+        let mut idx = data.len();
         while remaining > 0 && idx > 0 {
             idx -= 1;
-            (remaining, offset) = self.render_up(area, buf, idx, remaining);
+            (remaining, offset) = self.render_up(data, area, buf, idx, remaining);
         }
 
         self.start = StartLocation {
@@ -78,12 +80,13 @@ where
     }
 
     /// keeps the same relative offset when the height of the widget changes
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, data))]
     fn track_resize(
         &mut self,
+        data: &[U],
         area: Rect,
     ) {
-        let new_height = self.height(self.start.idx);
+        let new_height = self.height(data, self.start.idx);
         if new_height == self.start.height {
             return;
         }
@@ -107,16 +110,17 @@ where
         }
     }
 
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     fn render_first(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
     ) -> u16 {
-        let visible = (self.height(self.start.idx) - self.start.offset).min(area.height);
+        let visible = (self.height(data, self.start.idx) - self.start.offset).min(area.height);
         let offset = self.start.offset;
         let ctx = self.ctx;
-        self.element(self.start.idx).partial_render(
+        self.element(data, self.start.idx).partial_render(
             Rect {
                 height: visible,
                 ..area
@@ -128,17 +132,18 @@ where
         area.height - visible
     }
 
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     fn render_down(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
         idx: usize,
         remaining: u16,
     ) -> u16 {
-        let visible = self.height(idx).min(remaining);
+        let visible = self.height(data, idx).min(remaining);
         let ctx = self.ctx;
-        self.element(idx).partial_render(
+        self.element(data, idx).partial_render(
             Rect {
                 y: area.y + area.height - remaining,
                 height: visible,
@@ -151,19 +156,20 @@ where
         remaining - visible
     }
 
-    #[tracing::instrument(skip(self, buf))]
+    #[tracing::instrument(skip(self, data, buf))]
     fn render_up(
         &mut self,
+        data: &[U],
         area: Rect,
         buf: &mut Buffer,
         idx: usize,
         remaining: u16,
     ) -> (u16, u16) {
-        let element = self.height(idx);
+        let element = self.height(data, idx);
         let visible = element.min(remaining);
         let offset = element - visible;
         let ctx = self.ctx;
-        self.element(idx).partial_render(
+        self.element(data, idx).partial_render(
             Rect {
                 y: area.y + remaining - visible,
                 height: visible,

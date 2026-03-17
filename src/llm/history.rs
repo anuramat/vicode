@@ -17,6 +17,7 @@ pub struct History {
     messages: Vec<Message>,
 }
 
+// TODO this is kinda ugly, maybe send usize + HistoryEvent tuple?
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
     ResponseDelta(usize, Delta),

@@ -23,27 +23,28 @@ impl<'a> Tab<'a> {
         use crossterm::event::KeyCode::Char;
         use crossterm::event::KeyCode::*;
         use crossterm::event::KeyModifiers as Mods;
+        let history = self.agent_state.context.history.as_ref();
         match event.code {
             Enter => self.submit().await,
             Char('i') => self.insert_mode(true),
 
-            Up => self.history.line_up(),
-            Down => self.history.line_down(),
+            Up => self.scroll.line_up(history),
+            Down => self.scroll.line_down(history),
 
-            Char('y') if event.modifiers == Mods::CONTROL => self.history.line_up(),
-            Char('e') if event.modifiers == Mods::CONTROL => self.history.line_down(),
+            Char('y') if event.modifiers == Mods::CONTROL => self.scroll.line_up(history),
+            Char('e') if event.modifiers == Mods::CONTROL => self.scroll.line_down(history),
 
-            Char('u') if event.modifiers == Mods::CONTROL => self.history.half_page_up(),
-            Char('d') if event.modifiers == Mods::CONTROL => self.history.half_page_down(),
+            Char('u') if event.modifiers == Mods::CONTROL => self.scroll.half_page_up(history),
+            Char('d') if event.modifiers == Mods::CONTROL => self.scroll.half_page_down(history),
 
-            Char('b') if event.modifiers == Mods::CONTROL => self.history.page_up(),
-            Char('f') if event.modifiers == Mods::CONTROL => self.history.page_down(),
+            Char('b') if event.modifiers == Mods::CONTROL => self.scroll.page_up(history),
+            Char('f') if event.modifiers == Mods::CONTROL => self.scroll.page_down(history),
 
-            Char('[') => self.history.prev_element(),
-            Char(']') => self.history.next_element(),
+            Char('[') => self.scroll.prev_element(history),
+            Char(']') => self.scroll.next_element(history),
             // TODO add {/} to move between *user* messages
-            Char('g') => self.history.top(),
-            Char('G') => self.history.bottom(),
+            Char('g') => self.scroll.top(history),
+            Char('G') => self.scroll.bottom(),
 
             Char(c @ '1'..='9') => {
                 self.multiplier = c.to_digit(10).unwrap() as usize;

@@ -33,24 +33,28 @@ impl<'a> App<'a> {
                 .split(outer[0]);
             frame.render_stateful_widget(&self.tablist.widget, inner[0], &mut self.tablist.state);
 
-            let mut tab_name = None;
+            let mut tab_info = None;
             if let Some(tabnum) = selected
                 && let Some((_, tab)) = self.tabs.get_index_mut(tabnum)
             {
                 tab.render(inner[1], frame.buffer_mut(), self.ctx);
-                tab_name = Some(tab.aid.0.to_string());
+                tab_info = Some(TabInfo {
+                    name: tab.aid.0.to_string(),
+                    assistant: tab.agent_state.context.assistant_id.clone(),
+                });
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
-            let line = self.status_line(tab_name);
+            let line = self.status_line(tab_info, outer[1].width);
             frame.render_widget(&line, outer[1]);
         })?;
         Ok(())
     }
 
-    pub fn status_line(
+    fn status_line(
         &'a self,
-        tab_name: Option<String>,
+        tab: Option<TabInfo>,
+        width: u16,
     ) -> Line<'a> {
         if let Some(msg) = self.notification.as_ref() {
             return Line::raw(&msg.msg);
@@ -58,10 +62,21 @@ impl<'a> App<'a> {
 
         let mut line = Line::raw("");
         line.push_span(Span::styled(&self.project_name, Style::new().dark_gray()));
-        if let Some(tab_name) = tab_name {
-            line.push_span(Span::styled("/", Style::new().dark_gray()));
-            line.push_span(Span::raw(tab_name));
-        };
+        let Some(tab) = tab else { return line };
+        line.push_span(Span::styled("/", Style::new().dark_gray()));
+        line.push_span(Span::raw(tab.name));
+
+        let remaining: usize = (width as usize) - line.width();
+        if tab.assistant.len() + 3 < remaining {
+            let spacing: usize = remaining - tab.assistant.len();
+            line.push_span(" ".repeat(spacing));
+            line.push_span(tab.assistant);
+        }
         line
     }
+}
+
+struct TabInfo {
+    name: String,
+    assistant: String,
 }

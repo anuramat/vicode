@@ -34,12 +34,9 @@ enum Mode {
 }
 
 #[derive(Clone, Debug)]
-pub struct ScrollElements<T, U>
-where
-    T: AsRef<[U]>,
-    U: IntoElement,
+pub struct ScrollElements<U>
+where U: IntoElement
 {
-    pub data: T,
     ctx: RenderContext,
     dirty: Vec<bool>,
     elements: Vec<Element>,
@@ -50,15 +47,12 @@ where
     phantom: PhantomData<U>,
 }
 
-impl<T, U> ScrollElements<T, U>
-where
-    T: AsRef<[U]>,
-    U: IntoElement,
+impl<U> ScrollElements<U>
+where U: IntoElement
 {
-    pub fn new(data: T) -> Self {
+    pub fn new() -> Self {
         Self {
             ctx: Default::default(),
-            data,
             dirty: Vec::new(),
             elements: Vec::new(),
             start: Default::default(),
@@ -78,14 +72,33 @@ where
         }
     }
 
+    pub fn set_len(
+        &mut self,
+        len: usize,
+    ) {
+        if len < self.elements.len() {
+            self.dirty = Vec::new();
+        }
+        self.dirty.resize(len, true);
+        self.elements.resize_with(len, Default::default);
+        if len == 0 || self.start.idx >= len {
+            self.start = Default::default();
+            self.mode = Mode::Tail;
+        }
+    }
+
     pub fn set_start(
         &mut self,
+        data: &[U],
         idx: usize,
         offset: u16,
     ) {
+        if data.is_empty() {
+            return Default::default();
+        }
         self.start = StartLocation {
             idx,
-            height: self.height(idx),
+            height: self.height(data, idx),
             offset,
             relative_offset: None,
         }
@@ -93,27 +106,26 @@ where
 
     pub fn element(
         &mut self,
+        data: &[U],
         idx: usize,
     ) -> &mut Element {
-        self.elements.resize_with(self.len(), Default::default);
-        if idx >= self.dirty.len() || self.dirty[idx] {
-            self.dirty.resize(self.len(), true);
-            self.elements[idx] = self.data.as_ref()[idx].to_element();
+        if self.dirty[idx] {
+            self.elements[idx] = data[idx].to_element();
             self.dirty[idx] = false;
         }
         &mut self.elements[idx]
     }
 
-    pub fn len(&self) -> usize {
-        self.data.as_ref().len()
-    }
-
     pub fn height(
         &mut self,
+        data: &[U],
         idx: usize,
     ) -> u16 {
+        if data.is_empty() {
+            return 0;
+        }
         let width = self.width;
         let ctx = self.ctx;
-        self.element(idx).height(width, ctx)
+        self.element(data, idx).height(width, ctx)
     }
 }

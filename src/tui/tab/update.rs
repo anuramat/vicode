@@ -13,13 +13,13 @@ impl Tab<'_> {
         &mut self,
         event: HistoryEvent,
     ) {
-        self.history.data.handle(event.clone());
+        self.agent_state.context.history.handle(event.clone());
         match event {
             HistoryEvent::ResponseDelta(idx, _)
             | HistoryEvent::ResponseItem(idx, _)
             | HistoryEvent::UserMessage(idx, _)
             | HistoryEvent::DeveloperMessage(idx, _) => {
-                self.history.set_dirty(idx);
+                self.scroll.set_dirty(idx);
             }
         }
     }
