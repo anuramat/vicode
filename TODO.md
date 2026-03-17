@@ -31,6 +31,7 @@
 - make sure our prompting makes sense (check for inconsistencies)
 - cleanup logic for stale agents/worktrees/etc
 - make sure tracing::debug! doesn't get into release build
+- refactor: `if let Some(x) = ... { x } else { return }` into `let Some(x) = ...`
 
 # maybe
 
