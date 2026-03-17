@@ -50,9 +50,6 @@ pub struct App<'a> {
     /// project name shown in status line
     pub project_name: String,
     pub tablist: TabList<'a>,
-
-    // TODO we should probably drop this
-    pub repo: Repository,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -66,7 +63,6 @@ impl<'a> App<'a> {
     async fn new() -> Result<Self> {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
         let (parent_tx, parent_rx) = channel(CHANNEL_CAPACITY);
-        let repo = Repository::discover(PROJECT.root.clone())?;
         let mut joinset = JoinSet::new();
         joinset.spawn(crate::tui::app::tabs::translate_agent_events(
             tx.clone(),
@@ -87,7 +83,6 @@ impl<'a> App<'a> {
             tx,
             rx,
             parent_tx,
-            repo,
             should_exit: false,
             tablist: TabList::default(),
             tabs: IndexMap::new(),

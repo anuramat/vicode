@@ -1,4 +1,5 @@
 use anyhow::Result;
+use git2::Repository;
 use indexmap::IndexMap;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
@@ -80,7 +81,8 @@ impl<'a> App<'a> {
         let agent: Agent = if PROJECT.agent(&aid).exists() {
             Agent::load(self.parent_tx.clone(), aid.clone()).await?
         } else {
-            let commit = self.repo.head()?.peel_to_commit()?.id().to_string();
+            let repo = Repository::discover(PROJECT.root.clone())?;
+            let commit = repo.head()?.peel_to_commit()?.id().to_string();
             let instructions = PROJECT.instructions_by_commit(&commit).await?;
             Agent::new(self.parent_tx.clone(), aid.clone(), commit, instructions).await?
         };
