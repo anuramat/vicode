@@ -27,12 +27,14 @@ pub enum AgentEvent {
     DuplicateRequest(AgentId),
 }
 
+// TODO drop AgentId from variants, instead send (AgentId, ParentEvent) pairs
 #[derive(Debug)]
 pub enum ParentEvent {
     AttachAgent(AgentId),
     InfoUpdate(AgentId),
     HistoryUpdate(AgentId, HistoryEvent),
     TurnComplete(AgentId),
+    Error(AgentId, String),
 }
 
 #[derive(Debug)]
@@ -100,7 +102,9 @@ impl Agent {
             }
             TurnError(msg) | ResponseFailed(msg) => {
                 error!("error in agent {}: {}", self.id.0, msg);
-                // TODO better handling
+                self.parent
+                    .send(ParentEvent::Error(self.id.clone(), msg))
+                    .await?;
             }
         }
         // TODO if we error out, tell the app that we're dead

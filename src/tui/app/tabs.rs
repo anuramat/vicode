@@ -212,6 +212,7 @@ pub async fn translate_agent_events(
             TurnComplete(aid) => {
                 app_tx.send(AppEvent::AgentIdle(aid)).await?;
             }
+            Error(aid, msg) => app_tx.send(AppEvent::Error(aid, msg)).await?,
         }
     }
     Ok(())

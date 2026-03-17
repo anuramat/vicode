@@ -4,6 +4,7 @@ use tracing::debug;
 use tracing::instrument;
 
 use super::App;
+use super::NotificationKind;
 use crate::agent::AgentEvent;
 use crate::agent::AgentId;
 use crate::agent::handle::UserPrompt;
@@ -20,6 +21,7 @@ pub enum AppEvent {
     InfoUpdate(AgentId),
     HistoryUpdate(AgentId, HistoryEvent),
     AgentIdle(AgentId),
+    Error(AgentId, String),
 
     AttachAgent(AgentId),
 
@@ -65,6 +67,12 @@ impl<'a> App<'a> {
                     tab.state = TabState::Idle;
                 }
                 self.dirty = true;
+            }
+            Error(agent_id, msg) => {
+                if self.selected_aid() == Some(agent_id) {
+                    self.notify(NotificationKind::Error, msg);
+                    self.dirty = true;
+                }
             }
             Redraw => {}
         }

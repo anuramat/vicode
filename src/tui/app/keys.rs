@@ -52,15 +52,32 @@ impl<'a> App<'a> {
         &mut self,
         event: KeyEvent,
     ) -> Result<bool> {
+        use super::NotificationKind::*;
+        fn show_hide(hidden: bool) -> &'static str {
+            if hidden { "hide" } else { "show" }
+        }
+
         match event.code {
             Char('t') => {
                 self.ctx.hide_tools = !self.ctx.hide_tools;
+                self.notify(
+                    Info,
+                    format!("tool calls: {}", show_hide(self.ctx.hide_tools)),
+                );
             }
             Char('r') => {
                 self.ctx.hide_reasoning = !self.ctx.hide_reasoning;
+                self.notify(
+                    Info,
+                    format!("reasoning: {}", show_hide(self.ctx.hide_reasoning)),
+                );
             }
             Char('s') => {
                 self.ctx.hide_developer = !self.ctx.hide_developer;
+                self.notify(
+                    Info,
+                    format!("developer msg: {}", show_hide(self.ctx.hide_developer)),
+                );
             }
 
             Char('j') => self.next_tab(),

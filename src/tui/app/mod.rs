@@ -16,6 +16,8 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 use tokio::task::JoinSet;
+use tokio::time::Duration;
+use tokio::time::Instant;
 
 use crate::agent::AgentEvent;
 use crate::agent::AgentId;
@@ -23,6 +25,18 @@ use crate::agent::handle::ParentEvent;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;
+
+#[derive(Clone, Copy)]
+pub enum NotificationKind {
+    Info,
+    Error,
+}
+
+pub struct Notification {
+    pub kind: NotificationKind,
+    pub msg: String,
+    pub expires_at: Instant,
+}
 
 pub struct App<'a> {
     pub should_exit: bool,
@@ -36,7 +50,6 @@ pub struct App<'a> {
     pub ctx: RenderContext,
     /// true if we received an event but didn't redraw yet
     pub dirty: bool,
-    pub terminal: DefaultTerminal,
 
     /// channel for primary agents to report to
     pub parent_tx: Sender<ParentEvent>,
@@ -47,6 +60,7 @@ pub struct App<'a> {
 
     /// project name shown in status line
     pub project_name: String,
+    pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
 }
 
@@ -56,6 +70,7 @@ pub struct AppState {
 }
 
 const CHANNEL_CAPACITY: usize = 100;
+const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl<'a> App<'a> {
     async fn new() -> Result<Self> {
@@ -85,7 +100,7 @@ impl<'a> App<'a> {
             tablist: TabList::default(),
             tabs: IndexMap::new(),
             agents: HashMap::new(),
-            terminal: ratatui::init(),
+            notification: None,
             joinset,
         })
     }
@@ -94,5 +109,23 @@ impl<'a> App<'a> {
         AppState {
             primary_agents: self.tabs.keys().cloned().collect(),
         }
+    }
+
+    pub fn selected_aid(&self) -> Option<AgentId> {
+        self.selected_tab()
+            .and_then(|idx| self.tabs.get_index(idx))
+            .map(|(aid, _)| aid.clone())
+    }
+
+    pub fn notify(
+        &mut self,
+        kind: NotificationKind,
+        msg: String,
+    ) {
+        self.notification = Some(Notification {
+            kind,
+            msg,
+            expires_at: Instant::now() + NOTIFICATION_DURATION,
+        });
     }
 }

@@ -1,7 +1,10 @@
+use std::future::pending;
+
 use anyhow::Result;
 use crossterm::event::Event;
 use futures::future::join_all;
 use tokio::time::Duration;
+use tokio::time::sleep_until;
 
 use super::App;
 use crate::project::PROJECT;
@@ -15,10 +18,12 @@ impl<'a> App<'a> {
     }
 
     pub async fn run(mut self) -> Result<()> {
+        let mut term = ratatui::init();
+
         // translate key events to app events
         self.spawn_term_translator();
         // first render
-        self.draw()?;
+        self.draw(&mut term)?;
         // load tabs
         self.load_tabs().await?;
         // TODO cleanup -- delete agents that are not in app state
@@ -30,9 +35,21 @@ impl<'a> App<'a> {
                 // throttled render
                 _ = render_interval.tick() => {
                     if self.dirty {
-                        self.draw()?;
+                        self.draw(&mut term)?;
                         self.dirty = false;
                     }
+                }
+
+                // notification expiration
+                _ = async {
+                    if let Some(notification) = self.notification.as_ref() {
+                        sleep_until(notification.expires_at).await;
+                    } else {
+                        pending::<()>().await;
+                    }
+                } => {
+                    self.notification = None;
+                    self.dirty = true;
                 }
 
                 // handle events

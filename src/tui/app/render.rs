@@ -1,9 +1,10 @@
 use anyhow::Result;
+use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
+use ratatui::text::Line;
 
 use crate::tui::app::App;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
-use crate::tui::widgets::statusline::StatusLine;
 
 const TAB_PANE_WIDTH: u16 = 24;
 
@@ -13,9 +14,12 @@ const CONSTRAINTS: [Constraint; 2] = [Constraint::Length(TAB_PANE_WIDTH), Constr
 
 impl<'a> App<'a> {
     #[tracing::instrument(skip(self))]
-    pub fn draw(&mut self) -> Result<()> {
+    pub fn draw(
+        &mut self,
+        term: &mut DefaultTerminal,
+    ) -> Result<()> {
         let selected = self.selected_tab();
-        self.terminal.draw(|frame| {
+        term.draw(|frame| {
             // statusline vs the rest
             let outer = Layout::default()
                 .direction(Direction::Vertical)
@@ -38,9 +42,26 @@ impl<'a> App<'a> {
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
-            let line = StatusLine::new(self.project_name.clone(), tab_name);
+            let line = self.status_line(tab_name);
             frame.render_widget(&line, outer[1]);
         })?;
         Ok(())
+    }
+
+    pub fn status_line(
+        &'a self,
+        tab_name: Option<String>,
+    ) -> Line<'a> {
+        if let Some(msg) = self.notification.as_ref() {
+            return Line::raw(&msg.msg);
+        }
+
+        let mut line = Line::raw("");
+        line.push_span(Span::styled(&self.project_name, Style::new().dark_gray()));
+        if let Some(tab_name) = tab_name {
+            line.push_span(Span::styled("/", Style::new().dark_gray()));
+            line.push_span(Span::raw(tab_name));
+        };
+        line
     }
 }
