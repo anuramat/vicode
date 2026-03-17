@@ -14,6 +14,7 @@ use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::init::duplicate;
+use crate::llm::api::assistant::ASSISTANT_POOL;
 
 pub async fn run_child(
     parent: &AgentId,
@@ -28,7 +29,13 @@ pub async fn run_child(
             },
             children: Vec::new(),
         },
-        context: context.clone(),
+        context: AgentContext {
+            assistant_id: ASSISTANT_POOL
+                .get()
+                .unwrap()
+                .next_subagent(&context.assistant_id),
+            ..context.clone()
+        },
     };
     duplicate(parent, aid, &state, false).await?;
 

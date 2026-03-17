@@ -6,6 +6,7 @@ use futures::Stream;
 use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
+use crate::config::AssistantModelConfig;
 use crate::llm::api::event::StreamEvent;
 use crate::llm::history::History;
 
@@ -19,6 +20,8 @@ pub trait Backend: Send + Sync {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
+        // TODO can we somehow avoid model config here? ideally don't pass it around
+        model: AssistantModelConfig,
         instructions: String,
         history: History,
         tools: ToolSchemas,

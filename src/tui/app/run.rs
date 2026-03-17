@@ -2,12 +2,13 @@ use std::future::pending;
 
 use anyhow::Result;
 use crossterm::event::Event;
-use futures::future::join_all;
 use futures::future::try_join_all;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 
 use super::App;
+use crate::llm::api::assistant::ASSISTANT_POOL;
+use crate::llm::api::assistant::AssistantPool;
 use crate::project::PROJECT;
 use crate::tui::app::handle::AppEvent;
 
@@ -25,6 +26,8 @@ impl<'a> App<'a> {
         self.spawn_term_translator();
         // first render
         self.draw(&mut term)?;
+        // load assistants
+        ASSISTANT_POOL.get_or_try_init(AssistantPool::new).await?;
         // load tabs
         self.load_tabs().await?;
         // TODO cleanup -- delete agents that are not in app state

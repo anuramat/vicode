@@ -52,6 +52,7 @@ governor = "0.10.4"
 async-openai = { version = "0.33.0", features = ["byot", "responses", "chat-completion"] }
 ignore = "0.4.25"
 similar = "2.7.0"
+smart-default = "0.7.1"
 
 [lints.clippy]
 redundant_clone = "warn"

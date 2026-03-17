@@ -14,6 +14,7 @@ use async_openai::types::chat::CreateChatCompletionRequestArgs;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
+use crate::config::AssistantModelConfig;
 use crate::llm::history::History;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
@@ -25,27 +26,32 @@ use crate::llm::message::ToolCallItem;
 use crate::llm::message::UserMessage;
 
 pub fn request(
-    mut builder: CreateChatCompletionRequestArgs,
+    assistant: AssistantModelConfig,
     instructions: String,
     history: History,
     tools: ToolSchemas,
     streaming: bool,
-    config: &ApiCompatConfig,
+    compat: &ApiCompatConfig,
     reasoning_key: Option<&str>,
 ) -> Result<serde_json::Value> {
+    let mut builder = CreateChatCompletionRequestArgs::default();
+    builder.model(&assistant.model).parallel_tool_calls(true);
+    if let Some(effort) = assistant.effort {
+        builder.reasoning_effort(effort);
+    }
     let mut items = history.messages();
     items.insert(
         0,
         Message::Developer(DeveloperMessage { text: instructions }),
     );
 
-    if let Some(tag) = config.reasoning_as_output.clone() {
+    if let Some(tag) = compat.reasoning_as_output.clone() {
         items
             .iter_mut()
             .for_each(move |message| crate::llm::api::compat::reasoning_to_output(&tag, message));
     }
 
-    if config.developer_as_user {
+    if compat.developer_as_user {
         items.iter_mut().for_each(|message| {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {

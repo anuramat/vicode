@@ -1,36 +1,40 @@
-[api]
+primary_assistant = ["main"]
 
-# base_url = "https://openrouter.ai/api/v1"
-# key_command = "cat /run/agenix/openrouter"
-# model_name = "CHANGE_ME"
+[assistants.cerebras]
+api = "cerebras"
+model = "zai-glm-4.7"
+[assistants.gpt]
+api = "openai"
+model = "gpt-5.1-codex-mini"
+effort = "low"
+[assistants.llama]
+api = "llama"
+model = "dummy"
+[assistants.zai]
+api = "zai"
+model = "glm-5"
 
-# base_url = "http://anuramat-bgm5:11343/v1"
-# model_name = "dummy"
-# developer_as_user = true
-
-# base_url = "https://api.openai.com/v1"
-# key_command = "cat /run/agenix/openai"
-# model_name = "gpt-5.1-codex-mini"
-# effort = "low"
-
+[apis.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+key_command = "cat /run/agenix/openrouter"
+[apis.llama]
+base_url = "http://anuramat-bgm5:11343/v1"
+developer_as_user = true
+[apis.openai]
+base_url = "https://api.openai.com/v1"
+key_command = "cat /run/agenix/openai"
+[apis.cerebras]
 # TODO -- add passthrough params; cerebras-specific -- clear_thinking: false
 base_url = "https://api.cerebras.ai/v1"
 key_command = "cat /run/agenix/cerebras"
-model_name = "zai-glm-4.7"
 kind = "chat_completions"
 reasoning_key = "reasoning"
 reasoning_as_output = "think"
-
-# base_url = "https://api.z.ai/api/coding/paas/v4"
-# key_command = "cat /run/agenix/zai"
-# model_name = "glm-5"
-# kind = "chat_completions"
-# reasoning_key = "reasoning_content"
-
-concurrency = 1
-rps = 1
-retries = 5
-backoff_ms = 1000
+[apis.zai]
+base_url = "https://api.z.ai/api/coding/paas/v4"
+key_command = "cat /run/agenix/zai"
+kind = "chat_completions"
+reasoning_key = "reasoning_content"
 
 [bash]
   cmd = [

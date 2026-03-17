@@ -12,7 +12,8 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
-use crate::config::CONFIG;
+use crate::config::ApiConfig;
+use crate::llm::api::backend::AssistantModelConfig;
 use crate::llm::api::backend::AssistantStream;
 use crate::llm::api::backend::Backend;
 use crate::llm::api::event::StreamEvent;
@@ -22,28 +23,16 @@ use crate::llm::message::*;
 pub struct ResponsesBackend {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
-    request_builder: responses::CreateResponseArgs,
 }
 
 impl ResponsesBackend {
     pub fn new(
         client: Client<OpenAIConfig>,
-        compat: ApiCompatConfig,
+        config: ApiConfig,
     ) -> Self {
-        let mut request_builder = responses::CreateResponseArgs::default();
-        request_builder
-            .model(&CONFIG.api.model_name)
-            .parallel_tool_calls(true)
-            .reasoning(responses::Reasoning {
-                effort: CONFIG.api.effort.clone(),
-                summary: Some(responses::ReasoningSummary::Detailed),
-            })
-            .include(vec![responses::IncludeEnum::ReasoningEncryptedContent])
-            .store(false);
         Self {
             client,
-            compat,
-            request_builder,
+            compat: config.compat,
         }
     }
 }
@@ -53,17 +42,12 @@ impl Backend for ResponsesBackend {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
+        model: AssistantModelConfig,
         instructions: String,
         history: History,
         tools: ToolSchemas,
     ) -> Result<AssistantStream> {
-        let request = request(
-            self.request_builder.clone(),
-            instructions,
-            history,
-            tools,
-            &self.compat,
-        )?;
+        let request = request(model, instructions, history, tools, &self.compat)?;
         let inner = self.client.responses().create_stream(request).await?;
         Ok(Box::pin(ResponsesStream {
             inner,
@@ -73,16 +57,26 @@ impl Backend for ResponsesBackend {
 }
 
 fn request(
-    mut builder: responses::CreateResponseArgs,
+    model: AssistantModelConfig,
     instructions: String,
     history: History,
     tools: ToolSchemas,
-    config: &ApiCompatConfig,
+    compat: &ApiCompatConfig,
 ) -> Result<responses::CreateResponse> {
+    let mut builder = responses::CreateResponseArgs::default();
+    builder
+        .model(&model.model)
+        .parallel_tool_calls(true)
+        .reasoning(responses::Reasoning {
+            effort: model.effort,
+            summary: Some(responses::ReasoningSummary::Detailed),
+        })
+        .include(vec![responses::IncludeEnum::ReasoningEncryptedContent])
+        .store(false);
     let mut messages = history.messages();
 
     // NOTE here order is important -- message with instructions (if any) should stay a developer message regardless
-    if config.developer_as_user {
+    if compat.developer_as_user {
         messages.iter_mut().for_each(|message| {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
@@ -92,14 +86,14 @@ fn request(
         });
     }
 
-    if config.instructions_as_message {
+    if compat.instructions_as_message {
         let msg = Message::Developer(DeveloperMessage { text: instructions });
         messages.insert(0, msg);
     } else {
         builder.instructions(instructions);
     }
 
-    if let Some(tag) = config.reasoning_as_output.clone() {
+    if let Some(tag) = compat.reasoning_as_output.clone() {
         messages
             .iter_mut()
             .for_each(move |message| crate::llm::api::compat::reasoning_to_output(&tag, message));

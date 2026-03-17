@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use fs_extra::dir::copy;
 use tokio::sync::mpsc::Sender;
@@ -7,7 +5,7 @@ use tokio::sync::mpsc::channel;
 
 use crate::agent::task::AgentTaskManager;
 use crate::agent::*;
-use crate::llm::api::assistant::Assistant;
+use crate::llm::api::assistant::ASSISTANT_POOL;
 use crate::llm::history::History;
 use crate::project::PROJECT;
 
@@ -41,6 +39,10 @@ impl Agent {
         state: AgentState,
     ) -> Result<Self> {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
+        let assistant = ASSISTANT_POOL
+            .get()
+            .unwrap()
+            .assistant(&state.context.assistant_id)?;
         Ok(Self {
             id,
             state,
@@ -48,7 +50,7 @@ impl Agent {
             rx,
             tskmgr: AgentTaskManager::new(),
             tx,
-            assistant: Arc::new(Assistant::new().await?),
+            assistant,
             tools: Default::default(),
         })
     }
@@ -108,6 +110,7 @@ impl AgentState {
                 commit,
                 history: History::new(),
                 instructions,
+                assistant_id: ASSISTANT_POOL.get().unwrap().next_primary(),
             },
         };
         state.save(&id).await?;

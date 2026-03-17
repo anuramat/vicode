@@ -60,6 +60,7 @@ pub struct AgentContext {
     pub commit: String,
     pub history: History,
     pub instructions: String,
+    pub assistant_id: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
