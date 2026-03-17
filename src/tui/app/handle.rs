@@ -17,7 +17,8 @@ pub enum AppEvent {
     Key(KeyEvent),
 
     UserPrompt(AgentId, UserPrompt),
-    // TODO replace with ParentEvent, and write a special handler
+    SetAssistant(AgentId, String),
+    // TODO replace with ParentEvent(ParentEvent), and write a special handler
     InfoUpdate(AgentId),
     HistoryUpdate(AgentId, HistoryEvent),
     AgentIdle(AgentId),
@@ -57,6 +58,11 @@ impl<'a> App<'a> {
             UserPrompt(agent_id, msg) => {
                 if let Some(tx) = self.agents.get(&agent_id) {
                     tx.send(AgentEvent::Submit(msg)).await?;
+                }
+            }
+            SetAssistant(agent_id, id) => {
+                if let Some(tx) = self.agents.get(&agent_id) {
+                    tx.send(AgentEvent::SetAssistant(id)).await?;
                 }
             }
             AttachAgent(agent_id) => {

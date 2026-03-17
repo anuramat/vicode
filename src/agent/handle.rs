@@ -11,12 +11,14 @@ use crate::agent::replica;
 use crate::llm::history;
 use crate::llm::history::HistoryEvent;
 use crate::llm::message::AssistantItem;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
 
 #[derive(Debug)]
 pub enum AgentEvent {
     TaskDone(TaskId, TaskResult),
     Submit(UserPrompt),
+    SetAssistant(String),
     HistoryEvent(HistoryEvent),
     /// backend error
     ResponseFailed(String),
@@ -94,6 +96,9 @@ impl Agent {
                     }
                 }
             }
+            SetAssistant(id) => {
+                self.set_assistant(&id).await?;
+            }
             HistoryEvent(event) => {
                 self.handle_history(event).await?;
             }
@@ -149,5 +154,14 @@ impl Agent {
                     .unwrap(),
             )
         });
+    }
+
+    pub async fn set_assistant(
+        &mut self,
+        id: &str,
+    ) -> Result<()> {
+        self.assistant = ASSISTANT_POOL.get().unwrap().assistant(id)?;
+        self.state.context.assistant_id = id.to_string();
+        self.save().await
     }
 }

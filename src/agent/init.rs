@@ -124,3 +124,70 @@ impl AgentState {
         PROJECT.save_agent_state(id, self).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::channel;
+
+    use super::*;
+    use crate::config::Config;
+    use crate::llm::provider::assistant::AssistantPool;
+    use crate::project::PROJECT;
+
+    #[tokio::test]
+    async fn set_assistant_updates_runtime_and_state() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [assistants.deep]
+            provider = "main"
+            model = "gpt-deep"
+
+            [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        let _ = ASSISTANT_POOL.set(AssistantPool::from_config(&config).await.unwrap());
+
+        let aid = AgentId::new();
+        tokio::fs::create_dir_all(PROJECT.agent(&aid)).await.unwrap();
+
+        let state = AgentState {
+            topology: Default::default(),
+            context: AgentContext {
+                commit: String::new(),
+                history: History::new(),
+                instructions: String::new(),
+                assistant_id: "fast".into(),
+            },
+        };
+        let (parent_tx, _) = channel(1);
+        let mut agent = Agent::from_state(parent_tx, aid.clone(), state).await.unwrap();
+
+        agent.set_assistant("deep").await.unwrap();
+
+        assert_eq!(agent.state.context.assistant_id, "deep");
+        assert_eq!(agent.assistant.config.model.model, "gpt-deep");
+        let saved = PROJECT.load_agent_state(&aid).await.unwrap();
+        assert_eq!(saved.context.assistant_id, "deep");
+        tokio::fs::remove_dir_all(PROJECT.agent(&aid)).await.unwrap();
+    }
+}

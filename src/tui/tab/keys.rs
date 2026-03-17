@@ -31,6 +31,8 @@ impl<'a> Tab<'a> {
             Up => self.scroll.line_up(history),
             Down => self.scroll.line_down(history),
 
+            Tab => self.next_assistant().await?,
+
             Char('y') if event.modifiers == Mods::CONTROL => self.scroll.line_up(history),
             Char('e') if event.modifiers == Mods::CONTROL => self.scroll.line_down(history),
 

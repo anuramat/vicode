@@ -1,3 +1,5 @@
+use anyhow::Context;
+use anyhow::Result;
 use crossterm::event::KeyEvent;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
@@ -5,6 +7,7 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
@@ -71,6 +74,22 @@ impl<'a> Tab<'a> {
             .send(AppEvent::UserPrompt(self.aid.clone(), prompt))
             .await
             .expect("failed to send user message");
+    }
+
+    pub async fn next_assistant(&mut self) -> Result<()> {
+        if !matches!(self.state, TabState::Idle) {
+            return Ok(());
+        }
+        let id = ASSISTANT_POOL
+            .get()
+            .unwrap()
+            .next_assistant(&self.agent_state.context.assistant_id)
+            .with_context(|| "couldn't find the provided assistant id")?;
+        self.agent_state.context.assistant_id = id.clone();
+        self.tx
+            .send(AppEvent::SetAssistant(self.aid.clone(), id))
+            .await?;
+        Ok(())
     }
 
     pub async fn key_insert(

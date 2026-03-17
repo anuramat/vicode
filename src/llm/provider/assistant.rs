@@ -11,6 +11,7 @@ use futures::future::try_join_all;
 use governor::DefaultDirectRateLimiter;
 use governor::Quota;
 use governor::RateLimiter;
+use indexmap::IndexMap;
 use tokio::sync::OnceCell;
 use tokio::sync::Semaphore;
 
@@ -39,7 +40,7 @@ pub struct Assistant {
 }
 
 pub struct AssistantPool {
-    assistants: HashMap<String, Arc<Assistant>>,
+    assistants: IndexMap<String, Arc<Assistant>>,
     primary: RoundRobin,
     subagent: SubagentSelector,
 }
@@ -115,7 +116,7 @@ impl AssistantPool {
         Self::from_config(&CONFIG).await
     }
 
-    async fn from_config(config: &Config) -> Result<Self> {
+    pub async fn from_config(config: &Config) -> Result<Self> {
         let providers: HashMap<_, _> = {
             let futures = config.providers.iter().map(
                 async |(id, config)| -> Result<(String, Arc<Provider>)> {
@@ -125,7 +126,7 @@ impl AssistantPool {
             try_join_all(futures).await?.into_iter().collect()
         };
 
-        let assistants: HashMap<_, _> = config
+        let assistants: IndexMap<_, _> = config
             .assistants
             .iter()
             .map(|(id, config)| {
@@ -166,6 +167,19 @@ impl AssistantPool {
 
     pub fn next_primary(&self) -> String {
         self.primary.next()
+    }
+
+    pub fn next_assistant(
+        &self,
+        id: &str,
+    ) -> Option<String> {
+        let idx = self.assistants.get_index_of(id)?;
+        Some(
+            self.assistants
+                .get_index((idx + 1) % self.assistants.len())?
+                .0
+                .clone(),
+        )
     }
 
     pub fn next_subagent(
@@ -231,6 +245,12 @@ mod tests {
             effort = "low"
 
             [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
             "#,
         )
         .unwrap();
@@ -264,11 +284,60 @@ mod tests {
             model = "gpt-deep"
 
             [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
             "#,
         )
         .unwrap();
         let pool = AssistantPool::from_config(&config).await.unwrap();
         assert_eq!(pool.next_subagent("fast"), "deep");
         assert_eq!(pool.next_subagent("fast"), "fast");
+    }
+
+    #[tokio::test]
+    async fn next_assistant_uses_full_assistant_order() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [assistants.deep]
+            provider = "main"
+            model = "gpt-deep"
+
+            [assistants.alt]
+            provider = "main"
+            model = "gpt-alt"
+
+            [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        let pool = AssistantPool::from_config(&config).await.unwrap();
+        let ids: Vec<_> = config.assistants.keys().cloned().collect();
+        for pair in ids.windows(2) {
+            assert_eq!(pool.next_assistant(&pair[0]).unwrap(), pair[1]);
+        }
+        assert_eq!(pool.next_assistant(ids.last().unwrap()).unwrap(), ids[0]);
     }
 }
