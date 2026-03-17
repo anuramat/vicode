@@ -12,9 +12,11 @@ default: run
 run:
     RUST_LOG=debug RUST_BACKTRACE=full cargo run
 
-# nuke app data
-clean:
+umount:
     [ -d '{{ data_dir }}' ] && fd --glob workdir --exact-depth 4 --search-path '{{ data_dir }}' -x umount || true
+
+# nuke app data
+clean: umount
     rm -rf '{{ data_dir }}'
     rm '{{ state_dir }}'/* || true
     git worktree prune
