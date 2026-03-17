@@ -19,40 +19,34 @@ where
             return self.bottom();
         }
 
-        self.start = StartLocation {
-            idx,
-            ..Default::default()
-        };
+        self.set_start(idx, 0);
     }
 
     // put the current message at the top if it's not; previous otherwise
     pub fn prev_element(&mut self) {
         self.mode = Mode::Scrolling;
 
-        if self.start.offset != 0 {
-            self.start = StartLocation {
-                idx: self.start.idx,
-                ..Default::default()
-            };
-        }
-
-        let mut idx = self.start.idx.saturating_sub(1);
-        while idx > 0 && self.height(idx) == 0 {
-            idx -= 1;
-        }
-        self.start = StartLocation {
-            idx,
-            ..Default::default()
+        let idx = if self.start.offset != 0 {
+            self.start.idx
+        } else {
+            let mut idx = self.start.idx.saturating_sub(1);
+            while idx > 0 && self.height(idx) == 0 {
+                idx -= 1;
+            }
+            idx
         };
+
+        self.set_start(idx, 0);
     }
 
     pub fn top(&mut self) {
-        self.start = StartLocation::default();
+        self.set_start(0, 0);
         self.mode = Mode::Scrolling;
     }
 
     pub fn bottom(&mut self) {
-        self.start = Default::default();
+        tracing::debug!("scrolling to bottom");
+        self.set_start(0, 0);
         self.mode = Mode::Tail;
     }
 
@@ -82,30 +76,27 @@ where
         self.add_offset_up(1)
     }
 
-    // TODO check and refactor below
-
     #[tracing::instrument(skip(self))]
     fn add_offset_down(
         &mut self,
         mut delta: u16,
     ) {
         self.mode = Mode::Scrolling;
-        self.start.relative_offset = None;
 
         let visible = self.height(self.start.idx) - self.start.offset;
         // NOTE "<" specifically, because if delta == element, we need to skip to the next element
         if delta < visible {
-            self.start.offset += delta;
-            return;
+            return self.set_start(self.start.idx, self.start.offset + delta);
         }
         delta -= visible;
-        self.start.offset = 0;
 
         let mut idx = self.start.idx + 1;
-        while delta > 0 && idx < self.elements.len() {
+        let mut offset = 0;
+
+        while delta > 0 && idx < self.len() {
             let height = self.height(idx);
             if delta < height {
-                self.start.offset = delta;
+                offset = delta;
                 break;
             }
             delta -= height;
@@ -114,7 +105,7 @@ where
         if idx >= self.len() {
             return self.bottom();
         }
-        self.start.idx = idx;
+        self.set_start(idx, offset);
     }
 
     #[tracing::instrument(skip(self))]
@@ -123,24 +114,25 @@ where
         mut delta: u16,
     ) {
         self.mode = Mode::Scrolling;
-        self.start.relative_offset = None;
 
         // NOTE "<=" or "<" doesn't matter because of delta > 0 check
         if delta <= self.start.offset {
-            self.start.offset -= delta;
-            return;
+            return self.set_start(self.start.idx, self.start.offset - delta);
         }
         delta -= self.start.offset;
-        self.start.offset = 0;
 
-        while delta > 0 && self.start.idx > 0 {
-            self.start.idx -= 1;
-            let height = self.height(self.start.idx);
+        let mut idx = self.start.idx;
+        let mut offset = 0;
+
+        while delta > 0 && idx > 0 {
+            idx -= 1;
+            let height = self.height(idx);
             if delta <= height {
-                self.start.offset = height - delta;
+                offset = height - delta;
                 break;
             }
             delta -= height;
         }
+        self.set_start(idx, offset);
     }
 }

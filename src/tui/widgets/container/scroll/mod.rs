@@ -78,6 +78,19 @@ where
         }
     }
 
+    pub fn set_start(
+        &mut self,
+        idx: usize,
+        offset: u16,
+    ) {
+        self.start = StartLocation {
+            idx,
+            height: self.height(idx),
+            offset,
+            relative_offset: None,
+        }
+    }
+
     pub fn element(
         &mut self,
         idx: usize,

@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::widgets::Clear;
+use tracing::debug;
 
 use super::*;
 
@@ -25,6 +26,7 @@ where
 
         self.track_resize(area);
 
+        debug!("starting render, mode: {:?}", self.mode);
         if matches!(self.mode, Mode::Tail) || self.render_from_line(area, buf) > 0 {
             // two renders will only happen when history fits on screen && the user tries to scroll
             self.bottom();
@@ -47,6 +49,7 @@ where
             idx += 1;
             remaining = self.render_down(area, buf, idx, remaining);
         }
+        debug!("render done; {remaining} empty lines");
         remaining
     }
 
@@ -56,6 +59,7 @@ where
         area: Rect,
         buf: &mut Buffer,
     ) {
+        debug!("rendering tail");
         Clear.render(area, buf);
         let mut offset = 0;
         let mut remaining = area.height;
@@ -83,6 +87,10 @@ where
         if new_height == self.start.height {
             return;
         }
+        debug!(
+            "element height changed to {}; old values: {:?}",
+            new_height, self.start
+        );
         let relative = if let Some(relative) = self.start.relative_offset {
             relative
         } else {
