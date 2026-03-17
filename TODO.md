@@ -1,3 +1,8 @@
+# refactor
+
+- move responses specific stuff into api/responses/*
+- maybe somehow unfuck code duplication in message timestamp/metadata logic
+
 # core
 
 - edit tool -- expand to create file, replace file, append, insert at
@@ -15,8 +20,6 @@
 # ui
 
 - visible progress:
-  - every assistant message should show elapsed time
-    - so, record start time, enum in_progress|done(end_time)
   - last line of scroll should show status:
     - idle
     - generating
@@ -25,8 +28,10 @@
     - failed
   - if not too hard: in progress assistant message should have a cursor block after the last char
     - probably should be done through custom render logic on message widget
-  - ideally: in a multiturn, show combined time only
-- retry key
+  - ideally: in a multiturn, show combined time
+  - ideally: TTFT
+- retry and abort key
+  - should append appropriate developer messages like "assistants turn was interrupted by the user/unexpected error"
 - token usage/context window free %
   - need to add config value "max_tokens" per assistant
   - mvp: `tokens = history.serialize().len() / 3`
