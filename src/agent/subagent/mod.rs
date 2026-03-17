@@ -1,3 +1,4 @@
+/// WARN vibecoded
 pub mod candidate;
 
 use anyhow::Result;
@@ -7,12 +8,12 @@ use tokio::task::JoinSet;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentEvent;
-use crate::agent::id::AgentId;
 use crate::agent::AgentKind;
 use crate::agent::AgentState;
 use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
+use crate::agent::id::AgentId;
 use crate::agent::init::duplicate;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 

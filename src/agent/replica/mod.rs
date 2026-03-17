@@ -1,3 +1,4 @@
+/// WARN vibecoded
 use anyhow::Result;
 use tokio::task::JoinSet;
 
