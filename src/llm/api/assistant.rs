@@ -7,6 +7,7 @@ use async_openai::config::OpenAIConfig;
 use governor::DefaultDirectRateLimiter;
 use governor::Quota;
 use governor::RateLimiter;
+use tokio::process::Command;
 use tokio::sync::Semaphore;
 
 use crate::config::CONFIG;
@@ -22,7 +23,7 @@ pub struct Assistant {
 impl Assistant {
     pub async fn new() -> Result<Self> {
         let openai_config = {
-            let mut config = OpenAIConfig::new().with_api_base(&CONFIG.api.base_url);
+            let mut config = OpenAIConfig::new().with_api_base(&CONFIG.api.base_url()?);
             if let Some(key) = Self::key().await? {
                 config = config.with_api_key(key);
             }
@@ -53,16 +54,27 @@ impl Assistant {
     }
 
     pub async fn key() -> Result<Option<String>> {
-        let path = if let Some(path) = &CONFIG.api.key_path {
-            shellexpand::tilde(path).into_owned()
-        } else {
+        let Some(command) = &CONFIG.api.key_command else {
             return Ok(None);
         };
-        let key = tokio::fs::read_to_string(&path)
+        Ok(Some(Self::key_from_command(command).await?))
+    }
+
+    async fn key_from_command(command: &str) -> Result<String> {
+        let output = Command::new("bash")
+            .args(["-lc", command])
+            .output()
             .await
-            .context("Failed to read API key file")?
+            .context("Failed to run API key command")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "API key command failed with status {}",
+            output.status
+        );
+        let key = String::from_utf8(output.stdout)
+            .context("API key command did not produce valid UTF-8")?
             .trim()
             .to_string();
-        Ok(Some(key))
+        Ok(key)
     }
 }

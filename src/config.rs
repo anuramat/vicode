@@ -47,7 +47,7 @@ pub struct ApiConfig {
     pub kind: ApiKind,
     pub base_url: String,
     pub model_name: String,
-    pub key_path: Option<String>,
+    pub key_command: Option<String>,
 
     pub effort: Option<ReasoningEffort>,
 
@@ -66,6 +66,12 @@ pub struct ApiConfig {
     pub retries: u32,
     /// initial retry delay, multiplied by 2 after each attempt
     pub backoff_ms: u64,
+}
+
+impl ApiConfig {
+    pub fn base_url(&self) -> Result<String> {
+        Ok(shellexpand::full(&self.base_url)?.into_owned())
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
