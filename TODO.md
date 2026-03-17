@@ -52,6 +52,7 @@
 
 # chores
 
+- commit hook: cargo fmt+fix
 - grep for unwraps
 - grep for TODO etc
 - make sure our prompting makes sense (check for inconsistencies)
