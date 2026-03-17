@@ -5,19 +5,32 @@ use tracing::instrument;
 use tracing::trace;
 
 use super::*;
-use crate::llm::provider::event::StreamEvent;
 use crate::llm::delta::*;
 use crate::llm::history::HistoryEvent;
 use crate::llm::message::AssistantItem;
+use crate::llm::provider::event::StreamEvent;
 
 async fn send_item(
     tx: &Sender<AgentEvent>,
     loc: usize,
-    item: Box<AssistantItem>,
+    item: AssistantItem,
 ) -> Result<()> {
     Ok(tx
         .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseItem(
-            loc, item,
+            loc,
+            Box::new(item),
+        )))
+        .await?)
+}
+
+async fn send_completed(
+    tx: &Sender<AgentEvent>,
+    loc: usize,
+    items: Vec<AssistantItem>,
+) -> Result<()> {
+    Ok(tx
+        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseCompleted(
+            loc, items,
         )))
         .await?)
 }
@@ -34,10 +47,14 @@ async fn send_delta(
         .await?)
 }
 
+// TODO should these ResponseFailed events also coincide with ParentEvent::Error? and if so, should
+// we emit ParentEvent::Error right here or in the HistoryEvent handler in the agent event loop?
+
 impl Agent {
     pub fn start_turn(&mut self) {
         let instructions = self.state.context.instructions.clone();
         let history = self.state.context.history.clone();
+        let loc = history.len();
 
         tracing::debug!("starting turn with messages: {:#?}", history);
         let tx = self.tx.clone();
@@ -46,10 +63,11 @@ impl Agent {
         self.tskmgr.spawn(self.tx.clone(), async move {
             let res = Agent::turn(tx.clone(), &assistant, tools, instructions, history).await;
             if let Err(e) = res {
-                tx.send(AgentEvent::TurnError(e.to_string()))
+                let event = HistoryEvent::ResponseFailed(loc, e.to_string());
+                tx.send(AgentEvent::HistoryEvent(event))
                     .await
                     .expect("failed to send turn error event");
-            };
+            }
             TaskResult::AssistantResponse
         });
     }
@@ -71,13 +89,21 @@ impl Agent {
             match event? {
                 StreamEvent::Delta(delta) => send_delta(&tx, loc, delta).await?,
                 StreamEvent::Failed(msg) => {
-                    tx.send(AgentEvent::ResponseFailed(msg)).await?;
+                    let event = HistoryEvent::ResponseFailed(loc, msg);
+                    tx.send(AgentEvent::HistoryEvent(event)).await?;
                     break;
                 }
-                StreamEvent::ItemDone(item) | StreamEvent::ItemAdded(item) => {
-                    send_item(&tx, loc, Box::new(item)).await?;
+                StreamEvent::ItemDone(mut item) => {
+                    item.finish();
+                    send_item(&tx, loc, item).await?;
                 }
-                StreamEvent::Completed(_) => break,
+                StreamEvent::ItemAdded(item) => {
+                    send_item(&tx, loc, item).await?;
+                }
+                StreamEvent::Completed(items) => {
+                    send_completed(&tx, loc, items).await?;
+                    break;
+                }
                 StreamEvent::Ignore => {}
             }
         }

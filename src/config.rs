@@ -193,6 +193,12 @@ mod tests {
             effort = "low"
 
             [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
             "#,
         )
         .unwrap();
@@ -218,9 +224,15 @@ mod tests {
             model = "gpt-fast"
 
             [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
             "#,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("unknown assistant"));
+        assert!(err.to_string().contains("missing"));
     }
 }

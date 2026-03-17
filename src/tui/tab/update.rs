@@ -17,6 +17,8 @@ impl Tab<'_> {
         match event {
             HistoryEvent::ResponseDelta(idx, _)
             | HistoryEvent::ResponseItem(idx, _)
+            | HistoryEvent::ResponseCompleted(idx, _)
+            | HistoryEvent::ResponseFailed(idx, _)
             | HistoryEvent::UserMessage(idx, _)
             | HistoryEvent::DeveloperMessage(idx, _) => {
                 self.scroll.set_dirty(idx);

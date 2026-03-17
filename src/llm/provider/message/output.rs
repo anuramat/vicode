@@ -37,6 +37,8 @@ impl From<responses::OutputMessage> for OutputItem {
     fn from(value: responses::OutputMessage) -> Self {
         Self {
             id: value.id,
+            started_at_ms: now_ms(),
+            finished_at_ms: None,
             content: value
                 .content
                 .into_iter()

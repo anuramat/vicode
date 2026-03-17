@@ -6,8 +6,8 @@ use tracing::instrument;
 use super::App;
 use super::NotificationKind;
 use crate::agent::AgentEvent;
-use crate::agent::id::AgentId;
 use crate::agent::handle::UserPrompt;
+use crate::agent::id::AgentId;
 use crate::llm::history::HistoryEvent;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
@@ -18,7 +18,7 @@ pub enum AppEvent {
 
     UserPrompt(AgentId, UserPrompt),
     SetAssistant(AgentId, String),
-    // TODO replace with ParentEvent(ParentEvent), and write a special handler
+    // TODO refactor: replace with ParentEvent(ParentEvent), and write a special handler
     InfoUpdate(AgentId),
     HistoryUpdate(AgentId, HistoryEvent),
     AgentIdle(AgentId),

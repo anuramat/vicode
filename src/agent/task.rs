@@ -84,7 +84,7 @@ impl Agent {
                 self.handle_history(event).await?;
             }
             TaskResult::AssistantResponse => {
-                // no op
+                // TODO why is this no op
             }
             TaskResult::ReplicaRun(run) => {
                 let event =

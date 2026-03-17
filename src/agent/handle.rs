@@ -12,6 +12,7 @@ use crate::agent::replica;
 use crate::llm::history;
 use crate::llm::history::HistoryEvent;
 use crate::llm::message::AssistantItem;
+use crate::llm::message::now_ms;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
 
@@ -21,10 +22,6 @@ pub enum AgentEvent {
     Submit(UserPrompt),
     SetAssistant(String),
     HistoryEvent(HistoryEvent),
-    /// backend error
-    ResponseFailed(String),
-    /// frontend error
-    TurnError(String),
     /// delete agent, e.g. when deleting a tab
     Delete,
     DuplicateRequest(AgentId),
@@ -107,12 +104,6 @@ impl Agent {
             Delete => {
                 PROJECT.delete_agent(&self.id).await?;
             }
-            TurnError(msg) | ResponseFailed(msg) => {
-                error!("error in agent {}: {}", self.id, msg);
-                self.parent
-                    .send(ParentEvent::Error(self.id.clone(), msg))
-                    .await?;
-            }
         }
         Ok(())
     }
@@ -126,15 +117,23 @@ impl Agent {
             .send(ParentEvent::HistoryUpdate(self.id.clone(), event.clone()))
             .await?;
         self.state.context.history.handle(event.clone());
-        if let HistoryEvent::ResponseItem(loc, ref item) = event
-            && let AssistantItem::ToolCall(mut call) = (**item).clone()
-            && call.task.output().is_none()
-        {
-            call.task.prepare(self)?;
-            self.tskmgr.spawn(self.tx.clone(), async move {
-                call.task.run().await;
-                TaskResult::ToolCall(loc, call)
-            });
+        match event {
+            HistoryEvent::ResponseItem(loc, ref item) => {
+                if let AssistantItem::ToolCall(mut call) = (**item).clone()
+                    && call.task.output().is_none()
+                {
+                    call.task.prepare(self)?;
+                    self.tskmgr.spawn(self.tx.clone(), async move {
+                        call.task.run().await;
+                        call.executed_at_ms = Some(now_ms());
+                        TaskResult::ToolCall(loc, call)
+                    });
+                }
+            }
+            HistoryEvent::ResponseFailed(_, msg) => {
+                error!("error in agent {}: {}", self.id, msg);
+            }
+            _ => {}
         }
 
         self.save().await?;

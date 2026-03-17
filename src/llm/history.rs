@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::llm::delta::Delta;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
+use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::DeveloperMessage;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
@@ -22,6 +23,8 @@ pub struct History {
 pub enum HistoryEvent {
     ResponseDelta(usize, Delta),
     ResponseItem(usize, Box<AssistantItem>),
+    ResponseCompleted(usize, Vec<AssistantItem>),
+    ResponseFailed(usize, String),
     UserMessage(usize, String),
     DeveloperMessage(usize, String),
 }
@@ -85,6 +88,12 @@ impl History {
             HistoryEvent::ResponseItem(loc, item) => {
                 self.push_item(loc, *item);
             }
+            HistoryEvent::ResponseCompleted(loc, items) => {
+                self.complete_response(loc, items);
+            }
+            HistoryEvent::ResponseFailed(loc, msg) => {
+                self.fail_response(loc, msg);
+            }
             HistoryEvent::DeveloperMessage(loc, text) => {
                 // TODO unslop this
                 if loc == self.messages.len() {
@@ -118,15 +127,46 @@ impl History {
     pub fn push_item(
         &mut self,
         loc: usize,
-        item: AssistantItem,
+        mut item: AssistantItem,
     ) {
         if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+            // if item already exists -- replace it but preserve start
+            // if item has finish, it means that we constructed it from delta, the new item is
+            // just for consistency guarantee, and thus we actually finished the
+            // existing item when the last delta arrived, so we preserve the smaller finish value
+            if let Some(existing) = msg.content.get(&item.id()) {
+                item.set_start(existing.get_start());
+                if let Some(finish) = existing.get_finish() {
+                    item.set_finish(finish);
+                }
+            }
             _ = msg.content.insert(item.id(), item);
         } else if loc == self.messages.len() {
             let msg = AssistantMessage {
+                finish_reason: AssistantMessageStatus::Success,
                 content: indexmap! {item.id() => item},
             };
             self.messages.push(msg.into());
+        }
+    }
+
+    pub fn complete_response(
+        &mut self,
+        loc: usize,
+        _items: Vec<AssistantItem>,
+    ) {
+        if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+            msg.finish_reason = AssistantMessageStatus::Success;
+        }
+    }
+
+    pub fn fail_response(
+        &mut self,
+        loc: usize,
+        error_text: String, // TODO rename to msg or whatever
+    ) {
+        if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+            msg.finish_reason = AssistantMessageStatus::Error(error_text);
         }
     }
 
@@ -162,5 +202,53 @@ impl From<&History> for CompositeElement {
     fn from(history: &History) -> Self {
         let vec: Vec<Element> = history.messages.iter().map(|m| m.into()).collect();
         CompositeElement(vec)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::message::OutputItem;
+
+    #[test]
+    fn response_starts_without_assistant_message() {
+        let history = History::new();
+        assert!(history.messages.is_empty());
+    }
+
+    #[test]
+    fn response_failed_without_message_is_ignored() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseFailed(0, "oops".into()));
+        assert!(history.messages.is_empty());
+    }
+
+    #[test]
+    fn response_completed_marks_message_success() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseItem(
+            0,
+            Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                started_at_ms: 1,
+                finished_at_ms: None,
+                content: vec![],
+            })),
+        ));
+        history.handle(HistoryEvent::ResponseCompleted(
+            0,
+            vec![AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                started_at_ms: 1,
+                finished_at_ms: Some(2),
+                content: vec![],
+            })],
+        ));
+        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            panic!("expected assistant message");
+        };
+        let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
+        assert_eq!(item.finished_at_ms, None);
+        assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
     }
 }

@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::message::ToolCallItem;
+use crate::llm::message::now_ms;
 
 impl From<&ToolCallItem> for Vec<responses::InputItem> {
     fn from(v: &ToolCallItem) -> Self {
@@ -42,6 +43,9 @@ impl TryFrom<responses::FunctionToolCall> for ToolCallItem {
         Ok(ToolCallItem {
             id: call.id,
             call_id: call.call_id,
+            started_at_ms: now_ms(),
+            finished_at_ms: None,
+            executed_at_ms: None,
             task,
         })
     }

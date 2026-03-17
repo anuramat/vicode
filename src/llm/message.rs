@@ -27,8 +27,18 @@ pub struct UserMessage {
 
 #[derive(Clone, Serialize, Deserialize, Debug, Into, From, Default)]
 pub struct AssistantMessage {
+    pub finish_reason: AssistantMessageStatus,
     #[serde(with = "indexmap::map::serde_seq")]
     pub content: IndexMap<String, AssistantItem>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Default, EnumTryAs)]
+pub enum AssistantMessageStatus {
+    #[default]
+    InProgress,
+    Success,
+    AbortedByUser,
+    Error(String),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, EnumTryAs, From)]
@@ -38,9 +48,17 @@ pub enum AssistantItem {
     ToolCall(ToolCallItem),
 }
 
+// TODO rename "finished_at_ms" into "last_update_ms" or something; keep Option though
+
+// finished_at_ms=None means that we didn't get any deltas after initializing the item, and so if
+// we then get a new "item completed" event, we should use timestamp of that new event as the
+// timestamp for the item
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OutputItem {
     pub id: String,
+    pub started_at_ms: u64,
+    pub finished_at_ms: Option<u64>,
     pub content: Vec<OutputContent>,
 }
 
@@ -53,6 +71,8 @@ pub enum OutputContent {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReasoningItem {
     pub id: String,
+    pub started_at_ms: u64,
+    pub finished_at_ms: Option<u64>,
     pub content: Option<Vec<String>>,
     pub summary: Vec<String>,
     pub encrypted: Option<String>,
@@ -63,6 +83,9 @@ pub struct ToolCallItem {
     // TODO is this truly Option?
     pub id: Option<String>,
     pub call_id: String,
+    pub started_at_ms: u64,
+    pub finished_at_ms: Option<u64>,
+    pub executed_at_ms: Option<u64>,
 
     #[serde(flatten)]
     pub task: Box<dyn ToolCallSerializable>,
@@ -95,6 +118,49 @@ impl AssistantItem {
         }
         .clone()
     }
+
+    pub fn get_start(&self) -> u64 {
+        match self {
+            AssistantItem::Output(item) => item.started_at_ms,
+            AssistantItem::Reasoning(item) => item.started_at_ms,
+            AssistantItem::ToolCall(item) => item.started_at_ms,
+        }
+    }
+
+    pub fn set_start(
+        &mut self,
+        ms: u64,
+    ) {
+        match self {
+            AssistantItem::Output(item) => item.started_at_ms = ms,
+            AssistantItem::Reasoning(item) => item.started_at_ms = ms,
+            AssistantItem::ToolCall(item) => item.started_at_ms = ms,
+        }
+    }
+
+    pub fn get_finish(&self) -> Option<u64> {
+        match self {
+            AssistantItem::Output(item) => item.finished_at_ms,
+            AssistantItem::Reasoning(item) => item.finished_at_ms,
+            AssistantItem::ToolCall(item) => item.finished_at_ms,
+        }
+    }
+
+    pub fn set_finish(
+        &mut self,
+        now: u64,
+    ) {
+        match self {
+            AssistantItem::Output(item) => item.finished_at_ms = Some(now),
+            AssistantItem::Reasoning(item) => item.finished_at_ms = Some(now),
+            AssistantItem::ToolCall(item) => item.finished_at_ms = Some(now),
+        }
+    }
+
+    pub fn finish(&mut self) {
+        let now = now_ms();
+        self.set_finish(now);
+    }
 }
 
 impl ToolCallItem {
@@ -108,4 +174,13 @@ impl ToolCallItem {
             &self.call_id
         }
     }
+}
+
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_millis()
+        .try_into()
+        .expect("timestamp overflow")
 }

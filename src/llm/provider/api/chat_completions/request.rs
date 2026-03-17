@@ -255,10 +255,14 @@ mod tests {
             context: None,
         };
         let message = Message::Assistant(AssistantMessage {
+            finish_reason: Default::default(),
             content: indexmap! {
                 "call_1".into() => AssistantItem::ToolCall(ToolCallItem {
                     id: Some("call_1".into()),
                     call_id: "call_1".into(),
+                    started_at_ms: 1,
+                    finished_at_ms: Some(2),
+                    executed_at_ms: Some(3),
                     task: Box::new(task),
                 })
             },

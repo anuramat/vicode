@@ -1,11 +1,14 @@
 use async_openai::types::responses;
 
 use crate::llm::message::ReasoningItem;
+use crate::llm::message::now_ms;
 
 impl From<responses::ReasoningItem> for ReasoningItem {
     fn from(item: responses::ReasoningItem) -> Self {
         Self {
             id: item.id,
+            started_at_ms: now_ms(),
+            finished_at_ms: None,
             content: item
                 .content
                 .map(|c| c.into_iter().map(|s| s.text).collect()),

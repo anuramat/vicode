@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::message::ToolCallItem;
+use crate::llm::message::now_ms;
 
 impl From<ToolSchemas> for Vec<ChatCompletionTools> {
     fn from(schema: ToolSchemas) -> Self {
@@ -44,6 +45,9 @@ impl TryFrom<ChatCompletionMessageToolCalls> for ToolCallItem {
                 Ok(ToolCallItem {
                     id: Some(call.id.clone()),
                     call_id: call.id,
+                    started_at_ms: now_ms(),
+                    finished_at_ms: None,
+                    executed_at_ms: None,
                     task,
                 })
             }

@@ -21,6 +21,7 @@ use crate::llm::delta::DeltaContent;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::OutputItem;
 use crate::llm::message::ReasoningItem;
+use crate::llm::message::now_ms;
 use crate::llm::provider::event::StreamEvent;
 
 fn output_id(
@@ -137,6 +138,8 @@ impl StreamState {
                     events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
                         ReasoningItem {
                             id: reasoning_id.clone(),
+                            started_at_ms: now_ms(),
+                            finished_at_ms: None,
                             content: None,
                             summary: Vec::new(),
                             encrypted: None,
@@ -155,6 +158,8 @@ impl StreamState {
                 self.outputs.insert(choice.index, true);
                 events.push(StreamEvent::ItemAdded(AssistantItem::Output(OutputItem {
                     id: output_id.clone(),
+                    started_at_ms: now_ms(),
+                    finished_at_ms: None,
                     content: Vec::new(),
                 })));
             }

@@ -10,6 +10,8 @@ pub fn reasoning_to_output(
     ) -> OutputItem {
         let mut item = OutputItem {
             id: String::new(), // WARN might be a problem
+            started_at_ms: reasoning_item.started_at_ms,
+            finished_at_ms: reasoning_item.finished_at_ms,
             content: vec![],
         };
         if let Some(reasoning_content) = &reasoning_item.content {
