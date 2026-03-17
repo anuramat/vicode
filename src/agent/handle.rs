@@ -1,12 +1,13 @@
 use anyhow::Result;
+use futures::future::try_join_all;
 use tracing::debug;
 use tracing::error;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::AgentId;
 use crate::agent::TaskId;
 use crate::agent::TaskResult;
+use crate::agent::id::AgentId;
 use crate::agent::replica;
 use crate::llm::history;
 use crate::llm::history::HistoryEvent;
@@ -89,7 +90,8 @@ impl Agent {
                         self.start_turn();
                     } else {
                         // TODO insert a developer message <n replicas pending>
-                        let replicas: Vec<_> = (0..multiplier).map(|_| AgentId::new()).collect();
+                        let replicas =
+                            try_join_all((0..multiplier).map(|_| AgentId::new())).await?;
                         self.state.topology.children.extend(replicas.clone());
                         self.save().await?;
                         self.start_replica_turns(replicas);

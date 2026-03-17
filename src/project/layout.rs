@@ -4,7 +4,7 @@ use anyhow::Result;
 use git2::Repository;
 
 use super::Project;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 
 const APP_STATE_FILENAME: &str = "state.json";
 const SNAPSHOTS_DIRNAME: &str = "snapshots";

@@ -12,7 +12,7 @@ use ignore::gitignore::Gitignore;
 use ignore::gitignore::GitignoreBuilder;
 use similar::TextDiff;
 
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::project::PROJECT;
 
 pub async fn response(

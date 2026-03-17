@@ -1,4 +1,5 @@
 pub mod handle;
+pub mod id;
 pub mod init;
 pub mod replica;
 pub mod run;
@@ -10,6 +11,7 @@ pub mod turn;
 use std::sync::Arc;
 
 pub use handle::AgentEvent;
+pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
 use task::TaskId;
@@ -20,11 +22,8 @@ use tokio::sync::mpsc::Sender;
 use crate::agent::handle::ParentEvent;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
-use crate::define_uuid;
 use crate::llm::history::*;
 use crate::llm::provider::assistant::Assistant;
-
-define_uuid!(AgentId);
 
 pub struct Agent {
     pub id: AgentId,

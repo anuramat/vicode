@@ -4,7 +4,7 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::widgets::*;
 
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::tui::tab::Tab;
 
 lazy_static::lazy_static! {

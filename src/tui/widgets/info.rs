@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Paragraph;
 use tokio::process::Command;
 
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::project::PROJECT;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::HeightComputable;

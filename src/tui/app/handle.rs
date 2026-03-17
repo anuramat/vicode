@@ -6,7 +6,7 @@ use tracing::instrument;
 use super::App;
 use super::NotificationKind;
 use crate::agent::AgentEvent;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::agent::handle::UserPrompt;
 use crate::llm::history::HistoryEvent;
 use crate::tui::tab::TabState;

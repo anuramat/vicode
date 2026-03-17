@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::task::JoinSet;
 
 use crate::agent::AgentContext;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::agent::subagent;
 
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.

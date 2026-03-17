@@ -31,4 +31,11 @@ impl Project {
         self.unmount(aid).await?;
         Ok(tokio::fs::remove_dir_all(self.agent(aid)).await?)
     }
+
+    pub async fn agent_id_exists(
+        &self,
+        aid: &AgentId,
+    ) -> Result<bool> {
+        Ok(tokio::fs::try_exists(self.agent(aid)).await?)
+    }
 }

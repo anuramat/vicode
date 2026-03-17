@@ -7,7 +7,7 @@ use tokio::task::JoinSet;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentEvent;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::agent::AgentKind;
 use crate::agent::AgentState;
 use crate::agent::AgentTopology;

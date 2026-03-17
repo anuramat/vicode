@@ -20,7 +20,7 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::agent::AgentEvent;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::agent::handle::ParentEvent;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::container::element::RenderContext;

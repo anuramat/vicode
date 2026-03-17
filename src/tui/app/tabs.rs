@@ -7,9 +7,9 @@ use tracing::instrument;
 
 use crate::agent::Agent;
 use crate::agent::AgentEvent;
-use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::handle::ParentEvent;
+use crate::agent::id::AgentId;
 use crate::project::PROJECT;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -49,7 +49,7 @@ impl<'a> App<'a> {
 
     /// create a new primary agent, and a corresponding tab
     pub async fn new_tab(&mut self) -> Result<()> {
-        let id = AgentId::new();
+        let id = AgentId::new().await?;
         self.insert_tab(id.clone(), Default::default()).await?;
         self.tx.send(AppEvent::AttachAgent(id)).await?;
         Ok(())
@@ -110,7 +110,7 @@ impl<'a> App<'a> {
         } else {
             return Ok(());
         };
-        let aid = AgentId::new();
+        let aid = AgentId::new().await?;
         self.insert_tab(aid.clone(), agent_state).await?;
         tx.send(AgentEvent::DuplicateRequest(aid.clone())).await?;
         Ok(())

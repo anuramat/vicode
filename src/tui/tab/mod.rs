@@ -21,8 +21,8 @@ use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::Sender;
 use tui_textarea::TextArea;
 
-use crate::agent::AgentId;
 use crate::agent::AgentState;
+use crate::agent::id::AgentId;
 use crate::llm::message::Message;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::widgets::container::element::RenderContext;

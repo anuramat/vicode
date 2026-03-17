@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::Project;
-use crate::agent::AgentId;
+use crate::agent::id::AgentId;
 use crate::git::worktree_no_checkout;
 
 impl Project {

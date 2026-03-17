@@ -167,7 +167,7 @@ mod tests {
         .unwrap();
         let _ = ASSISTANT_POOL.set(AssistantPool::from_config(&config).await.unwrap());
 
-        let aid = AgentId::new();
+        let aid = AgentId::new().await.unwrap();
         tokio::fs::create_dir_all(PROJECT.agent(&aid)).await.unwrap();
 
         let state = AgentState {

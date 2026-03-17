@@ -53,6 +53,7 @@ async-openai = { version = "0.33.0", features = ["byot", "responses", "chat-comp
 ignore = "0.4.25"
 similar = "2.7.0"
 smart-default = "0.7.1"
+petname = "2.0.2"
 
 [lints.clippy]
 redundant_clone = "warn"
