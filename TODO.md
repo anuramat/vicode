@@ -24,7 +24,6 @@
     - probably should be done through custom render logic on message widget
   - ideally: in a multiturn, show combined time only
 - retry key
-  - should restart agent and re-attach if agent task is dead
 - token usage/context window free %
   - need to add config value "max_tokens" per assistant
   - mvp: `tokens = history.serialize().len() / 3`

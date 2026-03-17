@@ -11,7 +11,12 @@ impl Agent {
             .send(ParentEvent::InfoUpdate(self.id.clone()))
             .await?;
         while let Some(event) = self.rx.recv().await {
-            self.handle(event).await?;
+            if let Err(e) = self.handle(event).await {
+                let msg = e.to_string();
+                self.parent
+                    .send(ParentEvent::Error(self.id.clone(), msg))
+                    .await?;
+            }
         }
         Ok(())
     }
