@@ -68,10 +68,10 @@ impl<'a> App<'a> {
         ))
     }
 
-    fn spawn_term_translator(&self) {
+    fn spawn_term_translator(&mut self) {
         use tokio_stream::StreamExt;
         let tx = self.tx.clone();
-        spawn(async move {
+        self.joinset.spawn(async move {
             let mut stream = crossterm::event::EventStream::new();
             while let Some(Ok(event)) = stream.next().await {
                 let e = match event {
@@ -79,8 +79,9 @@ impl<'a> App<'a> {
                     Event::Resize(_, _) => tx.send(AppEvent::Redraw),
                     _ => continue,
                 };
-                e.await.expect("app event channel closed");
+                e.await?;
             }
+            Ok(())
         });
     }
 }
