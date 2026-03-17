@@ -20,7 +20,6 @@ mod stream;
 pub struct ChatCompletionsApi {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
-    reasoning_key: Option<String>,
 }
 
 impl ChatCompletionsApi {
@@ -31,7 +30,6 @@ impl ChatCompletionsApi {
         Self {
             client,
             compat: config.compat,
-            reasoning_key: config.reasoning_key,
         }
     }
 }
@@ -46,21 +44,13 @@ impl Api for ChatCompletionsApi {
         history: History,
         tools: ToolSchemas,
     ) -> Result<AssistantStream> {
-        let request = request::request(
-            config,
-            instructions,
-            history,
-            tools,
-            true,
-            &self.compat,
-            self.reasoning_key.as_deref(),
-        )?;
+        let request = request::request(config, instructions, history, tools, true, &self.compat)?;
         tracing::debug!(request = %request);
         let inner = self.client.chat().create_stream_byot(request).await?;
         Ok(Box::pin(stream::ChatCompletionsStream::new(
             inner,
             permit,
-            self.reasoning_key.clone(),
+            self.compat.reasoning_content_field.clone(),
         )))
     }
 }

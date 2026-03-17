@@ -28,13 +28,13 @@ key_command = "cat /run/agenix/openai"
 base_url = "https://api.cerebras.ai/v1"
 key_command = "cat /run/agenix/cerebras"
 api = "chat_completions"
-reasoning_key = "reasoning"
+reasoning_content_field = "reasoning"
 reasoning_as_output = "think"
 [providers.zai]
 base_url = "https://api.z.ai/api/coding/paas/v4"
 key_command = "cat /run/agenix/zai"
 api = "chat_completions"
-reasoning_key = "reasoning_content"
+reasoning_content_field = "reasoning_content"
 
 [bash]
   cmd = [

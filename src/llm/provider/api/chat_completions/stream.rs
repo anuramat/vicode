@@ -16,12 +16,12 @@ use futures::Stream;
 use serde_json::Value;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::llm::provider::event::StreamEvent;
 use crate::llm::delta::Delta;
 use crate::llm::delta::DeltaContent;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::OutputItem;
 use crate::llm::message::ReasoningItem;
+use crate::llm::provider::event::StreamEvent;
 
 fn output_id(
     response_id: &str,
@@ -41,12 +41,12 @@ impl ChatCompletionsStream {
     pub fn new(
         inner: Pin<Box<dyn Stream<Item = Result<Value, OpenAIError>> + Send>>,
         permit: OwnedSemaphorePermit,
-        reasoning_key: Option<String>,
+        reasoning_content_field: String,
     ) -> Self {
         Self {
             inner,
             state: StreamState {
-                reasoning_key,
+                reasoning_content_field,
                 ..Default::default()
             },
             pending: VecDeque::new(),
@@ -94,7 +94,7 @@ impl Stream for ChatCompletionsStream {
 pub struct StreamState {
     outputs: BTreeMap<u32, bool>,
     reasoning_outputs: BTreeMap<u32, bool>,
-    reasoning_key: Option<String>,
+    reasoning_content_field: String,
     tool_calls: BTreeMap<u32, BTreeMap<u32, PendingToolCall>>,
 }
 
@@ -128,26 +128,25 @@ impl StreamState {
         let mut events = Vec::new();
         let output_id = output_id(response_id, choice.index);
 
-        if let Some(key) = self.reasoning_key.clone() {
-            if let Some(delta) = raw_delta {
-                if let Some(text) = delta[key.as_str()].as_str().filter(|s| !s.is_empty()) {
-                    let reasoning_id = format!("{response_id}:reasoning:{}", choice.index);
-                    if !self.reasoning_outputs.contains_key(&choice.index) {
-                        self.reasoning_outputs.insert(choice.index, true);
-                        events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
-                            ReasoningItem {
-                                id: reasoning_id.clone(),
-                                content: None,
-                                summary: Vec::new(),
-                                encrypted: None,
-                            },
-                        )));
-                    }
-                    events.push(StreamEvent::Delta(Delta {
-                        id: reasoning_id,
-                        delta: DeltaContent::Reasoning(text.to_string()),
-                    }));
+        let key = self.reasoning_content_field.clone();
+        if let Some(delta) = raw_delta {
+            if let Some(text) = delta[key.as_str()].as_str().filter(|s| !s.is_empty()) {
+                let reasoning_id = format!("{response_id}:reasoning:{}", choice.index);
+                if !self.reasoning_outputs.contains_key(&choice.index) {
+                    self.reasoning_outputs.insert(choice.index, true);
+                    events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
+                        ReasoningItem {
+                            id: reasoning_id.clone(),
+                            content: None,
+                            summary: Vec::new(),
+                            encrypted: None,
+                        },
+                    )));
                 }
+                events.push(StreamEvent::Delta(Delta {
+                    id: reasoning_id,
+                    delta: DeltaContent::Reasoning(text.to_string()),
+                }));
             }
         }
 
@@ -239,8 +238,8 @@ mod tests {
 
     use super::ChatCompletionsStream;
     use super::StreamState;
-    use crate::llm::provider::event::StreamEvent;
     use crate::llm::message::AssistantItem;
+    use crate::llm::provider::event::StreamEvent;
 
     #[test]
     fn chat_text_chunk_creates_output_before_delta() {
@@ -403,8 +402,11 @@ mod tests {
             .acquire_owned()
             .await
             .expect("semaphore closed");
-        let mut stream =
-            ChatCompletionsStream::new(Box::pin(futures::stream::iter(chunks)), permit, None);
+        let mut stream = ChatCompletionsStream::new(
+            Box::pin(futures::stream::iter(chunks)),
+            permit,
+            "reasoning".into(),
+        );
 
         assert!(matches!(
             stream.next().await,

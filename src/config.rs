@@ -36,9 +36,12 @@ pub enum ApiType {
     ChatCompletions,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, SmartDefault)]
 #[serde(default)]
 pub struct ApiCompatConfig {
+    /// name of the field with reasoning content (chat completions only)
+    #[default = "reasoning_content"]
+    pub reasoning_content_field: String,
     pub instructions_as_message: bool,
     pub reasoning_as_output: Option<String>,
     pub developer_as_user: bool,
@@ -53,10 +56,6 @@ pub struct ProviderConfig {
     pub base_url: String,
     /// bash command that outputs the key to stdout
     pub key_command: Option<String>,
-
-    // TODO move to compat?
-    /// name of the field with reasoning content (chat completions only)
-    pub reasoning_key: Option<String>,
 
     /// compatibility hacks
     #[serde(flatten)]

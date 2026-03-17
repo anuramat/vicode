@@ -32,7 +32,6 @@ pub fn request(
     tools: ToolSchemas,
     streaming: bool,
     compat: &ApiCompatConfig,
-    reasoning_key: Option<&str>,
 ) -> Result<serde_json::Value> {
     let mut builder = CreateChatCompletionRequestArgs::default();
     builder.model(&assistant.model).parallel_tool_calls(true);
@@ -61,7 +60,7 @@ pub fn request(
         });
     }
 
-    let message_values = message_values(&items, reasoning_key);
+    let message_values = message_values(&items, &compat.reasoning_content_field);
 
     builder.stream(streaming).messages(messages(items));
     if !tools.0.is_empty() {
@@ -111,12 +110,12 @@ fn assistant_messages(message: &AssistantMessage) -> Vec<ChatCompletionRequestMe
 
 fn message_values(
     messages: &[Message],
-    reasoning_key: Option<&str>,
+    reasoning_content_field: &str,
 ) -> Vec<serde_json::Value> {
     messages
         .iter()
         .flat_map(|message| match message {
-            Message::Assistant(msg) => assistant_values(msg, reasoning_key),
+            Message::Assistant(msg) => assistant_values(msg, reasoning_content_field),
             _ => from_message(message)
                 .into_iter()
                 .map(|m| serde_json::to_value(m).unwrap())
@@ -127,7 +126,7 @@ fn message_values(
 
 fn assistant_values(
     message: &AssistantMessage,
-    reasoning_key: Option<&str>,
+    reasoning_content_field: &str,
 ) -> Vec<serde_json::Value> {
     let reasoning: String = message
         .content
@@ -150,10 +149,11 @@ fn assistant_values(
                     .into_iter()
                     .map(|m| {
                         let mut v = serde_json::to_value(m).unwrap();
-                        if let (Some(key), true, Some(obj)) =
-                            (reasoning_key, !reasoning.is_empty(), v.as_object_mut())
-                        {
-                            obj.insert(key.to_string(), reasoning.clone().into());
+                        if let (true, Some(obj)) = (!reasoning.is_empty(), v.as_object_mut()) {
+                            obj.insert(
+                                reasoning_content_field.to_string(),
+                                reasoning.clone().into(),
+                            );
                         }
                         v
                     })
