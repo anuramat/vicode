@@ -22,11 +22,7 @@ impl Widget for &Logo {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        buf.set_style(
-            buf.area,
-            // TODO centralize color scheme
-            Style::default().fg(Color::from_u32(0x00333333)).not_bold(),
-        );
+        buf.set_style(buf.area, Style::default().dark_gray().not_bold());
         let logo = self.get_logo(area);
         let x_start = (area.width - logo.width) / 2;
         let y_start = (area.height - logo.height) / 2;
