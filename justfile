@@ -12,15 +12,30 @@ default: run
 run:
     RUST_LOG=debug RUST_BACKTRACE=full cargo run
 
+# hacky, we should add a command to the app instead
 umount:
-    [ -d '{{ data_dir }}' ] && fd --glob workdir --exact-depth 4 --search-path '{{ data_dir }}' -x umount || true
+    #!/usr/bin/env bash
+    [ -d '{{ data_dir }}' ] || exit 0
+    # agent overlays
+    fd --glob workdir --exact-depth 4 --search-path '{{ data_dir }}' --mount -x umount || true
+    # shared lowerdirs; note that this assumes that moutns are in the root of shared dir
+    fd --glob shared --exact-depth 2 --search-path '{{ data_dir }}' --mount -a | xargs -I{} fd . --exact-depth 1 --search-path '{}' --mount -a -x umount || true
 
-# nuke app data
-clean: umount
-    rm -rf '{{ data_dir }}'
-    rm '{{ state_dir }}'/* || true
+clean_data: umount
+    #!/usr/bin/env bash
+    [ -d '{{ data_dir }}' ] || exit 0
+    find '{{ data_dir }}' -mindepth 1 -mount -delete
+
+clean_state:
+    [ -d '{{ state_dir }}' ] || exit 0
+    find '{{ state_dir }}' -mindepth 1 -delete
+
+clean_git:
+    # TODO delete worktrees aggressively
     git worktree prune
     git branch --format='%(refname:short)' | grep '^vc-' | xargs -I{} git branch -D {}
+
+clean: clean_state clean_data clean_git
 
 profile:
     flamegraph -- ./target/release/vc
