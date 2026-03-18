@@ -14,69 +14,73 @@ use crate::tui::widgets::message::toolcall::ToolCallWidget;
 static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
     std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
+const MAX_ONELINER_LENGTH: usize = 20; // TODO screen size?
 
 impl From<&BashCall> for Element {
     fn from(value: &BashCall) -> Self {
+        let mut name = "bash".to_string();
+        let paragraph = value.arguments.as_ref().map(|args| {
+            let mut texts: Vec<Text<'_>> = Vec::new();
+
+            let command = args.command.trim();
+            if command.len() <= MAX_ONELINER_LENGTH {
+                name = format!("bash: {}", command);
+            }
+            texts.push(bash_to_text(command));
+
+            if let Some(output) = &value.output {
+                texts.push("\n".into());
+                match output {
+                    Ok(result) => texts.extend(result_to_texts(result)),
+                    Err(err) => {
+                        texts.push(format!("app error:\n{}", err).into());
+                    }
+                }
+            };
+            texts_to_paragraph(texts)
+        });
+
         let widget = ToolCallWidget {
             name: "bash".to_string(),
-            inner: ratatui::widgets::Paragraph::from(value)
-                .wrap(ratatui::widgets::Wrap { trim: false }),
+            inner: paragraph,
         };
         widget.into()
     }
 }
 
-impl From<&BashCall> for Paragraph<'_> {
-    fn from(task: &BashCall) -> Self {
-        let mut texts = Vec::new();
-        let command = task
-            .arguments
-            .as_ref()
-            .map(|x| x.command.trim())
-            .unwrap_or_default();
-        texts.push(bash_to_text(command));
+fn result_to_texts(result: &BashResult) -> Vec<Text<'static>> {
+    let mut texts = Vec::new();
 
-        let BashResult {
-            stdout,
-            stderr,
-            exit_status,
-            signal,
-        } = match &task.output {
-            Some(output) => match output {
-                Ok(result) => result,
-                Err(err) => {
-                    texts.push(format!("\nerror: {}", err).into());
-                    return texts_to_paragraph(texts);
-                }
-            },
-            None => {
-                texts.push("\n<pending>".into());
-                return texts_to_paragraph(texts);
-            }
-        };
+    let BashResult {
+        stdout,
+        stderr,
+        exit_status,
+        signal,
+    } = result;
 
-        let stdout = stdout.trim();
-        if !stdout.is_empty() {
-            texts.push(format!("\n{}", stdout).into());
-        }
-
-        let stderr = stderr.trim();
-        if !stderr.is_empty() {
-            texts.push(format!("\nstderr: {}", stderr).into());
-        }
-
-        if let Some(status) = *exit_status
-            && status != 0
-        {
-            texts.push(format!("\nstatus: {}", status).into());
-        }
-
-        if let Some(signal) = signal {
-            texts.push(format!("\nsignal: {}", signal).into());
-        }
-
-        texts_to_paragraph(texts)
+    if let Some(status) = *exit_status
+        && status != 0
+    {
+        texts.push(format!("status: {}", status).into());
     }
+
+    if let Some(signal) = signal {
+        texts.push(format!("signal: {}", signal).into());
+    }
+
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        texts.push(format!("stderr:\n{}", stderr).into());
+    }
+
+    // TODO: better visual separation, ideally -- blocks
+
+    let stdout = stdout.trim();
+    if !stdout.is_empty() {
+        texts.push(format!("stdout:\n{}", stdout).into());
+    }
+
+    texts
 }
 
 fn bash_to_text(script: &str) -> Text<'static> {
@@ -91,8 +95,8 @@ fn bash_to_text(script: &str) -> Text<'static> {
         .collect()
 }
 
-fn texts_to_paragraph(texts: Vec<Text<'_>>) -> Paragraph<'_> {
+fn texts_to_paragraph(texts: Vec<Text<'static>>) -> Paragraph<'static> {
     let lines: Vec<_> = texts.into_iter().flat_map(|t| t.lines).collect();
     let text = Text::from(lines);
-    Paragraph::new(text)
+    Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: false })
 }

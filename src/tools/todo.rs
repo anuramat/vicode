@@ -82,7 +82,7 @@ lazy_static::lazy_static! {
 impl From<&TodoCall> for Element {
     fn from(call: &TodoCall) -> Self {
         let mut name = "todo updated".to_string();
-        let text = if let Some(args) = &call.arguments {
+        let inner = call.arguments.as_ref().map(|args| {
             name = format!("todo: {}", args.state.current);
             let mut lines = Vec::new();
             for entry in &args.state.entries {
@@ -93,15 +93,9 @@ impl From<&TodoCall> for Element {
                 };
                 lines.push(format!("{} {}", marker, entry.task));
             }
-            lines.join("\n")
-        } else {
-            "pending".into()
-        };
+            Paragraph::new(lines.join("\n")).wrap(Wrap { trim: false })
+        });
 
-        ToolCallWidget {
-            name,
-            inner: Paragraph::new(text).wrap(Wrap { trim: false }),
-        }
-        .into()
+        ToolCallWidget { name, inner }.into()
     }
 }

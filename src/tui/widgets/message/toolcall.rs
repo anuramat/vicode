@@ -14,8 +14,7 @@ pub fn style() -> Style {
 #[derive(From, Debug, Clone)]
 pub struct ToolCallWidget {
     pub name: String,
-    pub inner: Paragraph<'static>,
-    // TODO make inner an Option; None if the tool call is still pending
+    pub inner: Option<Paragraph<'static>>,
 }
 
 impl From<&ToolCallItem> for Element {
@@ -33,7 +32,10 @@ impl HeightComputable for ToolCallWidget {
         if ctx.hide_tools {
             return 1;
         }
-        self.inner.line_count(width) as u16
+        if let Some(inner) = &self.inner {
+            return inner.line_count(width) as u16;
+        }
+        1
     }
 
     fn render(
@@ -42,7 +44,7 @@ impl HeightComputable for ToolCallWidget {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        if !ctx.hide_tools {
+        if !ctx.hide_tools && self.inner.is_some() {
             return self.inner.render_ref(area, buf);
         }
         Paragraph::new(self.name.as_str())
