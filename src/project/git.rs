@@ -1,4 +1,10 @@
+use std::process::Command;
+use std::process::Stdio;
+
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::ensure;
+use tokio::fs::create_dir_all;
 
 use super::Project;
 use crate::agent::id::AgentId;
@@ -13,14 +19,34 @@ impl Project {
         if path.exists() {
             return Ok(());
         }
-        let args = [
-            "worktree",
-            "add",
-            "--detach",
-            &path.to_string_lossy(),
-            commit,
-        ];
-        self.bash("git", args).await?.status.exit_ok()?;
+        create_dir_all(&path).await?;
+
+        let dest = path.clone();
+        let root = self.root.clone();
+        let commit = commit.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut archive = Command::new("git")
+                .current_dir(root)
+                .args(["archive", &commit])
+                .stdout(Stdio::piped())
+                .spawn()?;
+            let tar = Command::new("tar")
+                .arg("-x")
+                .arg("-C")
+                .arg(&dest)
+                .stdin(
+                    archive
+                        .stdout
+                        .take()
+                        .ok_or_else(|| anyhow!("missing git archive stdout"))?,
+                )
+                .status()?;
+            archive.wait()?.exit_ok()?;
+            tar.exit_ok()?;
+            Ok(())
+        })
+        .await??;
         Ok(())
     }
 
