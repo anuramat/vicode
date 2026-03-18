@@ -112,17 +112,22 @@ static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(Theme
 
 impl IntoElement for EditCall {
     fn to_element(&self) -> Element {
-        // TODO optimize, parameterize theme, unify with bash widget rendering thing
-        let syntax = SYNTAX_SET.find_syntax_by_token("diff").unwrap();
-        let theme = &THEME_SET.themes["base16-ocean.dark"];
-        let mut highlighter = HighlightLines::new(syntax, theme);
+        let text: Text<'_> = if let Some(meta) = &self.meta {
+            // TODO optimize, parameterize theme, unify with bash widget rendering thing
+            let syntax = SYNTAX_SET.find_syntax_by_token("diff").unwrap();
+            let theme = &THEME_SET.themes["base16-ocean.dark"];
+            let mut highlighter = HighlightLines::new(syntax, theme);
 
-        let diff = self.meta.clone().unwrap().diff;
-        let text: Text<'_> = LinesWithEndings::from(&diff)
-            .filter_map(|line| highlighter.highlight_line(line, &SYNTAX_SET).ok())
-            .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
-            .flatten()
-            .collect();
+            LinesWithEndings::from(&meta.diff)
+                .filter_map(|line| highlighter.highlight_line(line, &SYNTAX_SET).ok())
+                .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
+                .flatten()
+                .collect()
+        } else if let Some(output) = self.output() {
+            output.into()
+        } else {
+            "pending".into()
+        };
         ToolCallWidget {
             name: format!("edit: {}", self.arguments.clone().unwrap().filepath),
             inner: Paragraph::new(text),
