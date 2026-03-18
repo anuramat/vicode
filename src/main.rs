@@ -36,9 +36,5 @@ async fn main() {
     let _guard = init_tracing().unwrap();
     let result = App::launch().await;
     ratatui::restore();
-    if let Err(e) = result {
-        let msg = format!("Application error: {:#}", e);
-        error!(msg);
-        eprintln!("{msg}");
-    }
+    result.unwrap();
 }

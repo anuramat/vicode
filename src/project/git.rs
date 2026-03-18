@@ -50,6 +50,7 @@ impl Project {
         Ok(())
     }
 
+    // TODO this should be renamed
     /// prepare the worktree overlayfs directories:
     /// identical to a normal worktree, but reusing snapshot to save storage
     pub async fn add_worktree(
@@ -65,12 +66,5 @@ impl Project {
         )
         .await?;
         Ok(())
-    }
-
-    pub async fn whiteout_git(
-        &self,
-        aid: &AgentId,
-    ) -> Result<()> {
-        self.whiteout(aid, ".git").await
     }
 }

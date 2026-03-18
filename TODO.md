@@ -2,9 +2,12 @@
 
 - move responses specific stuff into api/responses/*
 - maybe somehow unfuck code duplication in message timestamp/metadata logic
+- agent init is kinda fucked up, need clear boundaries on init status: when
+  overlay is mounted, when state is written to file
 
 # core
 
+- gitless scenario -- project dir instead of snapshots for overlays
 - edit tool -- expand to create file, replace file, append, insert at
 - subagents
   - two types

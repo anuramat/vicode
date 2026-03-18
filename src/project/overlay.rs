@@ -15,21 +15,6 @@ use crate::project::layout::AGENT_WORKDIR_DIRNAME;
 // TODO this file is kinda huge. probably should move it to a separate module and/or split
 
 impl Project {
-    pub async fn whiteout(
-        &self,
-        aid: &AgentId,
-        file: &str, // relative to root of agent workdir
-    ) -> Result<()> {
-        let path = self
-            .overlay_upper(aid)
-            .join(file)
-            .to_string_lossy()
-            .to_string();
-        let args = ["-m=000", &path, "c", "0", "0"];
-        self.bash("mknod", args).await?.status.exit_ok()?;
-        Ok(())
-    }
-
     // XXX maybe drop this one
     pub async fn unmount(
         &self,
@@ -38,6 +23,7 @@ impl Project {
         self.unmount_path(&self.agent_workdir(aid)).await
     }
 
+    /// create and mount agent workdir, maybe with a git worktree
     pub async fn init_overlay(
         &self,
         commit: &str,
@@ -50,7 +36,7 @@ impl Project {
 
         if !git {
             create_dir_all(self.agent_workdir(aid)).await?;
-            self.whiteout_git(aid).await?;
+            self.mount(commit, aid).await?;
             return Ok(());
         }
 
