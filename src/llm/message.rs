@@ -56,10 +56,28 @@ pub enum AssistantItem {
 // timestamp for the item
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ItemTiming {
+    pub started_at_ms: u64,
+    pub last_modified_ms: Option<u64>,
+}
+
+impl ItemTiming {
+    pub fn new() -> Self {
+        Self {
+            started_at_ms: now_ms(),
+            last_modified_ms: None,
+        }
+    }
+
+    pub fn touch(&mut self) {
+        self.last_modified_ms = Some(now_ms());
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OutputItem {
     pub id: String,
-    pub started_at_ms: u64,
-    pub finished_at_ms: Option<u64>,
+    pub timing: ItemTiming,
     pub content: Vec<OutputContent>,
 }
 
@@ -72,8 +90,7 @@ pub enum OutputContent {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ReasoningItem {
     pub id: String,
-    pub started_at_ms: u64,
-    pub finished_at_ms: Option<u64>,
+    pub timing: ItemTiming,
     pub content: Option<Vec<String>>,
     pub summary: Vec<String>,
     pub encrypted: Option<String>,
@@ -84,8 +101,7 @@ pub struct ToolCallItem {
     // TODO is this truly Option?
     pub id: Option<String>,
     pub call_id: String,
-    pub started_at_ms: u64,
-    pub finished_at_ms: Option<u64>,
+    pub timing: ItemTiming,
     pub executed_at_ms: Option<u64>,
 
     #[serde(flatten)]
@@ -111,6 +127,22 @@ impl AssistantMessage {
 }
 
 impl AssistantItem {
+    pub fn timing(&self) -> &ItemTiming {
+        match self {
+            AssistantItem::Output(item) => &item.timing,
+            AssistantItem::Reasoning(item) => &item.timing,
+            AssistantItem::ToolCall(item) => &item.timing,
+        }
+    }
+
+    pub fn timing_mut(&mut self) -> &mut ItemTiming {
+        match self {
+            AssistantItem::Output(item) => &mut item.timing,
+            AssistantItem::Reasoning(item) => &mut item.timing,
+            AssistantItem::ToolCall(item) => &mut item.timing,
+        }
+    }
+
     pub fn id(&self) -> String {
         match self {
             AssistantItem::Output(msg) => &msg.id,
@@ -118,49 +150,6 @@ impl AssistantItem {
             AssistantItem::ToolCall(tool) => tool.id(),
         }
         .clone()
-    }
-
-    pub fn get_start(&self) -> u64 {
-        match self {
-            AssistantItem::Output(item) => item.started_at_ms,
-            AssistantItem::Reasoning(item) => item.started_at_ms,
-            AssistantItem::ToolCall(item) => item.started_at_ms,
-        }
-    }
-
-    pub fn set_start(
-        &mut self,
-        ms: u64,
-    ) {
-        match self {
-            AssistantItem::Output(item) => item.started_at_ms = ms,
-            AssistantItem::Reasoning(item) => item.started_at_ms = ms,
-            AssistantItem::ToolCall(item) => item.started_at_ms = ms,
-        }
-    }
-
-    pub fn get_finish(&self) -> Option<u64> {
-        match self {
-            AssistantItem::Output(item) => item.finished_at_ms,
-            AssistantItem::Reasoning(item) => item.finished_at_ms,
-            AssistantItem::ToolCall(item) => item.finished_at_ms,
-        }
-    }
-
-    pub fn set_finish(
-        &mut self,
-        now: u64,
-    ) {
-        match self {
-            AssistantItem::Output(item) => item.finished_at_ms = Some(now),
-            AssistantItem::Reasoning(item) => item.finished_at_ms = Some(now),
-            AssistantItem::ToolCall(item) => item.finished_at_ms = Some(now),
-        }
-    }
-
-    pub fn finish(&mut self) {
-        let now = now_ms();
-        self.set_finish(now);
     }
 }
 

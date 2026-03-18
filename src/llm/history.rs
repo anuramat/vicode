@@ -135,9 +135,9 @@ impl History {
             // just for consistency guarantee, and thus we actually finished the
             // existing item when the last delta arrived, so we preserve the smaller finish value
             if let Some(existing) = msg.content.get(&item.id()) {
-                item.set_start(existing.get_start());
-                if let Some(finish) = existing.get_finish() {
-                    item.set_finish(finish);
+                item.timing_mut().started_at_ms = existing.timing().started_at_ms;
+                if let Some(modified) = existing.timing().last_modified_ms {
+                    item.timing_mut().last_modified_ms = Some(modified);
                 }
             }
             _ = msg.content.insert(item.id(), item);
@@ -208,6 +208,7 @@ impl From<&History> for CompositeElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::message::ItemTiming;
     use crate::llm::message::OutputItem;
 
     #[test]
@@ -230,8 +231,7 @@ mod tests {
             0,
             Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
-                started_at_ms: 1,
-                finished_at_ms: None,
+                timing: ItemTiming::new(),
                 content: vec![],
             })),
         ));
@@ -239,8 +239,10 @@ mod tests {
             0,
             vec![AssistantItem::Output(OutputItem {
                 id: "out".into(),
-                started_at_ms: 1,
-                finished_at_ms: Some(2),
+                timing: ItemTiming {
+                    started_at_ms: 1,
+                    last_modified_ms: Some(2),
+                },
                 content: vec![],
             })],
         ));
@@ -248,7 +250,7 @@ mod tests {
             panic!("expected assistant message");
         };
         let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
-        assert_eq!(item.finished_at_ms, None);
+        assert_eq!(item.timing.last_modified_ms, None);
         assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
     }
 }

@@ -1,7 +1,6 @@
 use crate::llm::history::History;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::Message;
-use crate::llm::message::now_ms;
 
 #[derive(Debug, Clone)]
 pub struct Delta {
@@ -23,7 +22,7 @@ impl AssistantMessage {
         delta: String,
     ) -> Option<()> {
         let item = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
-        item.finished_at_ms = Some(now_ms());
+        item.timing.touch();
         item.summary.push(delta);
         Some(())
     }
@@ -38,7 +37,7 @@ impl AssistantMessage {
             reasoning.content = Some(Vec::new());
         }
         let item = reasoning.content.as_mut()?;
-        reasoning.finished_at_ms = Some(now_ms());
+        reasoning.timing.touch();
         item.push(delta);
         Some(())
     }
@@ -51,7 +50,7 @@ impl AssistantMessage {
         let item = self.content.get_mut(&id)?.try_as_output_mut()?;
         item.content
             .push(crate::llm::message::OutputContent::Text(delta));
-        item.finished_at_ms = Some(now_ms());
+        item.timing.touch();
         Some(())
     }
 }

@@ -233,6 +233,7 @@ mod tests {
     use super::messages;
     use crate::llm::message::AssistantItem;
     use crate::llm::message::AssistantMessage;
+    use crate::llm::message::ItemTiming;
     use crate::llm::message::Message;
     use crate::llm::message::ToolCallItem;
     use crate::tools::bash::BashArguments;
@@ -260,8 +261,10 @@ mod tests {
                 "call_1".into() => AssistantItem::ToolCall(ToolCallItem {
                     id: Some("call_1".into()),
                     call_id: "call_1".into(),
-                    started_at_ms: 1,
-                    finished_at_ms: Some(2),
+                    timing: ItemTiming {
+                        started_at_ms: 1,
+                        last_modified_ms: Some(2),
+                    },
                     executed_at_ms: Some(3),
                     task: Box::new(task),
                 })

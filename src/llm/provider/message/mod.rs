@@ -101,8 +101,10 @@ mod tests {
         let call = ToolCallItem {
             id: Some("id_1".into()),
             call_id: "call_id_2".into(),
-            started_at_ms: 1,
-            finished_at_ms: Some(2),
+            timing: ItemTiming {
+                started_at_ms: 1,
+                last_modified_ms: Some(2),
+            },
             executed_at_ms: Some(3),
             task: Box::new(task),
         };
@@ -136,8 +138,10 @@ mod tests {
         let call = ToolCallItem {
             id: Some("id_1".into()),
             call_id: "call_id_2".into(),
-            started_at_ms: 1,
-            finished_at_ms: Some(2),
+            timing: ItemTiming {
+                started_at_ms: 1,
+                last_modified_ms: Some(2),
+            },
             executed_at_ms: Some(3),
             task: Box::new(task),
         };
@@ -171,15 +175,14 @@ mod tests {
             id,
             call_id,
             task,
-            started_at_ms,
-            finished_at_ms,
+            timing,
             executed_at_ms,
         } = ToolCallItem::try_from(call).unwrap();
 
         assert_eq!(id, Some("id_42".into()));
         assert_eq!(call_id, "call_id_69");
-        assert!(started_at_ms > 0);
-        assert_eq!(finished_at_ms, None);
+        assert!(timing.started_at_ms > 0);
+        assert_eq!(timing.last_modified_ms, None);
         assert_eq!(executed_at_ms, None);
 
         assert_eq!(task.typetag_name(), "bash");

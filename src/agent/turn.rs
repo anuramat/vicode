@@ -94,7 +94,7 @@ impl Agent {
                     break;
                 }
                 StreamEvent::ItemDone(mut item) => {
-                    item.finish();
+                    item.timing_mut().touch();
                     send_item(&tx, loc, item).await?;
                 }
                 StreamEvent::ItemAdded(item) => {

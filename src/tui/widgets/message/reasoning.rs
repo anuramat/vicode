@@ -73,7 +73,10 @@ impl From<&ReasoningItem> for Element {
         }
 
         let char_count = text.chars().count();
-        let seconds = item.finished_at_ms.map(|ms| ms - item.started_at_ms);
+        let seconds = item
+            .timing
+            .last_modified_ms
+            .map(|ms| ms - item.timing.started_at_ms);
         let widget = ReasoningWidget {
             widget: Paragraph::new(text)
                 .style(style())

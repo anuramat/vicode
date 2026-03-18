@@ -19,6 +19,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::llm::delta::Delta;
 use crate::llm::delta::DeltaContent;
 use crate::llm::message::AssistantItem;
+use crate::llm::message::ItemTiming;
 use crate::llm::message::OutputItem;
 use crate::llm::message::ReasoningItem;
 use crate::llm::message::now_ms;
@@ -138,8 +139,7 @@ impl StreamState {
                     events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
                         ReasoningItem {
                             id: reasoning_id.clone(),
-                            started_at_ms: now_ms(),
-                            finished_at_ms: None,
+                            timing: ItemTiming::new(),
                             content: None,
                             summary: Vec::new(),
                             encrypted: None,
@@ -158,8 +158,7 @@ impl StreamState {
                 self.outputs.insert(choice.index, true);
                 events.push(StreamEvent::ItemAdded(AssistantItem::Output(OutputItem {
                     id: output_id.clone(),
-                    started_at_ms: now_ms(),
-                    finished_at_ms: None,
+                    timing: ItemTiming::new(),
                     content: Vec::new(),
                 })));
             }
