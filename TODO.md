@@ -77,3 +77,8 @@
   - cross-agent comms?
 - if agent didn't inherit context, provide a tool to retroactively force inherit_context=true
 - aggressively spawn agents with inherit=true, should be almost always a good idea
+- cli
+  - `vc -h/--help`
+  - project commands, `-a/--all` -- apply to all projects
+    - `vc nuke mounts` -- unmount all in this project
+    - `vc nuke data` -- wipe data and logs for this project
