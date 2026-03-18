@@ -9,19 +9,25 @@ use xdg::BaseDirectories;
 
 use crate::bwrap::BwrapConfig;
 
+const DEFAULT_INSTRUCTIONS: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/AGENTS.md"));
 const DEFAULT_CONFIG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/config.toml"));
 const CONFIG_FILENAME: &str = "config.toml";
-const AGENTS_FILENAME: &str = "AGENTS.md"; // in config dir
+const INSTRUCTIONS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
 
 // TODO drop lazy_static, centralize config reading and pass values explicitly
+// TODO let user override instructions filepath
 
 lazy_static::lazy_static! {
     pub static ref CONFIG: Config = Config::new().unwrap();
     pub static ref DIRS: BaseDirectories = BaseDirectories::with_prefix(XDG_DIRNAME);
     pub static ref INSTRUCTIONS: String = {
-        let filepath = DIRS.place_config_file(AGENTS_FILENAME).unwrap();
+        let filepath = DIRS.place_config_file(INSTRUCTIONS_FILENAME).unwrap();
+        if !filepath.exists() {
+            std::fs::write(&filepath, DEFAULT_INSTRUCTIONS).unwrap();
+        }
         std::fs::read_to_string(filepath).unwrap()
     };
 }
