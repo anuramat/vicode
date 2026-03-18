@@ -54,6 +54,7 @@ ignore = "0.4.25"
 similar = "2.7.0"
 smart-default = "0.7.1"
 petname = "2.0.2"
+proc-mounts = "0.3.0"
 
 [lints.clippy]
 redundant_clone = "warn"

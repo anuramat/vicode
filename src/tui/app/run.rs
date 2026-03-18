@@ -2,7 +2,6 @@ use std::future::pending;
 
 use anyhow::Result;
 use crossterm::event::Event;
-use futures::future::try_join_all;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 
@@ -22,15 +21,19 @@ impl<'a> App<'a> {
     pub async fn run(mut self) -> Result<()> {
         let mut term = ratatui::init();
 
-        // translate key events to app events
-        self.spawn_term_translator();
         // first render
         self.draw(&mut term)?;
+
+        // translate key events to app events
+        self.spawn_term_translator();
+        // clean up before starting
+        self.cleanup().await?;
+        // create shared lowerdir
+        PROJECT.init_shared_lowerdir().await?;
         // load assistants
         ASSISTANT_POOL.get_or_try_init(AssistantPool::new).await?;
         // load tabs
         self.load_tabs().await?;
-        // TODO cleanup -- delete agents that are not in app state
 
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
         render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -60,6 +63,7 @@ impl<'a> App<'a> {
                 msg = self.rx.recv() => {
                     self.handle(msg.expect("app event channel closed")).await?;
                     if self.should_exit {
+                        PROJECT.save_app_state(&self).await?;
                         self.cleanup().await.expect("failed app clean up");
                         break;
                     }
@@ -70,10 +74,11 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    /// clean up on start / before exit
     async fn cleanup(&self) -> Result<()> {
-        PROJECT.save_app_state(self).await?;
+        // TODO delete unreachable agents, clear stale git worktrees/branches
         self.reset_osc7();
-        try_join_all(self.agents.keys().map(|i| PROJECT.unmount(i))).await?;
+        PROJECT.cleanup().await?;
         Ok(())
     }
 

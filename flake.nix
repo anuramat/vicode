@@ -35,6 +35,7 @@
           runtimeDeps = with pkgs; [
             git
             fuse-overlayfs
+            bindfs
             bubblewrap
           ];
         in

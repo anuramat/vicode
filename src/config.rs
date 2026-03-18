@@ -98,6 +98,12 @@ pub enum SubagentAssistantConfig {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
+    /// Paths (relative to project root) to expose in the agent workdir through a special lowerdir shared by all agents.
+    /// All directories are assumed to be gitignored. Usecase: compilation cache, .env files etc.
+    /// - directories are bind-mounted
+    /// - files are hardlinked
+    #[serde(default)]
+    pub shared: Vec<String>,
     pub bash: BashConfig,
 
     /// AGENTS.md-type files to read from the project root; if multiple are defined, contents are
@@ -202,6 +208,7 @@ mod tests {
             "#,
         )
         .unwrap();
+        assert!(config.shared.is_empty());
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.assistants["deep"].provider, "main");
     }
@@ -234,5 +241,67 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn rejects_shared_paths_outside_project_root() {
+        let err = Config::parse(
+            r#"
+            shared = ["../target"]
+            primary_assistant = ["fast"]
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("project root"));
+    }
+
+    #[test]
+    fn rejects_overlapping_shared_paths() {
+        let err = Config::parse(
+            r#"
+            shared = ["target", "target/debug"]
+            primary_assistant = ["fast"]
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-lc"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must not overlap"));
     }
 }

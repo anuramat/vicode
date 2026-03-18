@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -9,9 +10,10 @@ use crate::agent::id::AgentId;
 const APP_STATE_FILENAME: &str = "state.json";
 const SNAPSHOTS_DIRNAME: &str = "snapshots";
 const AGENTS_DIRNAME: &str = "agents";
+const SHARED_DIRNAME: &str = "shared";
 
 const AGENT_STATE_FILENAME: &str = "state.json";
-const AGENT_WORKDIR_DIRNAME: &str = "workdir";
+pub const AGENT_WORKDIR_DIRNAME: &str = "workdir";
 const OVERLAY_DIRNAME: &str = ".overlay";
 
 const OVERLAY_UPPER_DIRNAME: &str = "upper";
@@ -56,6 +58,18 @@ impl Project {
 
     pub fn agents(&self) -> PathBuf {
         self.data.join(AGENTS_DIRNAME)
+    }
+
+    // TODO maybe rename these
+    pub fn shared_root(&self) -> PathBuf {
+        self.data.join(SHARED_DIRNAME)
+    }
+
+    pub fn shared(
+        &self,
+        path: &Path,
+    ) -> PathBuf {
+        self.shared_root().join(path)
     }
 
     pub fn agent(
