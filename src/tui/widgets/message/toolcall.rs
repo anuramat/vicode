@@ -15,6 +15,7 @@ pub fn style() -> Style {
 pub struct ToolCallWidget {
     pub name: String,
     pub inner: Paragraph<'static>,
+    // TODO make inner an Option; None if the tool call is still pending
 }
 
 impl From<&ToolCallItem> for Element {

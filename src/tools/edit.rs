@@ -110,9 +110,9 @@ static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
     std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
 
-impl IntoElement for EditCall {
-    fn to_element(&self) -> Element {
-        let text: Text<'_> = if let Some(meta) = &self.meta {
+impl From<&EditCall> for Element {
+    fn from(call: &EditCall) -> Element {
+        let text: Text<'_> = if let Some(meta) = &call.meta {
             // TODO optimize, parameterize theme, unify with bash widget rendering thing
             let syntax = SYNTAX_SET.find_syntax_by_token("diff").unwrap();
             let theme = &THEME_SET.themes["base16-ocean.dark"];
@@ -123,13 +123,13 @@ impl IntoElement for EditCall {
                 .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
                 .flatten()
                 .collect()
-        } else if let Some(output) = self.output() {
+        } else if let Some(output) = call.output() {
             output.into()
         } else {
             "pending".into()
         };
         ToolCallWidget {
-            name: format!("edit: {}", self.arguments.clone().unwrap().filepath),
+            name: format!("edit: {}", call.arguments.clone().unwrap().filepath),
             inner: Paragraph::new(text),
         }
         .into()

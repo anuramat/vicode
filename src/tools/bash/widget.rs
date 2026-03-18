@@ -9,18 +9,17 @@ use syntect::util::as_24_bit_terminal_escaped;
 
 use super::*;
 use crate::tui::widgets::container::element::Element;
-use crate::tui::widgets::container::element::IntoElement;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
 
 static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
     std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
 
-impl IntoElement for BashCall {
-    fn to_element(&self) -> Element {
+impl From<&BashCall> for Element {
+    fn from(value: &BashCall) -> Self {
         let widget = ToolCallWidget {
             name: "bash".to_string(),
-            inner: ratatui::widgets::Paragraph::from(self)
+            inner: ratatui::widgets::Paragraph::from(value)
                 .wrap(ratatui::widgets::Wrap { trim: false }),
         };
         widget.into()
@@ -30,7 +29,6 @@ impl IntoElement for BashCall {
 impl From<&BashCall> for Paragraph<'_> {
     fn from(task: &BashCall) -> Self {
         let mut texts = Vec::new();
-        // TODO streaming args and outputs
         let command = task
             .arguments
             .as_ref()

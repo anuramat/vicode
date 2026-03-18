@@ -7,6 +7,7 @@ use ratatui::widgets::Wrap;
 use crate::agent::tool::traits::*;
 use crate::declare_tool;
 use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::message::toolcall::ToolCallWidget;
 
 declare_tool!(
     name: "todo",
@@ -74,35 +75,33 @@ lazy_static::lazy_static! {
     static ref BLOCK: ratatui::widgets::Block<'static> = ratatui::widgets::Block::bordered().border_set(ratatui::symbols::border::PLAIN).title("");
 }
 
-impl From<TodoState> for Paragraph<'_> {
-    fn from(state: TodoState) -> Self {
-        let title = " todo ";
-        let mut lines = vec![state.current];
-        for entry in &state.entries {
-            let marker = match entry.status {
-                EntryStatus::Done => "[x]",
-                EntryStatus::InProgress => "[~]",
-                EntryStatus::Pending => "[ ]",
-            };
-            lines.push(format!("{} {}", marker, entry.task));
-        }
-
-        let text = lines.join("\n");
-        Paragraph::new(text)
-            .block(BLOCK.clone().title(title))
-            .wrap(Wrap { trim: false })
-    }
-}
-
 lazy_static::lazy_static! {
     static ref STYLE: Style = Style::default().italic();
 }
 
 impl From<&TodoCall> for Element {
-    fn from(_: &TodoCall) -> Self {
-        let text = "todo updated";
-        Paragraph::new(text)
-            .style(crate::tui::widgets::message::toolcall::style())
-            .into()
+    fn from(call: &TodoCall) -> Self {
+        let mut name = "todo updated".to_string();
+        let text = if let Some(args) = &call.arguments {
+            name = format!("todo: {}", args.state.current);
+            let mut lines = Vec::new();
+            for entry in &args.state.entries {
+                let marker = match entry.status {
+                    EntryStatus::Done => "[x]",
+                    EntryStatus::InProgress => "[~]",
+                    EntryStatus::Pending => "[ ]",
+                };
+                lines.push(format!("{} {}", marker, entry.task));
+            }
+            lines.join("\n")
+        } else {
+            "pending".into()
+        };
+
+        ToolCallWidget {
+            name,
+            inner: Paragraph::new(text).wrap(Wrap { trim: false }),
+        }
+        .into()
     }
 }
