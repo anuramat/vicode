@@ -43,10 +43,10 @@ profile:
 build:
     RUSTFLAGS="-C debuginfo=1" cargo build --release
 
-# init the config
+# rewrite config with default
 config:
     mkdir -p ~/.config/vicode
-    cp config.toml ~/.config/vicode/config.toml
+    cp default/config.toml ~/.config/vicode/config.toml
 
 test:
     cargo test

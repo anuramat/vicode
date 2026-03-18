@@ -9,7 +9,8 @@ use xdg::BaseDirectories;
 
 use crate::bwrap::BwrapConfig;
 
-const DEFAULT_CONFIG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config.toml"));
+const DEFAULT_CONFIG: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/config.toml"));
 const CONFIG_FILENAME: &str = "config.toml";
 const AGENTS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
