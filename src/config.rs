@@ -9,9 +9,12 @@ use xdg::BaseDirectories;
 
 use crate::bwrap::BwrapConfig;
 
+const DEFAULT_CONFIG: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config.toml"));
 const CONFIG_FILENAME: &str = "config.toml";
 const AGENTS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
+
+// TODO drop lazy_static, centralize config reading and pass values explicitly
 
 lazy_static::lazy_static! {
     pub static ref CONFIG: Config = Config::new().unwrap();
@@ -127,6 +130,12 @@ pub struct BashConfig {
 impl Config {
     fn new() -> Result<Self> {
         let filepath = DIRS.place_config_file(CONFIG_FILENAME)?;
+        if !filepath.exists() {
+            // TODO use tokio fs when we stop using lazy_static
+            std::fs::write(&filepath, DEFAULT_CONFIG).with_context(|| {
+                format!("failed to write default config to {}", filepath.display())
+            })?;
+        }
         let s = std::fs::read_to_string(&filepath)
             .with_context(|| format!("failed to read config file at {}", filepath.display()))?;
         Self::parse(&s)
