@@ -41,7 +41,7 @@ reasoning_content_field = "reasoning_content"
 [bash]
   cmd = [
     "bash",
-    "-lc",
+    "-c",
   ]
   [bash.bwrap]
     bin = "bwrap"

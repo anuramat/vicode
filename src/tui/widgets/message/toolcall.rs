@@ -2,7 +2,6 @@ use derive_more::From;
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::WidgetRef;
 
 use crate::llm::message::ToolCallItem;
 use crate::tui::widgets::container::element::*;
@@ -12,9 +11,11 @@ pub fn style() -> Style {
 }
 
 #[derive(From, Debug, Clone)]
-pub struct ToolCallWidget {
+pub struct ToolCallWidget<T>
+where T: HeightComputable + Clone
+{
     pub name: String,
-    pub inner: Option<Paragraph<'static>>,
+    pub inner: Option<T>,
 }
 
 impl From<&ToolCallItem> for Element {
@@ -23,7 +24,9 @@ impl From<&ToolCallItem> for Element {
     }
 }
 
-impl HeightComputable for ToolCallWidget {
+impl<T> HeightComputable for ToolCallWidget<T>
+where T: HeightComputable + Clone
+{
     fn height(
         &mut self,
         width: u16,
@@ -32,8 +35,8 @@ impl HeightComputable for ToolCallWidget {
         if ctx.hide_tools {
             return 1;
         }
-        if let Some(inner) = &self.inner {
-            return inner.line_count(width) as u16;
+        if let Some(inner) = &mut self.inner {
+            return inner.height(width, ctx);
         }
         1
     }
@@ -44,14 +47,18 @@ impl HeightComputable for ToolCallWidget {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        if !ctx.hide_tools && self.inner.is_some() {
-            return self.inner.render_ref(area, buf);
+        if !ctx.hide_tools
+            && let Some(inner) = &mut self.inner
+        {
+            return inner.render(area, buf, ctx);
         }
         Paragraph::new(self.name.as_str())
             .style(style().italic())
             .render(area, buf)
     }
 
+    // TODO make method &mut self, and recompute height on call. if height is 1, no block. maybe
+    // "collapsed" method, active when inner=None or tools hidden
     fn block(
         &self,
         ctx: RenderContext,

@@ -93,7 +93,7 @@ impl Provider {
             return Ok(None);
         };
         let output = tokio::process::Command::new("bash")
-            .args(["-lc", command])
+            .args(["-c", command])
             .output()
             .await
             .context("Failed to run API key command")?;
