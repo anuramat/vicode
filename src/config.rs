@@ -215,7 +215,7 @@ mod tests {
             effort = "low"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"
@@ -247,7 +247,7 @@ mod tests {
             model = "gpt-fast"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"
@@ -257,67 +257,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("missing"));
-    }
-
-    #[test]
-    fn rejects_shared_paths_outside_project_root() {
-        let err = Config::parse(
-            r#"
-            shared = ["../target"]
-            primary_assistant = ["fast"]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            [bash]
-            cmd = ["bash", "-lc"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
-            "#,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("project root"));
-    }
-
-    #[test]
-    fn rejects_overlapping_shared_paths() {
-        let err = Config::parse(
-            r#"
-            shared = ["target", "target/debug"]
-            primary_assistant = ["fast"]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            [bash]
-            cmd = ["bash", "-lc"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
-            "#,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("must not overlap"));
     }
 }

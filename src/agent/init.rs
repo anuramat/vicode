@@ -156,7 +156,7 @@ mod tests {
             model = "gpt-deep"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"

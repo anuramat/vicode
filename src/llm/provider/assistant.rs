@@ -245,7 +245,7 @@ mod tests {
             effort = "low"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"
@@ -284,7 +284,7 @@ mod tests {
             model = "gpt-deep"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"
@@ -324,7 +324,7 @@ mod tests {
             model = "gpt-alt"
 
             [bash]
-            cmd = ["bash", "-lc"]
+            cmd = ["bash", "-c"]
 
             [bash.bwrap]
             bin = "bwrap"
