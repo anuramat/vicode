@@ -257,6 +257,10 @@ mod tests {
         };
         let message = Message::Assistant(AssistantMessage {
             finish_reason: Default::default(),
+            timing: ItemTiming {
+                started_at_ms: 0,
+                last_modified_ms: Some(2),
+            },
             content: indexmap! {
                 "call_1".into() => AssistantItem::ToolCall(ToolCallItem {
                     id: Some("call_1".into()),

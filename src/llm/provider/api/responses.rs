@@ -17,7 +17,7 @@ use crate::config::ProviderConfig;
 use crate::llm::history::History;
 use crate::llm::message::*;
 use crate::llm::provider::api::Api;
-use crate::llm::provider::api::AssistantStream;
+use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::event::StreamEvent;
 
 pub struct ResponsesApi {
@@ -46,13 +46,17 @@ impl Api for ResponsesApi {
         instructions: String,
         history: History,
         tools: ToolSchemas,
-    ) -> Result<AssistantStream> {
+    ) -> Result<StartedAssistantStream> {
         let request = request(model, instructions, history, tools, &self.compat)?;
+        let started_at_ms = now_ms();
         let inner = self.client.responses().create_stream(request).await?;
-        Ok(Box::pin(ResponsesStream {
-            inner,
-            _permit: permit,
-        }))
+        Ok(StartedAssistantStream {
+            started_at_ms,
+            stream: Box::pin(ResponsesStream {
+                inner,
+                _permit: permit,
+            }),
+        })
     }
 }
 

@@ -8,6 +8,7 @@ use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::DeveloperMessage;
+use crate::llm::message::ItemTiming;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
 use crate::tui::widgets::container::composite::CompositeElement;
@@ -21,6 +22,7 @@ pub struct History {
 // TODO this is kinda ugly, maybe send usize + HistoryEvent tuple?
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
+    ResponseStarted(usize, u64),
     ResponseDelta(usize, Delta),
     ResponseItem(usize, Box<AssistantItem>),
     ResponseCompleted(usize, Vec<AssistantItem>),
@@ -82,6 +84,9 @@ impl History {
         event: HistoryEvent,
     ) {
         match event {
+            HistoryEvent::ResponseStarted(loc, started_at_ms) => {
+                self.start_response(loc, started_at_ms);
+            }
             HistoryEvent::ResponseDelta(loc, item_delta) => {
                 self.push_delta(loc, item_delta);
             }
@@ -129,6 +134,7 @@ impl History {
         loc: usize,
         mut item: AssistantItem,
     ) {
+        let item_modified = item.timing().last_modified_ms;
         if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
             // if item already exists -- replace it but preserve start
             // if item has finish, it means that we constructed it from delta, the new item is
@@ -144,9 +150,32 @@ impl History {
         } else if loc == self.messages.len() {
             let msg = AssistantMessage {
                 finish_reason: AssistantMessageStatus::Success,
+                timing: ItemTiming::with_start(item.timing().started_at_ms),
                 content: indexmap! {item.id() => item},
             };
             self.messages.push(msg.into());
+        } else {
+            return;
+        }
+        if let Some(modified) = item_modified {
+            self.messages
+                .get_mut(loc)
+                .unwrap()
+                .try_as_assistant_mut()
+                .unwrap()
+                .timing
+                .touch_at(modified);
+        }
+    }
+
+    pub fn start_response(
+        &mut self,
+        loc: usize,
+        started_at_ms: u64,
+    ) {
+        if loc == self.messages.len() {
+            self.messages
+                .push(AssistantMessage::new(started_at_ms).into());
         }
     }
 
@@ -208,7 +237,6 @@ impl From<&History> for CompositeElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::message::ItemTiming;
     use crate::llm::message::OutputItem;
 
     #[test]
@@ -225,8 +253,90 @@ mod tests {
     }
 
     #[test]
+    fn response_started_creates_empty_assistant_message() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseStarted(0, 7));
+        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            panic!("expected assistant message");
+        };
+        assert!(msg.content.is_empty());
+        assert_eq!(msg.timing.started_at_ms, 7);
+        assert_eq!(msg.timing.last_modified_ms, None);
+        assert!(matches!(
+            msg.finish_reason,
+            AssistantMessageStatus::InProgress
+        ));
+    }
+
+    #[test]
+    fn item_added_does_not_touch_message_timing() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseStarted(0, 1));
+        history.handle(HistoryEvent::ResponseItem(
+            0,
+            Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                timing: ItemTiming::with_start(2),
+                content: vec![],
+            })),
+        ));
+        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            panic!("expected assistant message");
+        };
+        assert_eq!(msg.timing.last_modified_ms, None);
+    }
+
+    #[test]
+    fn item_done_without_delta_touches_message_timing() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseStarted(0, 1));
+        history.handle(HistoryEvent::ResponseItem(
+            0,
+            Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                timing: ItemTiming {
+                    started_at_ms: 2,
+                    last_modified_ms: Some(3),
+                },
+                content: vec![],
+            })),
+        ));
+        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            panic!("expected assistant message");
+        };
+        assert_eq!(msg.timing.last_modified_ms, Some(3));
+    }
+
+    #[test]
+    fn delta_touches_message_timing() {
+        let mut history = History::new();
+        history.handle(HistoryEvent::ResponseStarted(0, 1));
+        history.handle(HistoryEvent::ResponseItem(
+            0,
+            Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                timing: ItemTiming::with_start(2),
+                content: vec![],
+            })),
+        ));
+        history.handle(HistoryEvent::ResponseDelta(
+            0,
+            Delta {
+                id: "out".into(),
+                delta: crate::llm::delta::DeltaContent::Output("hello".into()),
+            },
+        ));
+        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            panic!("expected assistant message");
+        };
+        let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
+        assert_eq!(msg.timing.last_modified_ms, item.timing.last_modified_ms);
+    }
+
+    #[test]
     fn response_completed_marks_message_success() {
         let mut history = History::new();
+        history.handle(HistoryEvent::ResponseStarted(0, 0));
         history.handle(HistoryEvent::ResponseItem(
             0,
             Box::new(AssistantItem::Output(OutputItem {

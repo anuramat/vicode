@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use derive_more::From;
 use derive_more::Into;
 use indexmap::IndexMap;
@@ -25,10 +27,10 @@ pub struct UserMessage {
     pub text: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Into, From, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Into, From)]
 pub struct AssistantMessage {
-    // TODO store start time and finish time/last update time maybe? idk
     pub finish_reason: AssistantMessageStatus,
+    pub timing: ItemTiming,
     #[serde(with = "indexmap::map::serde_seq")]
     pub content: IndexMap<String, AssistantItem>,
 }
@@ -61,16 +63,45 @@ pub struct ItemTiming {
     pub last_modified_ms: Option<u64>,
 }
 
+impl Display for ItemTiming {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self.last_modified_ms {
+            None => f.write_str("tbd"),
+            Some(end) => {
+                let ms = end - self.started_at_ms;
+                let s: f64 = (ms as f64) / 1000_f64;
+                f.write_fmt(format_args!("{:.1}s", s))
+            }
+        }
+    }
+}
+
 impl ItemTiming {
     pub fn new() -> Self {
+        Self::with_start(now_ms())
+    }
+
+    pub fn with_start(started_at_ms: u64) -> Self {
         Self {
-            started_at_ms: now_ms(),
+            started_at_ms,
             last_modified_ms: None,
         }
     }
 
-    pub fn touch(&mut self) {
-        self.last_modified_ms = Some(now_ms());
+    pub fn touch(&mut self) -> u64 {
+        let now = now_ms();
+        self.last_modified_ms = Some(now);
+        now
+    }
+
+    pub fn touch_at(
+        &mut self,
+        at_ms: u64,
+    ) {
+        self.last_modified_ms = Some(at_ms);
     }
 }
 
@@ -109,6 +140,14 @@ pub struct ToolCallItem {
 }
 
 impl AssistantMessage {
+    pub fn new(started_at_ms: u64) -> Self {
+        Self {
+            finish_reason: Default::default(),
+            timing: ItemTiming::with_start(started_at_ms),
+            content: IndexMap::new(),
+        }
+    }
+
     pub fn output(&self) -> String {
         self.content
             .values()
@@ -123,6 +162,12 @@ impl AssistantMessage {
             })
             .collect::<Vec<_>>()
             .join("")
+    }
+}
+
+impl Default for AssistantMessage {
+    fn default() -> Self {
+        Self::new(now_ms())
     }
 }
 

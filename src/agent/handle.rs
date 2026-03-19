@@ -118,6 +118,7 @@ impl Agent {
             .await?;
         self.state.context.history.handle(event.clone());
         match event {
+            HistoryEvent::ResponseStarted(_, _) => {}
             HistoryEvent::ResponseItem(loc, ref item) => {
                 if let AssistantItem::ToolCall(mut call) = (**item).clone()
                     && call.task.output().is_none()

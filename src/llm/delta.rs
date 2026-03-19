@@ -22,7 +22,7 @@ impl AssistantMessage {
         delta: String,
     ) -> Option<()> {
         let item = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
-        item.timing.touch();
+        self.timing.touch_at(item.timing.touch());
         item.summary.push(delta);
         Some(())
     }
@@ -37,7 +37,7 @@ impl AssistantMessage {
             reasoning.content = Some(Vec::new());
         }
         let item = reasoning.content.as_mut()?;
-        reasoning.timing.touch();
+        self.timing.touch_at(reasoning.timing.touch());
         item.push(delta);
         Some(())
     }
@@ -50,7 +50,7 @@ impl AssistantMessage {
         let item = self.content.get_mut(&id)?.try_as_output_mut()?;
         item.content
             .push(crate::llm::message::OutputContent::Text(delta));
-        item.timing.touch();
+        self.timing.touch_at(item.timing.touch());
         Some(())
     }
 }

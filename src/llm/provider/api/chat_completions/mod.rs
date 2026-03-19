@@ -10,8 +10,9 @@ use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::config::ProviderConfig;
 use crate::llm::history::History;
+use crate::llm::message::now_ms;
 use crate::llm::provider::api::Api;
-use crate::llm::provider::api::AssistantStream;
+use crate::llm::provider::api::StartedAssistantStream;
 
 mod convert;
 mod request;
@@ -43,14 +44,18 @@ impl Api for ChatCompletionsApi {
         instructions: String,
         history: History,
         tools: ToolSchemas,
-    ) -> Result<AssistantStream> {
+    ) -> Result<StartedAssistantStream> {
         let request = request::request(config, instructions, history, tools, true, &self.compat)?;
         tracing::debug!(request = %request);
+        let started_at_ms = now_ms();
         let inner = self.client.chat().create_stream_byot(request).await?;
-        Ok(Box::pin(stream::ChatCompletionsStream::new(
-            inner,
-            permit,
-            self.compat.reasoning_content_field.clone(),
-        )))
+        Ok(StartedAssistantStream {
+            started_at_ms,
+            stream: Box::pin(stream::ChatCompletionsStream::new(
+                inner,
+                permit,
+                self.compat.reasoning_content_field.clone(),
+            )),
+        })
     }
 }

@@ -12,11 +12,17 @@ fn style() -> Style {
     Style::default().fg(Color::LightBlue)
 }
 
-#[derive(From, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct ReasoningWidget {
     widget: Paragraph<'static>,
-    ms: Option<u64>,
+    timing: String,
     char_count: usize,
+}
+
+impl ReasoningWidget {
+    fn title(&self) -> String {
+        format!("reasoning: {} chars, {}", self.char_count, self.timing)
+    }
 }
 
 impl HeightComputable for ReasoningWidget {
@@ -40,13 +46,7 @@ impl HeightComputable for ReasoningWidget {
         if !ctx.hide_reasoning {
             return self.widget.render_ref(area, buf);
         }
-        let mut text = format!("reasoning: {} chars", self.char_count);
-        if let Some(ms) = self.ms {
-            let s: f64 = (ms as f64) / 1000_f64;
-            let str = format!(", {:.1}s", s);
-            text.push_str(&str)
-        }
-        Paragraph::new(text)
+        Paragraph::new(self.title())
             .style(style().italic())
             .render(area, buf)
     }
@@ -58,7 +58,10 @@ impl HeightComputable for ReasoningWidget {
         if ctx.hide_reasoning {
             return None;
         }
-        Block::bordered().title(" reasoning ").style(style()).into()
+        Block::bordered()
+            .title(format!(" {} ", self.title()))
+            .style(style())
+            .into()
     }
 }
 
@@ -73,16 +76,12 @@ impl From<&ReasoningItem> for Element {
         }
 
         let char_count = text.chars().count();
-        let seconds = item
-            .timing
-            .last_modified_ms
-            .map(|ms| ms - item.timing.started_at_ms);
         let widget = ReasoningWidget {
             widget: Paragraph::new(text)
                 .style(style())
                 .wrap(Wrap { trim: false }),
             char_count,
-            ms: seconds,
+            timing: item.timing.to_string(),
         };
         widget.into()
     }

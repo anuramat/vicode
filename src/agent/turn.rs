@@ -47,6 +47,19 @@ async fn send_delta(
         .await?)
 }
 
+async fn send_started(
+    tx: &Sender<AgentEvent>,
+    loc: usize,
+    started_at_ms: u64,
+) -> Result<()> {
+    Ok(tx
+        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseStarted(
+            loc,
+            started_at_ms,
+        )))
+        .await?)
+}
+
 // TODO should these ResponseFailed events also coincide with ParentEvent::Error? and if so, should
 // we emit ParentEvent::Error right here or in the HistoryEvent handler in the agent event loop?
 
@@ -81,7 +94,9 @@ impl Agent {
         history: History,
     ) -> Result<()> {
         let loc = history.len();
-        let mut stream = assistant.stream_turn(instructions, history, tools).await?;
+        let started = assistant.stream_turn(instructions, history, tools).await?;
+        send_started(&tx, loc, started.started_at_ms).await?;
+        let mut stream = started.stream;
 
         while let Some(event) = stream.next().await {
             trace!(event = ?event, "Stream chunk received");

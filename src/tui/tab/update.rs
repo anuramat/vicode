@@ -15,7 +15,8 @@ impl Tab<'_> {
     ) {
         self.agent_state.context.history.handle(event.clone());
         match event {
-            HistoryEvent::ResponseDelta(idx, _)
+            HistoryEvent::ResponseStarted(idx, _)
+            | HistoryEvent::ResponseDelta(idx, _)
             | HistoryEvent::ResponseItem(idx, _)
             | HistoryEvent::ResponseCompleted(idx, _)
             | HistoryEvent::ResponseFailed(idx, _)

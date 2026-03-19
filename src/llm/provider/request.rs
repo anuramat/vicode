@@ -10,7 +10,7 @@ use tracing::instrument;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::History;
-use crate::llm::provider::api::AssistantStream;
+use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::assistant::Assistant;
 
 impl Assistant {
@@ -20,7 +20,7 @@ impl Assistant {
         instructions: String,
         history: History,
         tools: ToolSchemas,
-    ) -> Result<AssistantStream> {
+    ) -> Result<StartedAssistantStream> {
         retry(
             || async {
                 self.provider.ratelimiter.until_ready().await;

@@ -15,6 +15,11 @@ pub mod responses;
 
 pub type AssistantStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>;
 
+pub struct StartedAssistantStream {
+    pub started_at_ms: u64,
+    pub stream: AssistantStream,
+}
+
 #[async_trait]
 pub trait Api: Send + Sync {
     async fn stream(
@@ -25,5 +30,5 @@ pub trait Api: Send + Sync {
         instructions: String,
         history: History,
         tools: ToolSchemas,
-    ) -> Result<AssistantStream>;
+    ) -> Result<StartedAssistantStream>;
 }
