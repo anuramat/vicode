@@ -9,6 +9,32 @@ use strum::EnumTryAs;
 
 use crate::agent::tool::traits::*;
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HistoryEntry {
+    #[serde(default)]
+    pub meta: MessageMeta,
+    #[serde(flatten)]
+    pub message: Message,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct MessageMeta {
+    pub timing: ItemTiming,
+    #[serde(default)]
+    pub token_count: usize,
+}
+
+// TODO maybe drop default, instead use new()
+// TODO maybe drop defaults and flatten above as well
+impl Default for MessageMeta {
+    fn default() -> Self {
+        Self {
+            timing: ItemTiming::new(),
+            token_count: 0,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, From, EnumTryAs)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
@@ -27,10 +53,9 @@ pub struct UserMessage {
     pub text: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Into, From)]
+#[derive(Clone, Serialize, Default, Deserialize, Debug, Into, From)]
 pub struct AssistantMessage {
     pub finish_reason: AssistantMessageStatus,
-    pub timing: ItemTiming,
     #[serde(with = "indexmap::map::serde_seq")]
     pub content: IndexMap<String, AssistantItem>,
 }
@@ -140,14 +165,6 @@ pub struct ToolCallItem {
 }
 
 impl AssistantMessage {
-    pub fn new(started_at_ms: u64) -> Self {
-        Self {
-            finish_reason: Default::default(),
-            timing: ItemTiming::with_start(started_at_ms),
-            content: IndexMap::new(),
-        }
-    }
-
     pub fn output(&self) -> String {
         self.content
             .values()
@@ -162,12 +179,6 @@ impl AssistantMessage {
             })
             .collect::<Vec<_>>()
             .join("")
-    }
-}
-
-impl Default for AssistantMessage {
-    fn default() -> Self {
-        Self::new(now_ms())
     }
 }
 

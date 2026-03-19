@@ -11,6 +11,7 @@ use crate::agent::id::AgentId;
 use crate::agent::replica;
 use crate::llm::history;
 use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::now_ms;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
@@ -21,7 +22,7 @@ pub enum AgentEvent {
     TaskDone(TaskId, TaskResult),
     Submit(UserPrompt),
     SetAssistant(String),
-    HistoryEvent(HistoryEvent),
+    HistoryEvent(HistoryLoc, HistoryEvent),
     /// delete agent, e.g. when deleting a tab
     Delete,
     DuplicateRequest(AgentId),
@@ -32,7 +33,7 @@ pub enum AgentEvent {
 pub enum ParentEvent {
     AttachAgent(AgentId),
     InfoUpdate(AgentId),
-    HistoryUpdate(AgentId, HistoryEvent),
+    HistoryUpdate(AgentId, HistoryLoc, HistoryEvent),
     TurnComplete(AgentId),
     Error(AgentId, String),
 }
@@ -79,7 +80,7 @@ impl Agent {
                 loc,
             }) => {
                 if let Some(text) = text {
-                    self.handle_history(history::HistoryEvent::UserMessage(loc, text))
+                    self.handle_history(loc, history::HistoryEvent::UserMessage(text))
                         .await?;
                 }
                 if self.tskmgr.pending.is_empty() {
@@ -98,8 +99,8 @@ impl Agent {
             SetAssistant(id) => {
                 self.set_assistant(&id).await?;
             }
-            HistoryEvent(event) => {
-                self.handle_history(event).await?;
+            HistoryEvent(loc, event) => {
+                self.handle_history(loc, event).await?;
             }
             Delete => {
                 PROJECT.delete_agent(&self.id).await?;
@@ -110,16 +111,21 @@ impl Agent {
 
     pub async fn handle_history(
         &mut self,
+        loc: HistoryLoc,
         event: HistoryEvent,
     ) -> Result<()> {
         // TODO verify
         self.parent
-            .send(ParentEvent::HistoryUpdate(self.id.clone(), event.clone()))
+            .send(ParentEvent::HistoryUpdate(
+                self.id.clone(),
+                loc,
+                event.clone(),
+            ))
             .await?;
-        self.state.context.history.handle(event.clone());
+        self.state.context.history.handle(loc, event.clone());
         match event {
-            HistoryEvent::ResponseStarted(_, _) => {}
-            HistoryEvent::ResponseItem(loc, ref item) => {
+            HistoryEvent::ResponseStarted(_) => {}
+            HistoryEvent::ResponseItem(ref item) => {
                 if let AssistantItem::ToolCall(mut call) = (**item).clone()
                     && call.task.output().is_none()
                 {
@@ -131,7 +137,7 @@ impl Agent {
                     });
                 }
             }
-            HistoryEvent::ResponseFailed(_, msg) => {
+            HistoryEvent::ResponseFailed(msg) => {
                 error!("error in agent {}: {}", self.id, msg);
             }
             _ => {}

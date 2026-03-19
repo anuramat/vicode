@@ -1,4 +1,5 @@
 use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::project::PROJECT;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
@@ -11,19 +12,11 @@ impl Tab<'_> {
 
     pub fn update(
         &mut self,
+        loc: HistoryLoc,
         event: HistoryEvent,
     ) {
-        self.agent_state.context.history.handle(event.clone());
-        match event {
-            HistoryEvent::ResponseStarted(idx, _)
-            | HistoryEvent::ResponseDelta(idx, _)
-            | HistoryEvent::ResponseItem(idx, _)
-            | HistoryEvent::ResponseCompleted(idx, _)
-            | HistoryEvent::ResponseFailed(idx, _)
-            | HistoryEvent::UserMessage(idx, _)
-            | HistoryEvent::DeveloperMessage(idx, _) => {
-                self.scroll.set_dirty(idx);
-            }
-        }
+        let delta = self.agent_state.context.history.handle(loc, event.clone());
+        self.context_tokens = self.context_tokens.saturating_add_signed(delta);
+        self.scroll.set_dirty(loc);
     }
 }

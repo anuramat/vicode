@@ -41,6 +41,8 @@ impl<'a> App<'a> {
                 tab_info = Some(TabInfo {
                     name: tab.aid.to_string(),
                     assistant: tab.agent_state.context.assistant_id.clone(),
+                    context_tokens: tab.context_tokens,
+                    instruction_tokens: tab.instructions_tokens,
                 });
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
@@ -67,10 +69,17 @@ impl<'a> App<'a> {
         line.push_span(Span::raw(tab.name));
 
         let remaining: usize = (width as usize).saturating_sub(line.width());
-        if tab.assistant.len() + 3 < remaining {
-            let spacing: usize = remaining - tab.assistant.len();
+
+        let tokens = format!(
+            "{:.1} + {:.1} kT",
+            tab.instruction_tokens as f64 / 1000.0,
+            tab.context_tokens as f64 / 1000.0
+        );
+        let assistant = format!("{} | {} ", tokens, tab.assistant);
+        if assistant.len() + 3 < remaining {
+            let spacing: usize = remaining - assistant.len();
             line.push_span(" ".repeat(spacing));
-            line.push_span(tab.assistant);
+            line.push_span(assistant);
         }
         line
     }
@@ -79,4 +88,6 @@ impl<'a> App<'a> {
 struct TabInfo {
     name: String,
     assistant: String,
+    context_tokens: usize,
+    instruction_tokens: usize,
 }

@@ -201,9 +201,9 @@ pub async fn translate_agent_events(
         use ParentEvent::*;
         match event {
             InfoUpdate(aid) => app_tx.send(AppEvent::InfoUpdate(aid)).await?,
-            HistoryUpdate(aid, history_event) => {
+            HistoryUpdate(aid, loc, event) => {
                 app_tx
-                    .send(AppEvent::HistoryUpdate(aid, history_event))
+                    .send(AppEvent::HistoryUpdate(aid, loc, event))
                     .await?
             }
             AttachAgent(aid) => app_tx.send(AppEvent::AttachAgent(aid)).await?,

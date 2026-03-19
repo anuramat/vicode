@@ -8,31 +8,36 @@ use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::DeveloperMessage;
+use crate::llm::message::HistoryEntry;
 use crate::llm::message::ItemTiming;
 use crate::llm::message::Message;
+use crate::llm::message::MessageMeta;
 use crate::llm::message::UserMessage;
+use crate::llm::tokens::count_message_tokens;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 pub struct History {
-    messages: Vec<Message>,
+    messages: Vec<HistoryEntry>,
 }
 
-// TODO this is kinda ugly, maybe send usize + HistoryEvent tuple?
+pub type HistoryLoc = usize;
+
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
-    ResponseStarted(usize, u64),
-    ResponseDelta(usize, Delta),
-    ResponseItem(usize, Box<AssistantItem>),
-    ResponseCompleted(usize, Vec<AssistantItem>),
-    ResponseFailed(usize, String),
-    UserMessage(usize, String),
-    DeveloperMessage(usize, String),
+    /// timestamp of start of response in ms
+    ResponseStarted(u64),
+    ResponseDelta(Delta),
+    ResponseItem(Box<AssistantItem>),
+    ResponseCompleted(Vec<AssistantItem>),
+    ResponseFailed(String),
+    UserMessage(String),
+    DeveloperMessage(String),
 }
 
-impl AsRef<[Message]> for History {
-    fn as_ref(&self) -> &[Message] {
+impl AsRef<[HistoryEntry]> for History {
+    fn as_ref(&self) -> &[HistoryEntry] {
         &self.messages
     }
 }
@@ -40,17 +45,33 @@ impl AsRef<[Message]> for History {
 impl History {
     pub fn messages(self) -> Vec<Message> {
         self.messages
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect()
     }
 
     pub fn new() -> Self {
         Self::default()
     }
 
+    pub fn rebuild_token_cache(&mut self) {
+        self.messages.iter_mut().for_each(|entry| {
+            entry.meta.token_count = count_message_tokens(&entry.message);
+        });
+    }
+
+    pub fn total_tokens(&self) -> usize {
+        self.messages
+            .iter()
+            .map(|entry| entry.meta.token_count)
+            .sum()
+    }
+
     pub fn get_mut(
         &mut self,
         loc: usize,
     ) -> Option<&mut Message> {
-        self.messages.get_mut(loc)
+        self.messages.get_mut(loc).map(|entry| &mut entry.message)
     }
 
     pub fn len(&self) -> usize {
@@ -61,12 +82,19 @@ impl History {
         &mut self,
         loc: usize,
     ) -> Option<&Message> {
-        self.messages.get(loc)
+        self.messages.get(loc).map(|entry| &entry.message)
+    }
+
+    pub fn entry_mut(
+        &mut self,
+        loc: usize,
+    ) -> Option<&mut HistoryEntry> {
+        self.messages.get_mut(loc)
     }
 
     pub fn needs_another_turn(&self) -> bool {
-        if let Some(msg) = self.messages.last() {
-            match msg {
+        if let Some(entry) = self.messages.last() {
+            match &entry.message {
                 Message::Assistant(msg) => msg
                     .content
                     .iter()
@@ -79,31 +107,26 @@ impl History {
         }
     }
 
+    /// returns change in token count after applying the event
     pub fn handle(
         &mut self,
+        loc: HistoryLoc,
         event: HistoryEvent,
-    ) {
+    ) -> isize {
         match event {
-            HistoryEvent::ResponseStarted(loc, started_at_ms) => {
-                self.start_response(loc, started_at_ms);
-            }
-            HistoryEvent::ResponseDelta(loc, item_delta) => {
-                self.push_delta(loc, item_delta);
-            }
-            HistoryEvent::ResponseItem(loc, item) => {
-                self.push_item(loc, *item);
-            }
-            HistoryEvent::ResponseCompleted(loc, items) => {
-                self.complete_response(loc, items);
-            }
-            HistoryEvent::ResponseFailed(loc, msg) => {
-                self.fail_response(loc, msg);
-            }
-            HistoryEvent::DeveloperMessage(loc, text) => {
+            HistoryEvent::ResponseStarted(started_at_ms) => self.start_response(loc, started_at_ms),
+            HistoryEvent::ResponseDelta(item_delta) => self.push_delta(loc, item_delta),
+            HistoryEvent::ResponseItem(item) => self.push_item(loc, *item),
+            HistoryEvent::ResponseCompleted(items) => self.complete_response(loc, items),
+            HistoryEvent::ResponseFailed(msg) => self.fail_response(loc, msg),
+            HistoryEvent::DeveloperMessage(text) => {
                 // TODO unslop this
                 if loc == self.messages.len() {
                     let msg = Message::Developer(DeveloperMessage { text });
-                    self.messages.push(msg)
+                    self.messages.push(HistoryEntry {
+                        meta: MessageMeta::default(),
+                        message: msg,
+                    });
                 } else {
                     panic!(
                         "DeveloperMessage location {} does not match history length {} in {:?}",
@@ -113,10 +136,13 @@ impl History {
                     );
                 }
             }
-            HistoryEvent::UserMessage(loc, text) => {
+            HistoryEvent::UserMessage(text) => {
                 if loc == self.messages.len() {
                     let msg = Message::User(UserMessage { text });
-                    self.messages.push(msg)
+                    self.messages.push(HistoryEntry {
+                        meta: MessageMeta::default(),
+                        message: msg,
+                    });
                 } else {
                     panic!(
                         "UserMessage location {} does not match history length {} in {:?}",
@@ -127,6 +153,7 @@ impl History {
                 }
             }
         }
+        self.recount_message(loc)
     }
 
     pub fn push_item(
@@ -135,7 +162,8 @@ impl History {
         mut item: AssistantItem,
     ) {
         let item_modified = item.timing().last_modified_ms;
-        if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+        let item_started = item.timing().started_at_ms;
+        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             // if item already exists -- replace it but preserve start
             // if item has finish, it means that we constructed it from delta, the new item is
             // just for consistency guarantee, and thus we actually finished the
@@ -150,10 +178,15 @@ impl History {
         } else if loc == self.messages.len() {
             let msg = AssistantMessage {
                 finish_reason: AssistantMessageStatus::Success,
-                timing: ItemTiming::with_start(item.timing().started_at_ms),
                 content: indexmap! {item.id() => item},
             };
-            self.messages.push(msg.into());
+            self.messages.push(HistoryEntry {
+                meta: MessageMeta {
+                    timing: ItemTiming::with_start(item_started),
+                    ..Default::default()
+                },
+                message: msg.into(),
+            });
         } else {
             return;
         }
@@ -161,8 +194,7 @@ impl History {
             self.messages
                 .get_mut(loc)
                 .unwrap()
-                .try_as_assistant_mut()
-                .unwrap()
+                .meta
                 .timing
                 .touch_at(modified);
         }
@@ -174,8 +206,13 @@ impl History {
         started_at_ms: u64,
     ) {
         if loc == self.messages.len() {
-            self.messages
-                .push(AssistantMessage::new(started_at_ms).into());
+            self.messages.push(HistoryEntry {
+                meta: MessageMeta {
+                    timing: ItemTiming::with_start(started_at_ms),
+                    ..Default::default()
+                },
+                message: AssistantMessage::default().into(),
+            });
         }
     }
 
@@ -184,7 +221,7 @@ impl History {
         loc: usize,
         _items: Vec<AssistantItem>,
     ) {
-        if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             msg.finish_reason = AssistantMessageStatus::Success;
         }
     }
@@ -194,13 +231,17 @@ impl History {
         loc: usize,
         error_text: String, // TODO rename to msg or whatever
     ) {
-        if let Some(Message::Assistant(msg)) = self.messages.get_mut(loc) {
+        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             msg.finish_reason = AssistantMessageStatus::Error(error_text);
         }
     }
 
     pub fn last_output(&self) -> Result<String> {
-        if let Some(Message::Assistant(msg)) = self.messages.last() {
+        if let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = self.messages.last()
+        {
             Ok(msg.output())
         } else {
             Err(anyhow::anyhow!("last message is not from the assistant",))
@@ -211,7 +252,10 @@ impl History {
         let mut history = self.clone();
         let should_pop = matches!(
             history.messages.last(),
-            Some(Message::Assistant(msg))
+            Some(HistoryEntry {
+                message: Message::Assistant(msg),
+                ..
+            })
                 if msg.content.values().any(|item| item.try_as_tool_call_ref().is_some())
         );
         if should_pop {
@@ -219,17 +263,37 @@ impl History {
         }
         history
     }
+
+    pub fn recount_message(
+        &mut self,
+        loc: usize,
+    ) -> isize {
+        let Some(entry) = self.messages.get_mut(loc) else {
+            return 0;
+        };
+        let new = count_message_tokens(&entry.message);
+        let old = std::mem::replace(&mut entry.meta.token_count, new);
+        new as isize - old as isize
+    }
 }
 
 impl From<&History> for Vec<Message> {
     fn from(history: &History) -> Self {
-        history.messages.clone()
+        history
+            .messages
+            .iter()
+            .map(|entry| entry.message.clone())
+            .collect()
     }
 }
 
 impl From<&History> for CompositeElement {
     fn from(history: &History) -> Self {
-        let vec: Vec<Element> = history.messages.iter().map(|m| m.into()).collect();
+        let vec: Vec<Element> = history
+            .messages
+            .iter()
+            .map(|entry| (&entry.message).into())
+            .collect();
         CompositeElement(vec)
     }
 }
@@ -238,6 +302,7 @@ impl From<&History> for CompositeElement {
 mod tests {
     use super::*;
     use crate::llm::message::OutputItem;
+    use crate::llm::tokens::count_text_tokens;
 
     #[test]
     fn response_starts_without_assistant_message() {
@@ -248,119 +313,153 @@ mod tests {
     #[test]
     fn response_failed_without_message_is_ignored() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseFailed(0, "oops".into()));
+        history.handle(0, HistoryEvent::ResponseFailed("oops".into()));
         assert!(history.messages.is_empty());
     }
 
     #[test]
     fn response_started_creates_empty_assistant_message() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseStarted(0, 7));
-        let Some(Message::Assistant(msg)) = history.messages.first() else {
+        history.handle(0, HistoryEvent::ResponseStarted(7));
+        let Some(HistoryEntry {
+            meta,
+            message: Message::Assistant(msg),
+        }) = history.messages.first()
+        else {
             panic!("expected assistant message");
         };
         assert!(msg.content.is_empty());
-        assert_eq!(msg.timing.started_at_ms, 7);
-        assert_eq!(msg.timing.last_modified_ms, None);
+        assert_eq!(meta.timing.started_at_ms, 7);
+        assert_eq!(meta.timing.last_modified_ms, None);
         assert!(matches!(
             msg.finish_reason,
             AssistantMessageStatus::InProgress
         ));
+        assert_eq!(history.total_tokens(), 10);
     }
 
     #[test]
     fn item_added_does_not_touch_message_timing() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseStarted(0, 1));
-        history.handle(HistoryEvent::ResponseItem(
+        history.handle(0, HistoryEvent::ResponseStarted(1));
+        history.handle(
             0,
-            Box::new(AssistantItem::Output(OutputItem {
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::with_start(2),
                 content: vec![],
-            })),
-        ));
-        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            }))),
+        );
+        let Some(HistoryEntry { meta, .. }) = history.messages.first() else {
             panic!("expected assistant message");
         };
-        assert_eq!(msg.timing.last_modified_ms, None);
+        assert_eq!(meta.timing.last_modified_ms, None);
     }
 
     #[test]
     fn item_done_without_delta_touches_message_timing() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseStarted(0, 1));
-        history.handle(HistoryEvent::ResponseItem(
+        history.handle(0, HistoryEvent::ResponseStarted(1));
+        history.handle(
             0,
-            Box::new(AssistantItem::Output(OutputItem {
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming {
                     started_at_ms: 2,
                     last_modified_ms: Some(3),
                 },
                 content: vec![],
-            })),
-        ));
-        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            }))),
+        );
+        let Some(HistoryEntry { meta, .. }) = history.messages.first() else {
             panic!("expected assistant message");
         };
-        assert_eq!(msg.timing.last_modified_ms, Some(3));
+        assert_eq!(meta.timing.last_modified_ms, Some(3));
     }
 
     #[test]
     fn delta_touches_message_timing() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseStarted(0, 1));
-        history.handle(HistoryEvent::ResponseItem(
+        history.handle(0, HistoryEvent::ResponseStarted(1));
+        history.handle(
             0,
-            Box::new(AssistantItem::Output(OutputItem {
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::with_start(2),
                 content: vec![],
-            })),
-        ));
-        history.handle(HistoryEvent::ResponseDelta(
+            }))),
+        );
+        history.handle(
             0,
-            Delta {
+            HistoryEvent::ResponseDelta(Delta {
                 id: "out".into(),
                 delta: crate::llm::delta::DeltaContent::Output("hello".into()),
-            },
-        ));
-        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            }),
+        );
+        let Some(HistoryEntry {
+            meta,
+            message: Message::Assistant(msg),
+        }) = history.messages.first()
+        else {
             panic!("expected assistant message");
         };
         let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
-        assert_eq!(msg.timing.last_modified_ms, item.timing.last_modified_ms);
+        assert_eq!(meta.timing.last_modified_ms, item.timing.last_modified_ms);
+        assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
 
     #[test]
     fn response_completed_marks_message_success() {
         let mut history = History::new();
-        history.handle(HistoryEvent::ResponseStarted(0, 0));
-        history.handle(HistoryEvent::ResponseItem(
+        history.handle(0, HistoryEvent::ResponseStarted(0));
+        history.handle(
             0,
-            Box::new(AssistantItem::Output(OutputItem {
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::new(),
                 content: vec![],
-            })),
-        ));
-        history.handle(HistoryEvent::ResponseCompleted(
+            }))),
+        );
+        history.handle(
             0,
-            vec![AssistantItem::Output(OutputItem {
+            HistoryEvent::ResponseCompleted(vec![AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming {
                     started_at_ms: 1,
                     last_modified_ms: Some(2),
                 },
                 content: vec![],
-            })],
-        ));
-        let Some(Message::Assistant(msg)) = history.messages.first() else {
+            })]),
+        );
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
             panic!("expected assistant message");
         };
         let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
         assert_eq!(item.timing.last_modified_ms, None);
         assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
+    }
+
+    #[test]
+    fn user_message_updates_token_cache() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::UserMessage("hello".into()));
+        assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
+    }
+
+    #[test]
+    fn load_without_token_cache_rebuilds_on_demand() {
+        let mut history: History = serde_json::from_value(serde_json::json!({
+            "messages": [{
+                "role": "user",
+                "text": "hello"
+            }]
+        }))
+        .unwrap();
+        history.rebuild_token_cache();
+        assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
 }

@@ -23,7 +23,8 @@ use tui_textarea::TextArea;
 
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::llm::message::Message;
+use crate::llm::message::HistoryEntry;
+use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -37,8 +38,10 @@ pub struct Tab<'a> {
     pub tx: Sender<AppEvent>,
     pub aid: AgentId,
     pub agent_state: AgentState,
+    pub instructions_tokens: usize,
+    pub context_tokens: usize,
 
-    pub scroll: ScrollElements<Message>,
+    pub scroll: ScrollElements<HistoryEntry>,
     pub insert_mode: bool, // TODO use enum
     pub user_input: UserInput<'a>,
     pub info: InfoWidget,
@@ -61,10 +64,12 @@ impl<'a> Tab<'a> {
         agent_state: AgentState,
     ) -> Result<Self> {
         let tab = Self {
+            instructions_tokens: count_text_tokens(&agent_state.context.instructions),
+            context_tokens: agent_state.context.history.total_tokens(),
             tx,
             aid,
             agent_state,
-            scroll: ScrollElements::<Message>::new(),
+            scroll: ScrollElements::<HistoryEntry>::new(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),
@@ -80,10 +85,12 @@ impl<'a> Tab<'a> {
         agent_state: AgentState,
     ) -> Self {
         Self {
+            instructions_tokens: 0,
+            context_tokens: 0,
             tx,
             aid,
             agent_state,
-            scroll: ScrollElements::<Message>::new(),
+            scroll: ScrollElements::<HistoryEntry>::new(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),

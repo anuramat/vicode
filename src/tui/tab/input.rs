@@ -8,6 +8,7 @@ use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
@@ -40,14 +41,16 @@ impl<'a> Tab<'a> {
 
     pub fn update_input_border(&mut self) {
         let block = if self.insert_mode { thick() } else { thin() };
+        let text = self.user_input.0.lines().join("\n");
+        let tokens = count_text_tokens(&text);
 
-        let block = if self.multiplier > 1 {
-            block.title(format!(" x{} ", self.multiplier))
+        let title = if self.multiplier > 1 {
+            format!(" x{} | {} T ", self.multiplier, tokens)
         } else {
-            block
+            format!(" {} T ", tokens)
         };
 
-        self.user_input.0.set_block(block);
+        self.user_input.0.set_block(block.title(title));
     }
 
     pub async fn submit(&mut self) {
@@ -155,5 +158,6 @@ impl<'a> Tab<'a> {
             }
             _ => _ = area.input_without_shortcuts(input),
         }
+        self.update_input_border();
     }
 }

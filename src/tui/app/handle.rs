@@ -9,6 +9,7 @@ use crate::agent::AgentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
 use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
 
@@ -20,7 +21,7 @@ pub enum AppEvent {
     SetAssistant(AgentId, String),
     // TODO refactor: replace with ParentEvent(ParentEvent), and write a special handler
     InfoUpdate(AgentId),
-    HistoryUpdate(AgentId, HistoryEvent),
+    HistoryUpdate(AgentId, HistoryLoc, HistoryEvent),
     AgentIdle(AgentId),
     Error(AgentId, String),
 
@@ -43,9 +44,9 @@ impl<'a> App<'a> {
                 self.key(key_event).await?;
                 self.dirty = true;
             }
-            HistoryUpdate(agent_id, history_event) => {
+            HistoryUpdate(agent_id, loc, event) => {
                 if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.update(history_event);
+                    tab.update(loc, event);
                 }
                 self.dirty = true;
             }

@@ -11,6 +11,7 @@ use crate::agent::AgentEvent;
 use crate::agent::replica::ReplicaResult;
 use crate::define_uuid;
 use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::ToolCallItem;
 
@@ -18,7 +19,7 @@ define_uuid!(TaskId);
 
 #[derive(Debug)]
 pub enum TaskResult {
-    ToolCall(usize, ToolCallItem),
+    ToolCall(HistoryLoc, ToolCallItem),
     AssistantResponse,
     ReplicaRun(ReplicaResult),
 }
@@ -79,17 +80,21 @@ impl Agent {
         }
         match result {
             TaskResult::ToolCall(loc, tool_call) => {
-                let event =
-                    HistoryEvent::ResponseItem(loc, Box::new(AssistantItem::ToolCall(tool_call)));
-                self.handle_history(event).await?;
+                self.handle_history(
+                    loc,
+                    HistoryEvent::ResponseItem(Box::new(AssistantItem::ToolCall(tool_call))),
+                )
+                .await?;
             }
             TaskResult::AssistantResponse => {
                 // TODO why is this no op
             }
             TaskResult::ReplicaRun(run) => {
-                let event =
-                    HistoryEvent::DeveloperMessage(self.state.context.history.len(), run.report);
-                self.handle_history(event).await?;
+                self.handle_history(
+                    self.state.context.history.len(),
+                    HistoryEvent::DeveloperMessage(run.report),
+                )
+                .await?;
             }
         }
         if self.tskmgr.pending.remove(&id).is_none() {

@@ -7,56 +7,59 @@ use tracing::trace;
 use super::*;
 use crate::llm::delta::*;
 use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::llm::message::AssistantItem;
 use crate::llm::provider::event::StreamEvent;
 
 async fn send_item(
     tx: &Sender<AgentEvent>,
-    loc: usize,
+    loc: HistoryLoc,
     item: AssistantItem,
 ) -> Result<()> {
     Ok(tx
-        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseItem(
+        .send(AgentEvent::HistoryEvent(
             loc,
-            Box::new(item),
-        )))
+            HistoryEvent::ResponseItem(Box::new(item)),
+        ))
         .await?)
 }
 
 async fn send_completed(
     tx: &Sender<AgentEvent>,
-    loc: usize,
+    loc: HistoryLoc,
     items: Vec<AssistantItem>,
 ) -> Result<()> {
     Ok(tx
-        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseCompleted(
-            loc, items,
-        )))
+        .send(AgentEvent::HistoryEvent(
+            loc,
+            HistoryEvent::ResponseCompleted(items),
+        ))
         .await?)
 }
 
 async fn send_delta(
     tx: &Sender<AgentEvent>,
-    loc: usize,
+    loc: HistoryLoc,
     delta: Delta,
 ) -> Result<()> {
     Ok(tx
-        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseDelta(
-            loc, delta,
-        )))
+        .send(AgentEvent::HistoryEvent(
+            loc,
+            HistoryEvent::ResponseDelta(delta),
+        ))
         .await?)
 }
 
 async fn send_started(
     tx: &Sender<AgentEvent>,
-    loc: usize,
+    loc: HistoryLoc,
     started_at_ms: u64,
 ) -> Result<()> {
     Ok(tx
-        .send(AgentEvent::HistoryEvent(HistoryEvent::ResponseStarted(
+        .send(AgentEvent::HistoryEvent(
             loc,
-            started_at_ms,
-        )))
+            HistoryEvent::ResponseStarted(started_at_ms),
+        ))
         .await?)
 }
 
@@ -76,8 +79,8 @@ impl Agent {
         self.tskmgr.spawn(self.tx.clone(), async move {
             let res = Agent::turn(tx.clone(), &assistant, tools, instructions, history).await;
             if let Err(e) = res {
-                let event = HistoryEvent::ResponseFailed(loc, e.to_string());
-                tx.send(AgentEvent::HistoryEvent(event))
+                let event = HistoryEvent::ResponseFailed(e.to_string());
+                tx.send(AgentEvent::HistoryEvent(loc, event))
                     .await
                     .expect("failed to send turn error event");
             }
@@ -104,8 +107,8 @@ impl Agent {
             match event? {
                 StreamEvent::Delta(delta) => send_delta(&tx, loc, delta).await?,
                 StreamEvent::Failed(msg) => {
-                    let event = HistoryEvent::ResponseFailed(loc, msg);
-                    tx.send(AgentEvent::HistoryEvent(event)).await?;
+                    let event = HistoryEvent::ResponseFailed(msg);
+                    tx.send(AgentEvent::HistoryEvent(loc, event)).await?;
                     break;
                 }
                 StreamEvent::ItemDone(mut item) => {

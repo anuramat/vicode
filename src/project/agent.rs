@@ -21,7 +21,9 @@ impl Project {
     ) -> Result<AgentState> {
         let path = self.agent_state(aid);
         let serialized = tokio::fs::read_to_string(path).await?;
-        Ok(serde_json::from_str(&serialized)?)
+        let mut state: AgentState = serde_json::from_str(&serialized)?;
+        state.context.history.rebuild_token_cache();
+        Ok(state)
     }
 
     pub async fn delete_agent(

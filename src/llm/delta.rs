@@ -20,38 +20,37 @@ impl AssistantMessage {
         &mut self,
         id: String,
         delta: String,
-    ) -> Option<()> {
+    ) -> Option<u64> {
         let item = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
-        self.timing.touch_at(item.timing.touch());
+        let modified = item.timing.touch();
         item.summary.push(delta);
-        Some(())
+        Some(modified)
     }
 
     fn push_reasoning(
         &mut self,
         id: String,
         delta: String,
-    ) -> Option<()> {
+    ) -> Option<u64> {
         let reasoning = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
         if reasoning.content.is_none() {
             reasoning.content = Some(Vec::new());
         }
         let item = reasoning.content.as_mut()?;
-        self.timing.touch_at(reasoning.timing.touch());
+        let modified = reasoning.timing.touch();
         item.push(delta);
-        Some(())
+        Some(modified)
     }
 
     fn push_output(
         &mut self,
         id: String,
         delta: String,
-    ) -> Option<()> {
+    ) -> Option<u64> {
         let item = self.content.get_mut(&id)?.try_as_output_mut()?;
         item.content
             .push(crate::llm::message::OutputContent::Text(delta));
-        self.timing.touch_at(item.timing.touch());
-        Some(())
+        Some(item.timing.touch())
     }
 }
 
@@ -61,7 +60,7 @@ impl History {
         loc: usize,
         item_delta: Delta,
     ) {
-        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
+        if let Some(modified) = if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             match item_delta.delta {
                 DeltaContent::Output(delta) => msg.push_output(item_delta.id, delta),
                 DeltaContent::Reasoning(delta) => msg.push_reasoning(item_delta.id, delta),
@@ -69,7 +68,10 @@ impl History {
                     msg.push_reasoning_summary(item_delta.id, delta)
                 }
             }
-            .expect("failed to push delta");
+        } else {
+            None
+        } {
+            self.entry_mut(loc).unwrap().meta.timing.touch_at(modified);
         }
     }
 }
