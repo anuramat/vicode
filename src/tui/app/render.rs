@@ -4,6 +4,7 @@ use ratatui::prelude::*;
 use ratatui::text::Line;
 
 use crate::tui::app::App;
+use crate::tui::tab::TabState;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const TAB_PANE_WIDTH: u16 = 24;
@@ -40,6 +41,7 @@ impl<'a> App<'a> {
                 tab.render(inner[1], frame.buffer_mut(), self.ctx);
                 tab_info = Some(TabInfo {
                     name: tab.aid.to_string(),
+                    state: tab.state.clone(),
                     assistant: tab.agent_state.context.assistant_id.clone(),
                     context_tokens: tab.context_tokens,
                     instruction_tokens: tab.instructions_tokens,
@@ -75,7 +77,8 @@ impl<'a> App<'a> {
             tab.instruction_tokens as f64 / 1000.0,
             tab.context_tokens as f64 / 1000.0
         );
-        let assistant = format!("{} | {} ", tokens, tab.assistant);
+        // TODO prettier tab status presentation
+        let assistant = format!("{} | {:?} | {}", tokens, tab.state, tab.assistant);
         if assistant.len() + 3 < remaining {
             let spacing: usize = remaining - assistant.len();
             line.push_span(" ".repeat(spacing));
@@ -90,4 +93,5 @@ struct TabInfo {
     assistant: String,
     context_tokens: usize,
     instruction_tokens: usize,
+    state: TabState,
 }

@@ -1,8 +1,13 @@
+use anyhow::Result;
+
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryLoc;
 use crate::project::PROJECT;
+use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
+use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
+use crate::tui::tab::TabState;
 
 impl Tab<'_> {
     pub fn set_osc7(&self) {
@@ -15,8 +20,29 @@ impl Tab<'_> {
         loc: HistoryLoc,
         event: HistoryEvent,
     ) {
-        let delta = self.agent_state.context.history.handle(loc, event.clone());
-        self.context_tokens = self.context_tokens.saturating_add_signed(delta);
+        let token_count_delta = self.agent_state.context.history.handle(loc, event);
+        self.context_tokens = self.context_tokens.saturating_add_signed(token_count_delta);
         self.scroll.set_dirty(loc);
+    }
+
+    pub async fn set_state(
+        &mut self,
+        state: TabState,
+    ) -> Result<()> {
+        if self.state == state {
+            return Ok(());
+        }
+        self.state = state;
+        self.tx
+            .send(AppEvent::TabStatusChanged(self.aid.clone()))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn sync_state_from_history(&mut self) -> Result<()> {
+        self.set_state(TabState::Running(AssistantState::from_history(
+            self.agent_state.context.history.as_ref(),
+        )))
+        .await
     }
 }

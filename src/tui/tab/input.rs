@@ -10,6 +10,7 @@ use crate::agent::handle::UserPrompt;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
 
@@ -72,7 +73,10 @@ impl<'a> Tab<'a> {
             multiplier: self.multiplier,
             loc: self.agent_state.context.history.len(),
         };
-        self.state = TabState::InProgress;
+        // TODO bubble errors up
+        self.set_state(TabState::Running(AssistantState::Generating))
+            .await
+            .expect("failed to update tab state");
         self.tx
             .send(AppEvent::UserPrompt(self.aid.clone(), prompt))
             .await
@@ -80,7 +84,7 @@ impl<'a> Tab<'a> {
     }
 
     pub async fn next_assistant(&mut self) -> Result<()> {
-        if !matches!(self.state, TabState::Idle) {
+        if !self.state.idle() {
             return Ok(());
         }
         let id = ASSISTANT_POOL

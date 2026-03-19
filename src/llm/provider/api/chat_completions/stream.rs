@@ -190,7 +190,7 @@ impl StreamState {
             }
         }
 
-        match choice.finish_reason {
+        let completed = match choice.finish_reason {
             Some(FinishReason::ToolCalls) | Some(FinishReason::FunctionCall) => {
                 if let Some(calls) = self.tool_calls.remove(&choice.index) {
                     for (tool_index, call) in calls {
@@ -211,11 +211,15 @@ impl StreamState {
                         }
                     }
                 }
+                true
             }
             Some(FinishReason::Stop)
             | Some(FinishReason::Length)
-            | Some(FinishReason::ContentFilter)
-            | None => {}
+            | Some(FinishReason::ContentFilter) => true,
+            None => false,
+        };
+        if completed {
+            events.push(StreamEvent::Completed(vec![]));
         }
 
         events
@@ -349,12 +353,15 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [StreamEvent::ItemDone(AssistantItem::ToolCall(_))]
+            [
+                StreamEvent::ItemDone(AssistantItem::ToolCall(_)),
+                StreamEvent::Completed(_)
+            ]
         ));
     }
 
     #[tokio::test]
-    async fn stream_skips_empty_chunks() {
+    async fn stream_emits_completed_after_stop() {
         let chunks: VecDeque<Result<serde_json::Value, async_openai::error::OpenAIError>> = [
             CreateChatCompletionStreamResponse {
                 id: "resp".into(),
@@ -419,6 +426,10 @@ mod tests {
         assert!(matches!(
             stream.next().await,
             Some(Ok(StreamEvent::Delta(_)))
+        ));
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(StreamEvent::Completed(_)))
         ));
         assert!(stream.next().await.is_none());
     }

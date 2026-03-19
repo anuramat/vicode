@@ -177,7 +177,7 @@ impl History {
             _ = msg.content.insert(item.id(), item);
         } else if loc == self.messages.len() {
             let msg = AssistantMessage {
-                finish_reason: AssistantMessageStatus::Success,
+                finish_reason: AssistantMessageStatus::InProgress,
                 content: indexmap! {item.id() => item},
             };
             self.messages.push(HistoryEntry {
@@ -223,6 +223,15 @@ impl History {
     ) {
         if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             msg.finish_reason = AssistantMessageStatus::Success;
+        } else if loc == self.messages.len() {
+            self.messages.push(HistoryEntry {
+                meta: MessageMeta::default(),
+                message: AssistantMessage {
+                    finish_reason: AssistantMessageStatus::Success,
+                    content: indexmap! {},
+                }
+                .into(),
+            });
         }
     }
 
@@ -233,6 +242,15 @@ impl History {
     ) {
         if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
             msg.finish_reason = AssistantMessageStatus::Error(error_text);
+        } else if loc == self.messages.len() {
+            self.messages.push(HistoryEntry {
+                meta: MessageMeta::default(),
+                message: AssistantMessage {
+                    finish_reason: AssistantMessageStatus::Error(error_text),
+                    content: indexmap! {},
+                }
+                .into(),
+            });
         }
     }
 
@@ -311,10 +329,20 @@ mod tests {
     }
 
     #[test]
-    fn response_failed_without_message_is_ignored() {
+    fn response_failed_without_message_creates_error_message() {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseFailed("oops".into()));
-        assert!(history.messages.is_empty());
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
+            panic!("expected assistant message");
+        };
+        assert!(matches!(
+            msg.finish_reason,
+            AssistantMessageStatus::Error(ref text) if text == "oops"
+        ));
     }
 
     #[test]
@@ -406,6 +434,44 @@ mod tests {
         let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
         assert_eq!(meta.timing.last_modified_ms, item.timing.last_modified_ms);
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
+    }
+
+    #[test]
+    fn response_item_starts_message_in_progress() {
+        let mut history = History::new();
+        history.handle(
+            0,
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                timing: ItemTiming::new(),
+                content: vec![],
+            }))),
+        );
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
+            panic!("expected assistant message");
+        };
+        assert!(matches!(
+            msg.finish_reason,
+            AssistantMessageStatus::InProgress
+        ));
+    }
+
+    #[test]
+    fn response_completed_without_message_creates_success_message() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::ResponseCompleted(vec![]));
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
+            panic!("expected assistant message");
+        };
+        assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
     }
 
     #[test]

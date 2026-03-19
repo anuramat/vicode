@@ -16,7 +16,6 @@ use crate::tui::app::App;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
-use crate::tui::tab::TabState;
 
 impl<'a> App<'a> {
     /// rebuild tablist widget
@@ -99,6 +98,7 @@ impl<'a> App<'a> {
         self.tabs.insert(agent.id.clone(), tab);
         self.agents.insert(agent.id.clone(), agent.tx.clone());
         self.joinset.spawn(agent.run());
+        self.rebuild_tablist();
         Ok(())
     }
 
@@ -108,7 +108,7 @@ impl<'a> App<'a> {
             self.selected_tab().and_then(|idx| self.tabs.get_index(idx))
             && let Some(tx) = self.agents.get(aid)
         {
-            if !matches!(tab.state, TabState::Idle) {
+            if !tab.state.idle() {
                 return Ok(());
             }
             (tab.agent_state.clone(), tx.clone())
