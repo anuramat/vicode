@@ -41,9 +41,6 @@
   - later try reading token usage field in response
 - undo msg
   - just wipe to last user msg inclusive, and fill input field with the contents
-- rename thread
-  - custom name is purely for tab list, status line should still show tab id
-  - on duplication, it should get a `(2)` or something like that
 
 - float window with past errors (ones from stl notifications)
 - float window with logs
@@ -65,6 +62,9 @@
 
 # maybe
 
+- rename thread
+  - custom name is purely for tab list, status line should still show tab id
+  - on duplication, it should get a `(2)` or something like that
 - add passthrough params; cerebras-specific -- clear_thinking: false
 - better strategy than round robin for providers?
   - load balancing is actually out of scope (probably)
