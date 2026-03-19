@@ -26,7 +26,6 @@ developer_as_user = true
 base_url = "https://api.openai.com/v1"
 key_command = "cat /run/agenix/openai"
 [providers.cerebras]
-# TODO -- add passthrough params; cerebras-specific -- clear_thinking: false
 base_url = "https://api.cerebras.ai/v1"
 key_command = "cat /run/agenix/cerebras"
 api = "chat_completions"

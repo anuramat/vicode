@@ -1,9 +1,9 @@
 # refactor
 
 - move responses specific stuff into api/responses/*
-- maybe somehow unfuck code duplication in message timestamp/metadata logic
 - agent init is kinda fucked up, need clear boundaries on init status: when
   overlay is mounted, when state is written to file
+- bash widget is a mess
 
 # core
 
@@ -65,6 +65,7 @@
 
 # maybe
 
+- add passthrough params; cerebras-specific -- clear_thinking: false
 - better strategy than round robin for providers?
   - load balancing is actually out of scope (probably)
   - sampling with relative weights might be useful for diversity in best-of-n though
