@@ -56,7 +56,7 @@ pub async fn run_child(
 
     loop {
         match parent_rx.recv().await {
-            Some(ParentEvent::TurnComplete(completed)) if completed == *aid => break,
+            Some((completed, ParentEvent::TurnComplete)) if completed == *aid => break,
             Some(_) => continue,
             None => anyhow::bail!("subagent channel closed before turn completion"),
         }

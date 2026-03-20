@@ -6,10 +6,9 @@ use tracing::instrument;
 use super::App;
 use super::NotificationKind;
 use crate::agent::AgentEvent;
+use crate::agent::handle::ParentEvent as AgentParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
-use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryLoc;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
 
@@ -19,13 +18,7 @@ pub enum AppEvent {
 
     UserPrompt(AgentId, UserPrompt),
     SetAssistant(AgentId, String),
-    // TODO refactor: replace with ParentEvent(ParentEvent), and write a special handler
-    InfoUpdate(AgentId),
-    HistoryUpdate(AgentId, HistoryLoc, HistoryEvent),
-    AgentIdle(AgentId),
-    Error(AgentId, String),
-
-    AttachAgent(AgentId),
+    ParentEvent(AgentId, AgentParentEvent),
 
     Redraw,
 }
@@ -44,18 +37,6 @@ impl<'a> App<'a> {
                 self.key(key_event).await?;
                 self.dirty = true;
             }
-            HistoryUpdate(agent_id, loc, event) => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.update(loc, event);
-                }
-                self.dirty = true;
-            }
-            InfoUpdate(agent_id) => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.info = InfoWidget::new(&agent_id).await?;
-                }
-                self.dirty = true;
-            }
             UserPrompt(agent_id, msg) => {
                 if let Some(tx) = self.agents.get(&agent_id) {
                     tx.send(AgentEvent::Submit(msg)).await?;
@@ -66,22 +47,48 @@ impl<'a> App<'a> {
                     tx.send(AgentEvent::SetAssistant(id)).await?;
                 }
             }
-            AttachAgent(agent_id) => {
+            ParentEvent(agent_id, event) => {
+                self.handle_parent_event(agent_id, event).await?;
+                self.dirty = true;
+            }
+            Redraw => {
+                self.dirty = true;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_parent_event(
+        &mut self,
+        agent_id: AgentId,
+        event: AgentParentEvent,
+    ) -> Result<()> {
+        use AgentParentEvent::*;
+
+        match event {
+            AttachAgent => {
                 self.attach_agent(agent_id).await?;
             }
-            AgentIdle(agent_id) => {
+            InfoUpdate => {
+                if let Some(tab) = self.tabs.get_mut(&agent_id) {
+                    tab.info = InfoWidget::new(&agent_id).await?;
+                }
+            }
+            HistoryUpdate(loc, event) => {
+                if let Some(tab) = self.tabs.get_mut(&agent_id) {
+                    tab.update(loc, event);
+                }
+            }
+            TurnComplete => {
                 if let Some(tab) = self.tabs.get_mut(&agent_id) {
                     tab.state = TabState::Idle;
                 }
-                self.dirty = true;
             }
-            Error(agent_id, msg) => {
+            Error(msg) => {
                 if self.selected_aid() == Some(agent_id) {
                     self.notify(NotificationKind::Error, msg);
-                    self.dirty = true;
                 }
             }
-            Redraw => {}
         }
         Ok(())
     }

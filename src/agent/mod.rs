@@ -19,7 +19,7 @@ use task::TaskResult;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
-use crate::agent::handle::ParentEvent;
+use crate::agent::handle::ParentMessage;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::*;
@@ -30,7 +30,7 @@ pub struct Agent {
     /// serializable/persistent state
     pub state: AgentState,
     /// parent
-    pub parent: Sender<ParentEvent>,
+    pub parent: Sender<ParentMessage>,
     // agent event loop
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,

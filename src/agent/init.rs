@@ -5,6 +5,8 @@ use tokio::sync::mpsc::channel;
 
 use crate::agent::task::AgentTaskManager;
 use crate::agent::*;
+use crate::agent::handle::ParentEvent;
+use crate::agent::handle::ParentMessage;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
@@ -14,7 +16,7 @@ const CHANNEL_CAPACITY: usize = 100;
 impl Agent {
     /// create new agent from scratch
     pub async fn new(
-        parent_tx: Sender<ParentEvent>,
+        parent_tx: Sender<ParentMessage>,
         id: AgentId,
         commit: String,
         instructions: String,
@@ -25,7 +27,7 @@ impl Agent {
 
     /// load agent by id from disk
     pub async fn load(
-        parent_tx: Sender<ParentEvent>,
+        parent_tx: Sender<ParentMessage>,
         id: AgentId,
     ) -> Result<Self> {
         let state = PROJECT.load_agent_state(&id).await?;
@@ -34,7 +36,7 @@ impl Agent {
 
     /// shared logic
     async fn from_state(
-        parent: Sender<ParentEvent>,
+        parent: Sender<ParentMessage>,
         id: AgentId,
         state: AgentState,
     ) -> Result<Self> {
@@ -69,7 +71,7 @@ impl Agent {
             "cannot duplicate while tasks are running"
         );
         duplicate(&self.id, &aid, &self.state, true).await?;
-        self.parent.send(ParentEvent::AttachAgent(aid)).await?;
+        self.parent.send((aid, ParentEvent::AttachAgent)).await?;
         Ok(())
     }
 }

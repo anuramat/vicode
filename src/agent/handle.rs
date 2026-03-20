@@ -28,14 +28,16 @@ pub enum AgentEvent {
     DuplicateRequest(AgentId),
 }
 
-// TODO drop AgentId from variants, instead send (AgentId, ParentEvent) pairs
+// TODO drop
+pub type ParentMessage = (AgentId, ParentEvent);
+
 #[derive(Debug)]
 pub enum ParentEvent {
-    AttachAgent(AgentId),
-    InfoUpdate(AgentId),
-    HistoryUpdate(AgentId, HistoryLoc, HistoryEvent),
-    TurnComplete(AgentId),
-    Error(AgentId, String),
+    AttachAgent,
+    InfoUpdate,
+    HistoryUpdate(HistoryLoc, HistoryEvent),
+    TurnComplete,
+    Error(String),
 }
 
 #[derive(Debug)]
@@ -63,12 +65,12 @@ impl Agent {
                         self.start_turn();
                     } else {
                         self.parent
-                            .send(ParentEvent::TurnComplete(self.id.clone()))
+                            .send((self.id.clone(), ParentEvent::TurnComplete))
                             .await?;
                     }
                 }
                 self.parent
-                    .send(ParentEvent::InfoUpdate(self.id.clone()))
+                    .send((self.id.clone(), ParentEvent::InfoUpdate))
                     .await?;
             }
             DuplicateRequest(aid) => {
@@ -116,10 +118,9 @@ impl Agent {
     ) -> Result<()> {
         // TODO verify
         self.parent
-            .send(ParentEvent::HistoryUpdate(
+            .send((
                 self.id.clone(),
-                loc,
-                event.clone(),
+                ParentEvent::HistoryUpdate(loc, event.clone()),
             ))
             .await?;
         self.state.context.history.handle(loc, event.clone());

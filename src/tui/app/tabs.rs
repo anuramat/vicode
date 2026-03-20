@@ -9,6 +9,7 @@ use crate::agent::Agent;
 use crate::agent::AgentEvent;
 use crate::agent::AgentState;
 use crate::agent::handle::ParentEvent;
+use crate::agent::handle::ParentMessage;
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
 use crate::tui::app::App;
@@ -42,7 +43,9 @@ impl<'a> App<'a> {
         self.rebuild_tablist();
 
         for aid in state.primary_agents {
-            self.tx.send(AppEvent::AttachAgent(aid.clone())).await?
+            self.tx
+                .send(AppEvent::ParentEvent(aid.clone(), ParentEvent::AttachAgent))
+                .await?
         }
         Ok(())
     }
@@ -51,7 +54,9 @@ impl<'a> App<'a> {
     pub async fn new_tab(&mut self) -> Result<()> {
         let id = AgentId::new().await?;
         self.insert_tab(id.clone(), Default::default()).await?;
-        self.tx.send(AppEvent::AttachAgent(id)).await?;
+        self.tx
+            .send(AppEvent::ParentEvent(id, ParentEvent::AttachAgent))
+            .await?;
         Ok(())
     }
 
@@ -195,23 +200,10 @@ impl<'a> App<'a> {
 // TODO move
 pub async fn translate_agent_events(
     app_tx: Sender<AppEvent>,
-    mut parent_rx: Receiver<ParentEvent>,
+    mut parent_rx: Receiver<ParentMessage>,
 ) -> Result<()> {
-    while let Some(event) = parent_rx.recv().await {
-        use ParentEvent::*;
-        match event {
-            InfoUpdate(aid) => app_tx.send(AppEvent::InfoUpdate(aid)).await?,
-            HistoryUpdate(aid, loc, event) => {
-                app_tx
-                    .send(AppEvent::HistoryUpdate(aid, loc, event))
-                    .await?
-            }
-            AttachAgent(aid) => app_tx.send(AppEvent::AttachAgent(aid)).await?,
-            TurnComplete(aid) => {
-                app_tx.send(AppEvent::AgentIdle(aid)).await?;
-            }
-            Error(aid, msg) => app_tx.send(AppEvent::Error(aid, msg)).await?,
-        }
+    while let Some((aid, event)) = parent_rx.recv().await {
+        app_tx.send(AppEvent::ParentEvent(aid, event)).await?;
     }
     Ok(())
 }

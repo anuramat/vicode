@@ -20,7 +20,7 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::agent::AgentEvent;
-use crate::agent::handle::ParentEvent;
+use crate::agent::handle::ParentMessage;
 use crate::agent::id::AgentId;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::container::element::RenderContext;
@@ -52,7 +52,7 @@ pub struct App<'a> {
     pub dirty: bool,
 
     /// channel for primary agents to report to
-    pub parent_tx: Sender<ParentEvent>,
+    pub parent_tx: Sender<ParentMessage>,
     /// primary agents
     pub agents: HashMap<AgentId, Sender<AgentEvent>>,
     /// UI for primary agents
