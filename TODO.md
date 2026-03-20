@@ -34,7 +34,6 @@
 
 - visible replica progress
 
-- render todo tool like any other widget
 - streaming tool outputs
 
 # chores
