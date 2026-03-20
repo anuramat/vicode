@@ -4,10 +4,12 @@
 - agent init is kinda fucked up, need clear boundaries on init status: when
   overlay is mounted, when state is written to file
 - bash widget is a mess
+- fix agent state persistence
+  - use jsonl for storage
+  - debounce file writes
 
 # core
 
-- gitless scenario -- project dir instead of snapshots for overlays
 - edit tool -- expand to create file, replace file, append, insert at
 - subagents
   - two types
@@ -16,29 +18,14 @@
 - compact
   - would be cool if we could mark specific messages for compaction
 - skills
-- fix agent state persistence
-  - use jsonl for storage
-  - debounce file writes
 
 # ui
 
-- visible progress:
-  - last line of scroll should show status:
-    - idle
-    - generating
-    - %d subagents, %d tool calls
-       - should we count those recursively?
-    - failed
-  - if not too hard: in progress assistant message should have a cursor block after the last char
-    - probably should be done through custom render logic on message widget
-  - ideally: in a multiturn, show combined time
-  - ideally: TTFT
 - retry and abort key
   - should append appropriate developer messages like "assistants turn was interrupted by the user/unexpected error"
-- token usage/context window free %
+- context window free %
   - need to add config value "max_tokens" per assistant
-  - mvp: `tokens = history.serialize().len() / 3`
-  - later try reading token usage field in response
+  - try reading token usage field in response?
 - undo msg
   - just wipe to last user msg inclusive, and fill input field with the contents
 
@@ -62,6 +49,9 @@
 
 # maybe
 
+- show combined elapsed time for multiturn (ie multiple assistant message)
+- show TTFT?
+- gitless scenario -- project dir instead of snapshots for overlays
 - rename thread
   - custom name is purely for tab list, status line should still show tab id
   - on duplication, it should get a `(2)` or something like that
