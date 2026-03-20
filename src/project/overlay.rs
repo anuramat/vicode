@@ -15,7 +15,6 @@ use crate::project::layout::AGENT_WORKDIR_DIRNAME;
 // TODO this file is kinda huge. probably should move it to a separate module and/or split
 
 impl Project {
-    // XXX maybe drop this one
     pub async fn unmount(
         &self,
         aid: &AgentId,
@@ -156,7 +155,6 @@ impl Project {
         if let Some(parent) = dst.parent() {
             create_dir_all(parent).await?;
         }
-        // XXX do we need to create parent dir or maybe hard_link does it automatically?
         hard_link(src, dst).await?;
         Ok(())
     }
