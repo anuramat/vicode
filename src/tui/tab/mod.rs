@@ -43,7 +43,7 @@ pub struct Tab<'a> {
     pub instructions_tokens: usize,
     pub context_tokens: usize,
 
-    pub scroll: ScrollElements<HistoryEntry>,
+    pub scroll: ScrollElements,
     pub insert_mode: bool, // TODO use enum
     pub user_input: UserInput<'a>,
     pub info: InfoWidget,
@@ -127,7 +127,7 @@ impl<'a> Tab<'a> {
             tx,
             aid,
             agent_state,
-            scroll: ScrollElements::<HistoryEntry>::new(),
+            scroll: Default::default(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),
@@ -148,7 +148,7 @@ impl<'a> Tab<'a> {
             tx,
             aid,
             agent_state,
-            scroll: ScrollElements::<HistoryEntry>::new(),
+            scroll: Default::default(),
             insert_mode: false,
             user_input: Default::default(),
             info: Default::default(),

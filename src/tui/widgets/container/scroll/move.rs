@@ -1,14 +1,14 @@
 use super::*;
 use crate::tui::widgets::container::element::IntoElement;
 
-impl<U> ScrollElements<U>
-where U: IntoElement
-{
+impl ScrollElements {
     /// put the next message at the top
-    pub fn next_element(
+    pub fn next_element<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.mode = Mode::Scrolling;
 
         let mut idx = self.start.idx + 1;
@@ -24,10 +24,12 @@ where U: IntoElement
     }
 
     // put the current message at the top if it's not; previous otherwise
-    pub fn prev_element(
+    pub fn prev_element<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.mode = Mode::Scrolling;
 
         let idx = if self.start.offset != 0 {
@@ -43,10 +45,12 @@ where U: IntoElement
         self.set_start(data, idx, 0);
     }
 
-    pub fn top(
+    pub fn top<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.set_start(data, 0, 0);
         self.mode = Mode::Scrolling;
     }
@@ -57,56 +61,70 @@ where U: IntoElement
         self.mode = Mode::Tail;
     }
 
-    pub fn half_page_down(
+    pub fn half_page_down<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         let delta = (self.height / 2).max(1);
         self.add_offset_down(data, delta)
     }
 
-    pub fn half_page_up(
+    pub fn half_page_up<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         let delta = (self.height / 2).max(1);
         self.add_offset_up(data, delta)
     }
 
-    pub fn page_down(
+    pub fn page_down<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.add_offset_down(data, self.height)
     }
 
-    pub fn page_up(
+    pub fn page_up<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.add_offset_up(data, self.height)
     }
 
-    pub fn line_down(
+    pub fn line_down<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.add_offset_down(data, 1)
     }
 
-    pub fn line_up(
+    pub fn line_up<U>(
         &mut self,
         data: &[U],
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.add_offset_up(data, 1)
     }
 
     #[tracing::instrument(skip(self, data))]
-    fn add_offset_down(
+    fn add_offset_down<U>(
         &mut self,
         data: &[U],
         mut delta: u16,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.mode = Mode::Scrolling;
 
         let visible = self.height(data, self.start.idx) - self.start.offset;
@@ -135,11 +153,13 @@ where U: IntoElement
     }
 
     #[tracing::instrument(skip(self, data))]
-    fn add_offset_up(
+    fn add_offset_up<U>(
         &mut self,
         data: &[U],
         mut delta: u16,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.mode = Mode::Scrolling;
 
         // NOTE "<=" or "<" doesn't matter because of delta > 0 check

@@ -1,8 +1,6 @@
 pub mod r#move;
 pub mod render;
 
-use std::marker::PhantomData;
-
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::IntoElement;
 use crate::tui::widgets::container::element::RenderContext;
@@ -33,10 +31,8 @@ enum Mode {
     Tail,
 }
 
-#[derive(Clone, Debug)]
-pub struct ScrollElements<U>
-where U: IntoElement
-{
+#[derive(Clone, Debug, Default)]
+pub struct ScrollElements {
     ctx: RenderContext,
     dirty: Vec<bool>,
     elements: Vec<Element>,
@@ -44,25 +40,9 @@ where U: IntoElement
     mode: Mode,
     width: u16,
     height: u16,
-    phantom: PhantomData<U>,
 }
 
-impl<U> ScrollElements<U>
-where U: IntoElement
-{
-    pub fn new() -> Self {
-        Self {
-            ctx: Default::default(),
-            dirty: Vec::new(),
-            elements: Vec::new(),
-            start: Default::default(),
-            mode: Default::default(),
-            width: 0,
-            height: 0,
-            phantom: Default::default(),
-        }
-    }
-
+impl ScrollElements {
     pub fn set_dirty(
         &mut self,
         idx: usize,
@@ -87,12 +67,14 @@ where U: IntoElement
         }
     }
 
-    pub fn set_start(
+    pub fn set_start<U>(
         &mut self,
         data: &[U],
         idx: usize,
         offset: u16,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         if data.is_empty() {
             return Default::default();
         }
@@ -104,11 +86,14 @@ where U: IntoElement
         }
     }
 
-    pub fn element(
+    pub fn element<U>(
         &mut self,
         data: &[U],
         idx: usize,
-    ) -> &mut Element {
+    ) -> &mut Element
+    where
+        U: IntoElement,
+    {
         if self.dirty[idx] {
             self.elements[idx] = data[idx].to_element();
             self.dirty[idx] = false;
@@ -116,11 +101,14 @@ where U: IntoElement
         &mut self.elements[idx]
     }
 
-    pub fn height(
+    pub fn height<U>(
         &mut self,
         data: &[U],
         idx: usize,
-    ) -> u16 {
+    ) -> u16
+    where
+        U: IntoElement,
+    {
         if data.is_empty() {
             return 0;
         }

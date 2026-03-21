@@ -4,17 +4,17 @@ use tracing::debug;
 
 use super::*;
 
-impl<U> ScrollElements<U>
-where U: IntoElement
-{
+impl ScrollElements {
     #[tracing::instrument(skip(self, data, buf))]
-    pub fn render(
+    pub fn render<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
         ctx: RenderContext,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         self.width = area.width;
         self.height = area.height;
         self.ctx = ctx;
@@ -37,12 +37,15 @@ where U: IntoElement
     // TODO check and refactor below
 
     #[tracing::instrument(skip(self, data, buf))]
-    fn render_from_line(
+    fn render_from_line<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
-    ) -> u16 {
+    ) -> u16
+    where
+        U: IntoElement,
+    {
         Clear.render(area, buf);
         let mut remaining = self.render_first(data, area, buf);
         let mut idx = self.start.idx;
@@ -55,12 +58,14 @@ where U: IntoElement
     }
 
     #[tracing::instrument(skip(self, data, buf))]
-    fn render_tail(
+    fn render_tail<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         debug!("rendering tail");
         Clear.render(area, buf);
         let mut offset = 0;
@@ -81,11 +86,13 @@ where U: IntoElement
 
     /// keeps the same relative offset when the height of the widget changes
     #[tracing::instrument(skip(self, data))]
-    fn track_resize(
+    fn track_resize<U>(
         &mut self,
         data: &[U],
         area: Rect,
-    ) {
+    ) where
+        U: IntoElement,
+    {
         let new_height = self.height(data, self.start.idx);
         if new_height == self.start.height {
             return;
@@ -111,12 +118,15 @@ where U: IntoElement
     }
 
     #[tracing::instrument(skip(self, data, buf))]
-    fn render_first(
+    fn render_first<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
-    ) -> u16 {
+    ) -> u16
+    where
+        U: IntoElement,
+    {
         let visible = (self.height(data, self.start.idx) - self.start.offset).min(area.height);
         let offset = self.start.offset;
         let ctx = self.ctx;
@@ -133,14 +143,17 @@ where U: IntoElement
     }
 
     #[tracing::instrument(skip(self, data, buf))]
-    fn render_down(
+    fn render_down<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
         idx: usize,
         remaining: u16,
-    ) -> u16 {
+    ) -> u16
+    where
+        U: IntoElement,
+    {
         let visible = self.height(data, idx).min(remaining);
         let ctx = self.ctx;
         self.element(data, idx).partial_render(
@@ -157,14 +170,17 @@ where U: IntoElement
     }
 
     #[tracing::instrument(skip(self, data, buf))]
-    fn render_up(
+    fn render_up<U>(
         &mut self,
         data: &[U],
         area: Rect,
         buf: &mut Buffer,
         idx: usize,
         remaining: u16,
-    ) -> (u16, u16) {
+    ) -> (u16, u16)
+    where
+        U: IntoElement,
+    {
         let element = self.height(data, idx);
         let visible = element.min(remaining);
         let offset = element - visible;
