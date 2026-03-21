@@ -7,6 +7,8 @@
 - fix agent state persistence
   - use jsonl for storage
   - debounce file writes
+- aborts/retries/failures should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
+- context window free %; need to add config value "max_tokens" per assistant
 
 # core
 
@@ -21,11 +23,6 @@
 
 # ui
 
-- retry and abort key
-  - should append appropriate developer messages like "assistants turn was interrupted by the user/unexpected error"
-- context window free %
-  - need to add config value "max_tokens" per assistant
-  - try reading token usage field in response?
 - undo msg
   - just wipe to last user msg inclusive, and fill input field with the contents
 
@@ -48,6 +45,7 @@
 
 # maybe
 
+- try reading token usage field in response instead of estimating with tiktoken?
 - show combined elapsed time for multiturn (ie multiple assistant message)
 - show TTFT?
 - gitless scenario -- project dir instead of snapshots for overlays
