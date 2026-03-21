@@ -9,7 +9,7 @@ impl<'a> Tab<'a> {
         event: KeyEvent,
     ) -> Result<bool> {
         if self.insert_mode {
-            self.key_insert(event).await;
+            self.key_insert(event).await?;
             Ok(true)
         } else {
             return self.key_normal(event).await;
