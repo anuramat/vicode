@@ -7,6 +7,7 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
+use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
@@ -54,7 +55,7 @@ impl<'a> Tab<'a> {
         self.user_input.0.set_block(block.title(title));
     }
 
-    pub async fn submit(&mut self) {
+    pub async fn submit(&mut self) -> Result<()> {
         // read user input
         let text = self.user_input.0.lines().join("\n").trim().to_string();
 
@@ -64,7 +65,7 @@ impl<'a> Tab<'a> {
 
         // drop empty messages
         if text.is_empty() {
-            return;
+            return Ok(());
         }
 
         // forward to agent
@@ -73,14 +74,36 @@ impl<'a> Tab<'a> {
             multiplier: self.multiplier,
             loc: self.agent_state.context.history.len(),
         };
-        // TODO bubble errors up
+
         self.set_state(TabState::Running(AssistantState::Generating))
-            .await
-            .expect("failed to update tab state");
+            .await?;
         self.tx
             .send(AppEvent::UserPrompt(self.aid.clone(), prompt))
-            .await
-            .expect("failed to send user message");
+            .await?;
+        Ok(())
+    }
+
+    pub async fn retry(&mut self) -> Result<()> {
+        if matches!(
+            self.state,
+            TabState::Loading | TabState::Running(AssistantState::Generating)
+        ) {
+            return Ok(());
+        }
+        self.set_state(TabState::Running(AssistantState::Generating))
+            .await?;
+        self.tx.send(AppEvent::RetryTurn(self.aid.clone())).await?;
+        Ok(())
+    }
+
+    pub async fn abort(&mut self) -> Result<()> {
+        self.tx
+            .send(AppEvent::AbortTurn(
+                self.agent_state.context.history.len() - 1,
+                self.aid.clone(),
+            ))
+            .await?;
+        Ok(())
     }
 
     pub async fn next_assistant(&mut self) -> Result<()> {
@@ -102,7 +125,7 @@ impl<'a> Tab<'a> {
     pub async fn key_insert(
         &mut self,
         input: KeyEvent,
-    ) {
+    ) -> Result<()> {
         use crossterm::event::KeyCode::Char;
         use crossterm::event::KeyCode::{self};
         use crossterm::event::KeyEvent;
@@ -115,7 +138,7 @@ impl<'a> Tab<'a> {
             ..
         } = input;
         match code {
-            KeyCode::Enter => self.submit().await,
+            KeyCode::Enter => self.submit().await?,
             KeyCode::Esc => self.insert_mode(false),
             // emulate readline/bash shortcuts
 
@@ -163,5 +186,6 @@ impl<'a> Tab<'a> {
             _ => _ = area.input_without_shortcuts(input),
         }
         self.update_input_border();
+        Ok(())
     }
 }

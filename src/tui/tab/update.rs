@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryLoc;
 use crate::project::PROJECT;
@@ -23,6 +24,15 @@ impl Tab<'_> {
         let token_count_delta = self.agent_state.context.history.handle(loc, event);
         self.context_tokens = self.context_tokens.saturating_add_signed(token_count_delta);
         self.scroll.set_dirty(loc);
+    }
+
+    pub fn replace_history(
+        &mut self,
+        history: History,
+    ) {
+        self.context_tokens = history.total_tokens();
+        self.agent_state.context.history = history;
+        self.scroll = Default::default();
     }
 
     pub async fn set_state(

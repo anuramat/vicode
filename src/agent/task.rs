@@ -65,6 +65,11 @@ impl AgentTaskManager {
         };
         self.pending.insert(id, self.tasks.spawn(wrapped));
     }
+
+    pub async fn abort(&mut self) {
+        self.tasks.shutdown().await;
+        self.pending.clear();
+    }
 }
 
 impl Agent {

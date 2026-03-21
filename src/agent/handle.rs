@@ -10,6 +10,7 @@ use crate::agent::TaskResult;
 use crate::agent::id::AgentId;
 use crate::agent::replica;
 use crate::llm::history;
+use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryLoc;
 use crate::llm::message::AssistantItem;
@@ -21,6 +22,7 @@ use crate::project::PROJECT;
 pub enum AgentEvent {
     TaskDone(TaskId, TaskResult),
     Submit(UserPrompt),
+    Retry,
     SetAssistant(String),
     HistoryEvent(HistoryLoc, HistoryEvent),
     /// delete agent, e.g. when deleting a tab
@@ -35,6 +37,7 @@ pub type ParentMessage = (AgentId, ParentEvent);
 pub enum ParentEvent {
     AttachAgent,
     InfoUpdate,
+    HistoryReset(History),
     HistoryUpdate(HistoryLoc, HistoryEvent),
     TurnComplete,
     Error(String),
@@ -98,6 +101,12 @@ impl Agent {
                     }
                 }
             }
+            Retry => {
+                if !self.tskmgr.pending.is_empty() {
+                    return Ok(());
+                }
+                self.start_turn();
+            }
             SetAssistant(id) => {
                 self.set_assistant(&id).await?;
             }
@@ -138,9 +147,23 @@ impl Agent {
                     });
                 }
             }
+            HistoryEvent::ResponseAborted => {
+                if self.tskmgr.pending.is_empty() {
+                    return Ok(());
+                }
+                self.tskmgr.abort().await;
+                // TODO wish we could move this out
+                self.parent
+                    .send((self.id.clone(), ParentEvent::TurnComplete))
+                    .await?;
+                self.parent
+                    .send((self.id.clone(), ParentEvent::InfoUpdate))
+                    .await?;
+            }
             HistoryEvent::ResponseFailed(msg) => {
                 error!("error in agent {}: {}", self.id, msg);
             }
+            HistoryEvent::ResponseDelta(_) => return Ok(()),
             _ => {}
         }
 

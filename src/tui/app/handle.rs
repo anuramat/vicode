@@ -9,6 +9,8 @@ use crate::agent::AgentEvent;
 use crate::agent::handle::ParentEvent as AgentParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
+use crate::llm::history::HistoryEvent;
+use crate::llm::history::HistoryLoc;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
@@ -18,6 +20,8 @@ pub enum AppEvent {
     Key(KeyEvent),
 
     UserPrompt(AgentId, UserPrompt),
+    RetryTurn(AgentId),
+    AbortTurn(HistoryLoc, AgentId),
     SetAssistant(AgentId, String),
     ParentEvent(AgentId, AgentParentEvent),
     TabStatusChanged(AgentId),
@@ -42,6 +46,18 @@ impl<'a> App<'a> {
             UserPrompt(agent_id, msg) => {
                 if let Some(tx) = self.agents.get(&agent_id) {
                     tx.send(AgentEvent::Submit(msg)).await?;
+                }
+            }
+            // TODO maybe create a new type for agent events that come from outside
+            RetryTurn(agent_id) => {
+                if let Some(tx) = self.agents.get(&agent_id) {
+                    tx.send(AgentEvent::Retry).await?;
+                }
+            }
+            AbortTurn(loc, agent_id) => {
+                if let Some(tx) = self.agents.get(&agent_id) {
+                    tx.send(AgentEvent::HistoryEvent(loc, HistoryEvent::ResponseAborted))
+                        .await?;
                 }
             }
             SetAssistant(agent_id, id) => {
@@ -80,6 +96,11 @@ impl<'a> App<'a> {
             InfoUpdate => {
                 if let Some(tab) = self.tabs.get_mut(&agent_id) {
                     tab.info = InfoWidget::new(&agent_id).await?;
+                }
+            }
+            HistoryReset(history) => {
+                if let Some(tab) = self.tabs.get_mut(&agent_id) {
+                    tab.replace_history(history);
                 }
             }
             HistoryUpdate(loc, event) => {

@@ -25,7 +25,9 @@ impl<'a> Tab<'a> {
         use crossterm::event::KeyModifiers as Mods;
         let history = self.agent_state.context.history.as_ref();
         match event.code {
-            Enter => self.submit().await,
+            Enter => self.submit().await?,
+            Char('R') => self.retry().await?,
+            Char('X') => self.abort().await?,
             Char('i') => self.insert_mode(true),
 
             Up => self.scroll.line_up(history),

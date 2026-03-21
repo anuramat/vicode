@@ -31,6 +31,7 @@ pub enum HistoryEvent {
     ResponseDelta(Delta),
     ResponseItem(Box<AssistantItem>),
     ResponseCompleted(Vec<AssistantItem>),
+    ResponseAborted,
     ResponseFailed(String),
     UserMessage(String),
     DeveloperMessage(String),
@@ -95,10 +96,10 @@ impl History {
     pub fn needs_another_turn(&self) -> bool {
         if let Some(entry) = self.messages.last() {
             match &entry.message {
-                Message::Assistant(msg) => msg
-                    .content
-                    .iter()
-                    .any(|(_, content)| content.try_as_tool_call_ref().is_some()),
+                Message::Assistant(msg) => msg.content.iter().any(|(_, content)| {
+                    content.try_as_tool_call_ref().is_some()
+                        && matches!(msg.finish_reason, AssistantMessageStatus::Success)
+                }),
                 Message::Developer(_) => true,
                 Message::User(_) => false,
             }
@@ -118,6 +119,7 @@ impl History {
             HistoryEvent::ResponseDelta(item_delta) => self.push_delta(loc, item_delta),
             HistoryEvent::ResponseItem(item) => self.push_item(loc, *item),
             HistoryEvent::ResponseCompleted(items) => self.complete_response(loc, items),
+            HistoryEvent::ResponseAborted => self.abort_response(loc),
             HistoryEvent::ResponseFailed(msg) => self.fail_response(loc, msg),
             HistoryEvent::DeveloperMessage(text) => {
                 // TODO unslop this
@@ -235,6 +237,36 @@ impl History {
         }
     }
 
+    pub fn abort_response(
+        &mut self,
+        loc: usize,
+    ) {
+        // XXX do we need to pass loc? why did we even use loc in the first place
+        let Some(Message::Assistant(msg)) = self.get_mut(loc) else {
+            return;
+        };
+        match msg.finish_reason {
+            AssistantMessageStatus::InProgress => {
+                msg.finish_reason = AssistantMessageStatus::AbortedByUser
+            }
+            AssistantMessageStatus::Success => {
+                if !self.needs_another_turn() {
+                    return;
+                }
+                // we're trying to abort right before the next turn -- pretend it already started
+                self.messages.push(HistoryEntry {
+                    meta: MessageMeta::default(),
+                    message: AssistantMessage {
+                        finish_reason: AssistantMessageStatus::AbortedByUser,
+                        content: indexmap! {},
+                    }
+                    .into(),
+                });
+            }
+            _ => {}
+        }
+    }
+
     pub fn fail_response(
         &mut self,
         loc: usize,
@@ -342,6 +374,23 @@ mod tests {
         assert!(matches!(
             msg.finish_reason,
             AssistantMessageStatus::Error(ref text) if text == "oops"
+        ));
+    }
+
+    #[test]
+    fn response_aborted_without_message_creates_aborted_message() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::ResponseAborted);
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
+            panic!("expected assistant message");
+        };
+        assert!(matches!(
+            msg.finish_reason,
+            AssistantMessageStatus::AbortedByUser
         ));
     }
 
@@ -507,6 +556,24 @@ mod tests {
         let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
         assert_eq!(item.timing.last_modified_ms, None);
         assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
+    }
+
+    #[test]
+    fn response_aborted_marks_message_aborted() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::ResponseStarted(0));
+        history.handle(0, HistoryEvent::ResponseAborted);
+        let Some(HistoryEntry {
+            message: Message::Assistant(msg),
+            ..
+        }) = history.messages.first()
+        else {
+            panic!("expected assistant message");
+        };
+        assert!(matches!(
+            msg.finish_reason,
+            AssistantMessageStatus::AbortedByUser
+        ));
     }
 
     #[test]

@@ -3,10 +3,10 @@ use fs_extra::dir::copy;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 
-use crate::agent::task::AgentTaskManager;
-use crate::agent::*;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentMessage;
+use crate::agent::task::AgentTaskManager;
+use crate::agent::*;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
