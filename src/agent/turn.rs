@@ -9,7 +9,7 @@ use crate::llm::delta::*;
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryLoc;
 use crate::llm::message::AssistantItem;
-use crate::llm::provider::event::StreamEvent;
+use crate::llm::provider::api::StreamEvent;
 
 async fn send_item(
     tx: &Sender<AgentEvent>,

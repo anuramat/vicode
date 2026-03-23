@@ -7,8 +7,9 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ModelConfig;
+use crate::llm::delta::Delta;
 use crate::llm::history::History;
-use crate::llm::provider::event::StreamEvent;
+use crate::llm::message::AssistantItem;
 
 pub mod chat_completions;
 pub mod responses;
@@ -31,4 +32,14 @@ pub trait Api: Send + Sync {
         history: History,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream>;
+}
+
+#[derive(Debug)]
+pub enum StreamEvent {
+    Delta(Delta),
+    ItemDone(AssistantItem),
+    ItemAdded(AssistantItem),
+    Failed(String),
+    Completed(Vec<AssistantItem>),
+    Ignore,
 }

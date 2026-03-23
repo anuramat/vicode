@@ -1,3 +1,5 @@
+mod delta;
+
 use std::pin::Pin;
 use std::task::Context as TaskContext;
 use std::task::Poll;
@@ -18,7 +20,7 @@ use crate::llm::history::History;
 use crate::llm::message::*;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
-use crate::llm::provider::event::StreamEvent;
+use crate::llm::provider::api::StreamEvent;
 
 pub struct ResponsesApi {
     client: Client<OpenAIConfig>,
