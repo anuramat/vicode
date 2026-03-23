@@ -36,6 +36,8 @@ lazy_static::lazy_static! {
 pub struct ModelConfig {
     pub model: String,
     pub effort: Option<ReasoningEffort>,
+    /// max context window
+    pub window: Option<usize>,
 }
 
 #[derive(Deserialize, Default, Debug, Clone)]

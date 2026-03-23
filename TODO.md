@@ -1,6 +1,5 @@
 # refactor
 
-- move responses specific stuff into api/responses/*
 - agent init is kinda fucked up, need clear boundaries on init status: when
   overlay is mounted, when state is written to file
 - bash widget is a mess
@@ -8,7 +7,6 @@
   - use jsonl for storage
   - debounce file writes
 - aborts/retries/failures should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
-- context window free %; need to add config value "max_tokens" per assistant
 
 # core
 
@@ -19,9 +17,12 @@
     - blocking -- one at a time, shares workdir with parent, probably gets git access
 - compact
   - would be cool if we could mark specific messages for compaction
+  - autocompact
 - skills
 
 # ui
+
+- show context window free %
 
 - undo msg
   - just wipe to last user msg inclusive, and fill input field with the contents
