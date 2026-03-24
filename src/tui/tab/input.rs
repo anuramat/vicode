@@ -7,7 +7,6 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
-use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
@@ -138,10 +137,6 @@ impl<'a> Tab<'a> {
             ..
         } = input;
         match code {
-            KeyCode::Enter => self.submit().await?,
-            KeyCode::Esc => self.insert_mode(false),
-            // emulate readline/bash shortcuts
-
             // move:
             Char('a') if mods == Mods::CONTROL => {
                 area.move_cursor(Head);

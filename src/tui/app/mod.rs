@@ -113,7 +113,7 @@ impl<'a> App<'a> {
     }
 
     pub fn selected_aid(&self) -> Option<AgentId> {
-        self.selected_tab()
+        self.selected_tab_idx()
             .and_then(|idx| self.tabs.get_index(idx))
             .map(|(aid, _)| aid.clone())
     }

@@ -1,5 +1,5 @@
 pub mod input;
-pub mod keys;
+pub mod scroll;
 pub mod update;
 
 use std::fmt::Debug;

@@ -19,7 +19,7 @@ impl<'a> App<'a> {
         &mut self,
         term: &mut DefaultTerminal,
     ) -> Result<()> {
-        let selected = self.selected_tab();
+        let selected = self.selected_tab_idx();
         term.draw(|frame| {
             // statusline vs the rest
             let outer = Layout::default()

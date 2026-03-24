@@ -8,6 +8,7 @@ use smart_default::SmartDefault;
 use xdg::BaseDirectories;
 
 use crate::bwrap::BwrapConfig;
+use crate::tui::command::Keymap;
 
 const DEFAULT_INSTRUCTIONS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/AGENTS.md"));
@@ -108,6 +109,8 @@ pub enum SubagentAssistantConfig {
     Assistants(Vec<String>),
 }
 
+// TODO -- merge with default config
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     /// Paths (relative to project root) to expose in the agent workdir through a special lowerdir shared by all agents.
@@ -128,6 +131,7 @@ pub struct Config {
     pub primary_assistant: Vec<String>,
     #[serde(default)]
     pub subagent_assistant: SubagentAssistantConfig,
+    pub keymap: Keymap,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -259,5 +263,139 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn parses_keymap() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [keymap.normal]
+            "q" = "app_quit"
+            "1" = "set_multiplier 1"
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-c"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.keymap.normal.len(), 2);
+    }
+
+    #[test]
+    fn parses_shift_modifier_in_keymap() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [keymap.normal]
+            "S-j" = "tab_next"
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-c"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.keymap.normal.len(), 1);
+    }
+
+    #[test]
+    fn rejects_uppercase_keys_in_keymap() {
+        let err = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [keymap.normal]
+            "Enter" = "submit"
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-c"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("uppercase key 'Enter'"));
+    }
+
+    #[test]
+    fn parses_insert_keymap_scope() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [keymap.insert]
+            "enter" = "submit"
+            "esc" = "exit_insert"
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [bash]
+            cmd = ["bash", "-c"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.keymap.insert.len(), 2);
     }
 }

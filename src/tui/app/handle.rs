@@ -40,7 +40,9 @@ impl<'a> App<'a> {
         debug!(event = ?event, "Handling app event");
         match event {
             Key(key_event) => {
-                self.key(key_event).await?;
+                if let Err(err) = self.key(key_event).await {
+                    self.notify(NotificationKind::Error, err.to_string());
+                }
                 self.dirty = true;
             }
             UserPrompt(agent_id, msg) => {

@@ -2,6 +2,47 @@ shared = ["target"]
 context_files = ["AGENTS.md"]
 primary_assistant = ["cerebras"]
 
+[keymap.normal]
+"t" = "toggle_tools"
+"r" = "toggle_reasoning"
+"s" = "toggle_developer"
+"j" = "tab_next"
+"k" = "tab_prev"
+"S-d" = "tab_delete"
+"S-y" = "tab_duplicate"
+"o" = "tab_new"
+"q" = "app_quit"
+"enter" = "submit"
+"S-r" = "retry"
+"S-x" = "abort"
+"i" = "enter_insert"
+"up" = "scroll_line_up"
+"down" = "scroll_line_down"
+"tab" = "assistant_next"
+"C-y" = "scroll_line_up"
+"C-e" = "scroll_line_down"
+"C-u" = "scroll_half_page_up"
+"C-d" = "scroll_half_page_down"
+"C-b" = "scroll_page_up"
+"C-f" = "scroll_page_down"
+"[" = "scroll_prev_element"
+"]" = "scroll_next_element"
+"g" = "scroll_top"
+"S-g" = "scroll_bottom"
+"1" = "set_multiplier 1"
+"2" = "set_multiplier 2"
+"3" = "set_multiplier 3"
+"4" = "set_multiplier 4"
+"5" = "set_multiplier 5"
+"6" = "set_multiplier 6"
+"7" = "set_multiplier 7"
+"8" = "set_multiplier 8"
+"9" = "set_multiplier 9"
+
+[keymap.insert]
+"enter" = "submit"
+"esc" = "exit_insert"
+
 [assistants.cerebras]
 provider = "cerebras"
 model = "zai-glm-4.7"

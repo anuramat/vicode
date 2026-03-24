@@ -22,7 +22,7 @@ impl<'a> App<'a> {
     pub fn rebuild_tablist(&mut self) {
         self.tablist.rebuild(&self.tabs);
         // make sure index is in bounds after rebuild
-        self.select_tab(self.selected_tab());
+        self.select_tab(self.selected_tab_idx());
     }
 
     pub async fn load_tabs(&mut self) -> Result<()> {
@@ -66,7 +66,7 @@ impl<'a> App<'a> {
     ) -> Result<()> {
         let tab = Tab::loading_tab(self.tx.clone(), id.clone(), agent_state);
         let idx = self
-            .selected_tab()
+            .selected_tab_idx()
             .map(|x| x + 1)
             .unwrap_or(self.tabs.len());
         self.tabs.shift_insert(idx, id, tab);
@@ -104,8 +104,9 @@ impl<'a> App<'a> {
 
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
-        let (agent_state, tx) = if let Some((aid, tab)) =
-            self.selected_tab().and_then(|idx| self.tabs.get_index(idx))
+        let (agent_state, tx) = if let Some((aid, tab)) = self
+            .selected_tab_idx()
+            .and_then(|idx| self.tabs.get_index(idx))
             && let Some(tx) = self.agents.get(aid)
         {
             if !tab.state.idle() {
@@ -123,7 +124,7 @@ impl<'a> App<'a> {
 
     /// delete selected tab and corresponding agent
     pub async fn delete_tab(&mut self) -> Result<()> {
-        if let Some(idx) = self.selected_tab() {
+        if let Some(idx) = self.selected_tab_idx() {
             // delete tab
             if let Some((_, tab)) = self.tabs.shift_remove_index(idx) {
                 let aid = tab.aid;
@@ -141,7 +142,8 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub fn selected_tab(&self) -> Option<usize> {
+    // TODO go through calls and use selected_tab()/selected_tab_mut() instead; maybe make this private afterwards; maybe make full getters
+    pub fn selected_tab_idx(&self) -> Option<usize> {
         let n_tabs = self.tabs.len();
         if n_tabs == 0 {
             return None;
@@ -149,8 +151,28 @@ impl<'a> App<'a> {
         self.tablist.selected().map(|s| s.min(n_tabs - 1))
     }
 
+    pub fn selected_tab(&mut self) -> Result<&Tab<'a>> {
+        let Some(idx) = self.selected_tab_idx() else {
+            anyhow::bail!("no tab selected");
+        };
+        let Some((_, tab)) = self.tabs.get_index(idx) else {
+            anyhow::bail!("selected tab not found");
+        };
+        Ok(tab)
+    }
+
+    pub fn selected_tab_mut(&mut self) -> Result<&mut Tab<'a>> {
+        let Some(idx) = self.selected_tab_idx() else {
+            anyhow::bail!("no tab selected");
+        };
+        let Some((_, tab)) = self.tabs.get_index_mut(idx) else {
+            anyhow::bail!("selected tab not found");
+        };
+        Ok(tab)
+    }
+
     pub fn next_tab(&mut self) {
-        let Some(idx) = self.selected_tab() else {
+        let Some(idx) = self.selected_tab_idx() else {
             self.select_tab(Some(0));
             return;
         };
@@ -158,7 +180,7 @@ impl<'a> App<'a> {
     }
 
     pub fn prev_tab(&mut self) {
-        let Some(idx) = self.selected_tab() else {
+        let Some(idx) = self.selected_tab_idx() else {
             self.last_tab();
             return;
         };
