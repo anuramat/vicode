@@ -378,20 +378,10 @@ mod tests {
     }
 
     #[test]
-    fn response_aborted_without_message_creates_aborted_message() {
+    fn response_aborted_without_message_is_noop() {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseAborted);
-        let Some(HistoryEntry {
-            message: Message::Assistant(msg),
-            ..
-        }) = history.messages.first()
-        else {
-            panic!("expected assistant message");
-        };
-        assert!(matches!(
-            msg.finish_reason,
-            AssistantMessageStatus::AbortedByUser
-        ));
+        assert!(history.messages.is_empty());
     }
 
     #[test]
