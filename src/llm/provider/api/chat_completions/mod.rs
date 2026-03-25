@@ -1,4 +1,4 @@
-/// WARN this entire module is vibecoded
+/// SLOP entire chat completions module is vibecoded
 use anyhow::Result;
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;

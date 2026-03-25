@@ -1,4 +1,4 @@
-/// WARN vibecoded
+/// SLOP
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;

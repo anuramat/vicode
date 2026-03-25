@@ -1,4 +1,4 @@
-/// WARN vibecoded
+/// SLOP
 pub mod candidate;
 
 use anyhow::Result;
