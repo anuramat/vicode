@@ -138,8 +138,11 @@ impl FromStr for KeyChord {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Keymap {
+    #[serde(default)]
     pub cmdline: IndexMap<KeyChord, Command>,
+    #[serde(default)]
     pub normal: IndexMap<KeyChord, Command>,
+    #[serde(default)]
     pub insert: IndexMap<KeyChord, Command>,
 }
 

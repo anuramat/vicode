@@ -9,6 +9,7 @@ shared = [] # if non-empty, user is expected to keep those readonly in the root 
 context_files = ["AGENTS.md"] # files to load into context from the commit, relative to workdir root; TODO make it possible to read from shared (i.e. if it's gitignored), or from repo root
 primary_assistant = ["cerebras"] # CHANGE ME: list of assistants for new tabs to round robin over
 subagent_assistant = [] # same as primary_assistant, if empty -- inherits from the parent agent
+clear_keymap = false
 
 [keymap.cmdline]
 "enter" = "input_submit"

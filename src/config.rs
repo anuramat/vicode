@@ -141,6 +141,8 @@ pub struct Config {
     pub primary_assistant: Vec<String>,
     pub subagent_assistant: Vec<String>,
 
+    /// if false, keymaps are merged with defaults
+    pub clear_keymap: bool,
     pub keymap: Keymap,
 }
 
@@ -165,12 +167,28 @@ impl Config {
         Self::parse(&s)
     }
 
+    fn default_config() -> Result<Self> {
+        let config: Self = toml::from_str(DEFAULT_CONFIG)?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn parse(s: &str) -> Result<Self> {
         let user: toml::Table = toml::from_str(s)?;
         let default: toml::Table = toml::from_str(DEFAULT_CONFIG)?;
         let merged = merge(default, user)?;
-        let config: Self = serde_json::from_value(merged)?;
+        let mut config: Self = serde_json::from_value(merged)?;
         config.validate()?;
+
+        if !config.clear_keymap {
+            // merge keymaps
+            let mut keymap = Self::default_config()?.keymap;
+            keymap.cmdline.extend(config.keymap.cmdline.clone());
+            keymap.normal.extend(config.keymap.normal.clone());
+            keymap.insert.extend(config.keymap.insert.clone());
+            config.keymap = keymap;
+        }
+
         Ok(config)
     }
 
@@ -324,7 +342,18 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.keymap.normal.len(), 2);
+        let q = "q".parse::<crate::tui::command::KeyChord>().unwrap();
+        let one = "1".parse::<crate::tui::command::KeyChord>().unwrap();
+        assert_eq!(
+            config.keymap.normal.get(&q).unwrap(),
+            &"quit".parse::<crate::tui::command::Command>().unwrap()
+        );
+        assert_eq!(
+            config.keymap.normal.get(&one).unwrap(),
+            &"set_multiplier 1"
+                .parse::<crate::tui::command::Command>()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -361,7 +390,11 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.keymap.normal.len(), 1);
+        let shift_j = "S-j".parse::<crate::tui::command::KeyChord>().unwrap();
+        assert_eq!(
+            config.keymap.normal.get(&shift_j).unwrap(),
+            &"tab_next".parse::<crate::tui::command::Command>().unwrap()
+        );
     }
 
     #[test]
