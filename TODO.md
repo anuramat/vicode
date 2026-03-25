@@ -19,6 +19,9 @@
   - would be cool if we could mark specific messages for compaction
   - autocompact
 - skills
+- merge user config into default config, and define root defaults there explicitly
+- lua scripting/configs with mlua
+- yml configs with serde_yml
 
 # ui
 
