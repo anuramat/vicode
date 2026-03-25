@@ -19,7 +19,6 @@ use crate::config::AssistantConfig;
 use crate::config::CONFIG;
 use crate::config::Config;
 use crate::config::ProviderConfig;
-use crate::config::SubagentAssistantConfig;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
 use crate::llm::provider::api::responses::ResponsesApi;
@@ -146,11 +145,10 @@ impl AssistantPool {
         Ok(Self {
             assistants,
             primary: RoundRobin::new(config.primary_assistant.clone()),
-            subagent: match &config.subagent_assistant {
-                SubagentAssistantConfig::Inherit => SubagentSelector::Inherit,
-                SubagentAssistantConfig::Assistants(ids) => {
-                    SubagentSelector::RoundRobin(RoundRobin::new(ids.clone()))
-                }
+            subagent: if config.subagent_assistant.is_empty() {
+                SubagentSelector::Inherit
+            } else {
+                SubagentSelector::RoundRobin(RoundRobin::new(config.subagent_assistant.clone()))
             },
         })
     }

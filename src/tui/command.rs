@@ -136,7 +136,7 @@ impl FromStr for KeyChord {
 // TODO allow sequences of chords?
 // TODO allow easily defining keymap for multiple modes at the same time
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Keymap {
     pub cmdline: IndexMap<KeyChord, Command>,
     pub normal: IndexMap<KeyChord, Command>,
@@ -193,6 +193,9 @@ mod tests {
         );
 
         let err = "D".parse::<KeyChord>().unwrap_err();
-        assert!(err.to_string().contains("invalid key 'D' in keybinding 'D'"));
+        assert!(
+            err.to_string()
+                .contains("invalid key 'D' in keybinding 'D'")
+        );
     }
 }

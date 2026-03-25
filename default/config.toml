@@ -1,6 +1,14 @@
-shared = ["target"]
-context_files = ["AGENTS.md"]
-primary_assistant = ["cerebras"]
+# default config
+# - copied to $XDG_CONFIG_HOME/vicode/config.toml if missing
+# - defines defaults for missing top level values
+# - sane defaults, except for fields marked with "CHANGE ME"
+
+# TODO move comments from below to config.rs, except for "CHANGE ME" markers
+
+shared = [] # if non-empty, user is expected to keep those readonly in the root ~forever; TODO make this make sense: change behaviour and/or explain better; maybe just wipe it from upperdir after modifying in the root
+context_files = ["AGENTS.md"] # files to load into context from the commit, relative to workdir root; TODO make it possible to read from shared (i.e. if it's gitignored), or from repo root
+primary_assistant = ["cerebras"] # CHANGE ME: list of assistants for new tabs to round robin over
+subagent_assistant = [] # same as primary_assistant, if empty -- inherits from the parent agent
 
 [keymap.cmdline]
 "enter" = "input_submit"
@@ -57,36 +65,36 @@ primary_assistant = ["cerebras"]
 
 [assistants.cerebras]
 provider = "cerebras"
-model = "zai-glm-4.7"
+model = "zai-glm-4.7" # CHANGE ME
 [assistants.gpt]
 provider = "openai"
-model = "gpt-5.1-codex-mini"
-effort = "low"
+model = "gpt-5.1-codex-mini" # CHANGE ME
+effort = "low" # CHANGE ME
 [assistants.llama]
 provider = "llama"
 model = "dummy"
 [assistants.zai]
 provider = "zai"
-model = "glm-5"
+model = "glm-5" # CHANGE ME
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
-key_command = "cat /run/agenix/openrouter"
+key_command = "cat /run/agenix/openrouter" # CHANGE ME
 [providers.llama]
-base_url = "$LLAMA_HOST/v1"
+base_url = "$LLAMA_HOST/v1" # CHANGE ME
 developer_as_user = true
 [providers.openai]
 base_url = "https://api.openai.com/v1"
-key_command = "cat /run/agenix/openai"
+key_command = "cat /run/agenix/openai" # CHANGE ME
 [providers.cerebras]
 base_url = "https://api.cerebras.ai/v1"
-key_command = "cat /run/agenix/cerebras"
+key_command = "cat /run/agenix/cerebras" # CHANGE ME
 api = "chat_completions"
 reasoning_content_field = "reasoning"
 reasoning_as_output = "think"
 [providers.zai]
 base_url = "https://api.z.ai/api/coding/paas/v4"
-key_command = "cat /run/agenix/zai"
+key_command = "cat /run/agenix/zai" # CHANGE ME
 api = "chat_completions"
 reasoning_content_field = "reasoning_content"
 
@@ -104,6 +112,7 @@ reasoning_content_field = "reasoning_content"
       "--dev",
       "/dev",
     ]
+    # TODO make stages easier to redefine -- two enum variants: one appends, another replaces
     [[bash.bwrap.stages]]
       ro = [
         "/nix",
@@ -119,8 +128,6 @@ reasoning_content_field = "reasoning_content"
         "~/.bashrc",
         "~/.bash_profile",
         "~/.profile",
-
-        "$GHQ_ROOT",
       ]
       tmpfs = [
         "/tmp",
@@ -129,8 +136,4 @@ reasoning_content_field = "reasoning_content"
         "$XDG_CACHE_HOME",
         "$XDG_STATE_HOME",
         "$XDG_DATA_HOME",
-      ]
-    [[bash.bwrap.stages]]
-      rw = [
-        "$CARGO_HOME",
       ]

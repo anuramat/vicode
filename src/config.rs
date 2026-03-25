@@ -4,6 +4,7 @@ use async_openai::types::responses::ReasoningEffort;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 use smart_default::SmartDefault;
 use xdg::BaseDirectories;
 
@@ -47,6 +48,24 @@ pub enum ApiType {
     #[default]
     Responses,
     ChatCompletions,
+}
+
+fn merge<T>(
+    default: T,
+    user: T,
+) -> Result<Value>
+where
+    T: Serialize,
+{
+    let default = serde_json::to_value(default)?;
+    let user = serde_json::to_value(user)?;
+    match (default, user) {
+        (Value::Object(mut default), Value::Object(user)) => {
+            default.extend(user);
+            Ok(Value::Object(default))
+        }
+        _ => anyhow::bail!("expected both values to be objects"),
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, SmartDefault)]
@@ -101,15 +120,7 @@ pub struct AssistantConfig {
     pub model: ModelConfig,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
-#[serde(untagged)]
-pub enum SubagentAssistantConfig {
-    #[default]
-    Inherit,
-    Assistants(Vec<String>),
-}
-
-// TODO -- merge with default config
+// TODO don't panic on unknown config fields, just warn
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -117,23 +128,23 @@ pub struct Config {
     /// All directories are assumed to be gitignored. Usecase: compilation cache, .env files etc.
     /// - directories are bind-mounted
     /// - files are hardlinked
-    #[serde(default)]
     pub shared: Vec<String>,
     pub bash: BashConfig,
 
     /// AGENTS.md-type files to read from the project root; if multiple are defined, contents are
     /// concatenated
-    #[serde(default)]
     pub context_files: Vec<String>,
 
     pub providers: IndexMap<String, ProviderConfig>,
     pub assistants: IndexMap<String, AssistantConfig>,
+    // TODO maybe collapse into a struct or something?
     pub primary_assistant: Vec<String>,
-    #[serde(default)]
-    pub subagent_assistant: SubagentAssistantConfig,
+    pub subagent_assistant: Vec<String>,
+
     pub keymap: Keymap,
 }
 
+// TODO flatten into Config
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct BashConfig {
     pub bwrap: BwrapConfig,
@@ -155,7 +166,10 @@ impl Config {
     }
 
     pub fn parse(s: &str) -> Result<Self> {
-        let config: Self = toml::from_str(s)?;
+        let user: toml::Table = toml::from_str(s)?;
+        let default: toml::Table = toml::from_str(DEFAULT_CONFIG)?;
+        let merged = merge(default, user)?;
+        let config: Self = serde_json::from_value(merged)?;
         config.validate()?;
         Ok(config)
     }
@@ -170,11 +184,8 @@ impl Config {
         }
 
         self.validate_assistant(&self.primary_assistant)?;
-        match &self.subagent_assistant {
-            SubagentAssistantConfig::Inherit => {}
-            SubagentAssistantConfig::Assistants(ids) => {
-                self.validate_assistant(ids)?;
-            }
+        if !self.subagent_assistant.is_empty() {
+            self.validate_assistant(&self.subagent_assistant)?;
         }
         Ok(())
     }
@@ -197,6 +208,13 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_default_config() {
+        // TODO do properly, ie without unwraps
+        let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        config.validate().unwrap();
+    }
 
     #[test]
     fn parses_multi_provider_config() {
