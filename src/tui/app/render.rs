@@ -61,7 +61,7 @@ impl<'a> App<'a> {
             if let Some(cmdline) = self.cmdline.as_mut() {
                 let n_lines = cmdline.lines().len() as u16;
                 let line_area = Rect {
-                    y: line_area.y + 1 - n_lines,
+                    y: line_area.y.saturating_sub(n_lines) + 1,
                     height: n_lines,
                     ..line_area
                 };
