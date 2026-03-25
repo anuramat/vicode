@@ -142,6 +142,12 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
 
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1

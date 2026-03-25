@@ -228,6 +228,12 @@ mod tests {
             r#"
             primary_assistant = ["fast", "deep"]
 
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
@@ -268,6 +274,12 @@ mod tests {
             primary_assistant = ["fast"]
             subagent_assistant = ["deep", "fast"]
 
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
@@ -303,6 +315,12 @@ mod tests {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast"]
+
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
 
             [providers.main]
             base_url = "https://api.example.com/v1"

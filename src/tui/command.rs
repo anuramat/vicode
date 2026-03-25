@@ -187,9 +187,12 @@ mod tests {
     #[test]
     fn rejects_uppercase_key_names() {
         let err = "Enter".parse::<KeyChord>().unwrap_err();
-        assert!(err.to_string().contains("uppercase key 'Enter'"));
+        assert!(
+            err.to_string()
+                .contains("invalid key 'Enter' in keybinding 'Enter'")
+        );
 
         let err = "D".parse::<KeyChord>().unwrap_err();
-        assert!(err.to_string().contains("uppercase key 'D'"));
+        assert!(err.to_string().contains("invalid key 'D' in keybinding 'D'"));
     }
 }
