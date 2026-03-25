@@ -10,6 +10,7 @@
 
 # core
 
+- '!...' command -- run bash in current tab, and append a developer message equivalent to bash tool output, with equivalent rendering
 - edit tool -- expand to create file, replace file, append, insert at
 - subagents
   - two types
