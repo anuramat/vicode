@@ -204,6 +204,12 @@ mod tests {
             r#"
             primary_assistant = ["fast", "deep"]
 
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
             [providers.main]
             base_url = "https://api.example.com/v1"
             concurrency = 1
@@ -271,9 +277,13 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
 
+            [keymap.cmdline]
+
             [keymap.normal]
-            "q" = "app_quit"
+            "q" = "quit"
             "1" = "set_multiplier 1"
+
+            [keymap.insert]
 
             [providers.main]
             base_url = "https://api.example.com/v1"
@@ -305,8 +315,12 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
 
+            [keymap.cmdline]
+
             [keymap.normal]
             "S-j" = "tab_next"
+
+            [keymap.insert]
 
             [providers.main]
             base_url = "https://api.example.com/v1"
@@ -338,8 +352,12 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
 
+            [keymap.cmdline]
+
             [keymap.normal]
-            "Enter" = "submit"
+            "Enter" = "input_submit"
+
+            [keymap.insert]
 
             [providers.main]
             base_url = "https://api.example.com/v1"
@@ -362,7 +380,7 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("uppercase key 'Enter'"));
+        assert!(err.to_string().contains("valid key chord"));
     }
 
     #[test]
@@ -371,9 +389,13 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
 
+            [keymap.cmdline]
+
+            [keymap.normal]
+
             [keymap.insert]
-            "enter" = "submit"
-            "esc" = "exit_insert"
+            "enter" = "input_submit"
+            "esc" = "input_exit"
 
             [providers.main]
             base_url = "https://api.example.com/v1"

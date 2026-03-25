@@ -13,6 +13,7 @@ use crate::tui::app::handle::AppEvent;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
+use crate::tui::textarea;
 
 fn block() -> Block<'static> {
     Block::new().borders(Borders::TOP).padding(Padding {
@@ -32,6 +33,7 @@ fn thin() -> Block<'static> {
 }
 
 impl<'a> Tab<'a> {
+    // TODO instead have two methods, and clean up if text area is empty on exit
     pub fn insert_mode(
         &mut self,
         active: bool,
@@ -125,61 +127,7 @@ impl<'a> Tab<'a> {
         &mut self,
         input: KeyEvent,
     ) -> Result<()> {
-        use crossterm::event::KeyCode::Char;
-        use crossterm::event::KeyCode::{self};
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers as Mods;
-        use tui_textarea::CursorMove::*;
-        let area = &mut self.user_input.0;
-        let KeyEvent {
-            code,
-            modifiers: mods,
-            ..
-        } = input;
-        match code {
-            // move:
-            Char('a') if mods == Mods::CONTROL => {
-                area.move_cursor(Head);
-            }
-            Char('e') if mods == Mods::CONTROL => {
-                area.move_cursor(End);
-            }
-            Char('b') if mods == Mods::ALT => {
-                area.move_cursor(WordBack);
-            }
-            Char('f') if mods == Mods::ALT => {
-                area.move_cursor(WordForward);
-            }
-            Char('b') if mods == Mods::CONTROL => {
-                area.move_cursor(Back);
-            }
-            Char('f') if mods == Mods::CONTROL => {
-                area.move_cursor(Forward);
-            }
-
-            // delete:
-            Char('u') if mods == Mods::CONTROL => {
-                area.delete_line_by_head();
-            }
-            Char('k') if mods == Mods::CONTROL => {
-                area.delete_line_by_end();
-            }
-            // TODO c-w kill WORD back
-            // TODO c-a-d -- kill WORD
-            KeyCode::Backspace if mods == Mods::ALT => {
-                area.delete_word();
-            }
-            Char('d') if mods == Mods::ALT => {
-                area.delete_next_word();
-            }
-            Char('h') if mods == Mods::CONTROL => {
-                area.delete_char();
-            }
-            Char('d') if mods == Mods::CONTROL => {
-                area.delete_next_char();
-            }
-            _ => _ = area.input_without_shortcuts(input),
-        }
+        textarea::handle(&mut self.user_input.0, input);
         self.update_input_border();
         Ok(())
     }

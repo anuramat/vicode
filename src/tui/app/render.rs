@@ -2,6 +2,7 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 use ratatui::text::Line;
+use ratatui::widgets::Widget;
 
 use crate::tui::app::App;
 use crate::tui::tab::TabState;
@@ -21,24 +22,32 @@ impl<'a> App<'a> {
     ) -> Result<()> {
         let selected = self.selected_tab_idx();
         term.draw(|frame| {
-            // statusline vs the rest
-            let outer = Layout::default()
+            let [body_area, line_area] = *Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(vec![Constraint::Min(0), Constraint::Length(1)])
-                .split(frame.area());
+                .split(frame.area())
+            else {
+                unreachable!();
+            };
 
-            // tablist vs tab content
-            let inner = Layout::default()
+            let [tablist_area, tab_area] = *Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(CONSTRAINTS)
-                .split(outer[0]);
-            frame.render_stateful_widget(&self.tablist.widget, inner[0], &mut self.tablist.state);
+                .split(body_area)
+            else {
+                unreachable!();
+            };
+            frame.render_stateful_widget(
+                &self.tablist.widget,
+                tablist_area,
+                &mut self.tablist.state,
+            );
 
             let mut tab_info = None;
             if let Some(tabnum) = selected
                 && let Some((_, tab)) = self.tabs.get_index_mut(tabnum)
             {
-                tab.render(inner[1], frame.buffer_mut(), self.ctx);
+                tab.render(tab_area, frame.buffer_mut(), self.ctx);
                 tab_info = Some(TabInfo {
                     name: tab.aid.to_string(),
                     state: tab.state.clone(),
@@ -49,8 +58,26 @@ impl<'a> App<'a> {
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
-            let line = self.status_line(tab_info, outer[1].width);
-            frame.render_widget(&line, outer[1]);
+            if let Some(cmdline) = self.cmdline.as_mut() {
+                let n_lines = cmdline.lines().len() as u16;
+                let line_area = Rect {
+                    y: line_area.y + 1 - n_lines,
+                    height: n_lines,
+                    ..line_area
+                };
+                let [char_area, input_area] = *Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints(vec![Constraint::Length(1), Constraint::Min(0)])
+                    .split(line_area)
+                else {
+                    unreachable!()
+                };
+                frame.render_widget(Line::raw(":"), char_area);
+                cmdline.render(input_area, frame.buffer_mut());
+            } else {
+                let line = self.status_line(tab_info, line_area.width);
+                frame.render_widget(&line, line_area);
+            }
         })?;
         Ok(())
     }
@@ -77,7 +104,7 @@ impl<'a> App<'a> {
             tab.instruction_tokens as f64 / 1000.0,
             tab.context_tokens as f64 / 1000.0
         );
-        // TODO prettier tab status presentation
+        // TODO prettier tab status presentation using display macro from serde_plain
         let assistant = format!("{} | {:?} | {}", tokens, tab.state, tab.assistant);
         if assistant.len() + 3 < remaining {
             let spacing: usize = remaining - assistant.len();

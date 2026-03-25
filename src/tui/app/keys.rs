@@ -1,3 +1,4 @@
+// TODO split this file
 use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyEvent;
@@ -9,6 +10,7 @@ use crate::tui::app::NotificationKind;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::tab::Tab;
+use crate::tui::textarea;
 
 fn show_hide(hidden: bool) -> &'static str {
     if hidden { "hide" } else { "show" }
@@ -42,8 +44,14 @@ impl<'a> App<'a> {
             // apparently windows sends key release events too; not that I care but just in case:
             return Ok(());
         }
-        let insert_mode = self.selected_tab().is_ok_and(|tab| tab.insert_mode);
-        if insert_mode {
+        // TODO add failsafe, so that there's always a way to exit the app even if the keymap is messed up (e.g. spam ctrl-c to quit)
+        if let Some(cmdline) = self.cmdline.as_mut() {
+            if let Some(command) = CONFIG.keymap.cmdline(event) {
+                command.execute(self).await?;
+            } else {
+                textarea::handle(cmdline, event);
+            }
+        } else if self.selected_tab().is_ok_and(|tab| tab.insert_mode) {
             if let Some(command) = CONFIG.keymap.insert(event) {
                 command.execute(self).await?;
             } else {
@@ -54,6 +62,8 @@ impl<'a> App<'a> {
         }
         Ok(())
     }
+
+    // TODO maybe show the entire rendercontext in the notification, not just the individual flags?
 
     fn toggle_tools(&mut self) {
         self.ctx.hide_tools = !self.ctx.hide_tools;
@@ -78,6 +88,41 @@ impl<'a> App<'a> {
             format!("developer msg: {}", show_hide(self.ctx.hide_developer)),
         );
     }
+
+    async fn submit(&mut self) -> Result<()> {
+        if self.cmdline.is_some() {
+            self.submit_cmdline().await?
+        } else {
+            self.selected_tab_mut()?.submit().await?
+        }
+        Ok(())
+    }
+
+    fn exit_input(&mut self) -> Result<()> {
+        if self.cmdline.is_some() {
+            self.cmdline = None
+        } else {
+            self.selected_tab_mut()?.insert_mode(false)
+        }
+        Ok(())
+    }
+
+    async fn submit_cmdline(&mut self) -> Result<()> {
+        let Some(cmdline) = self.cmdline.take() else {
+            return Ok(());
+        };
+        let text = cmdline.lines()[0].trim().to_string();
+        if text.is_empty() {
+            return Ok(());
+        }
+        // XXX
+        // TODO can we avoid this somehow? recursive call requires pin
+        Box::pin(text.parse::<Command>()?.execute(self)).await
+    }
+
+    fn enter_cmdline(&mut self) {
+        self.cmdline = Some(textarea::new());
+    }
 }
 
 // TODO move to an app method?
@@ -87,34 +132,35 @@ impl Command {
         app: &mut App<'_>,
     ) -> Result<()> {
         match self.name {
-            CommandName::AppQuit => app.should_exit = true,
-            CommandName::ToggleTools => app.toggle_tools(),
-            CommandName::ToggleReasoning => app.toggle_reasoning(),
-            CommandName::ToggleDeveloper => app.toggle_developer(),
-            CommandName::TabNext => app.next_tab(),
-            CommandName::TabPrev => app.prev_tab(),
-            CommandName::TabDelete => app.delete_tab().await?,
-            CommandName::TabDuplicate => app.duplicate_tab().await?,
-            CommandName::TabNew => app.new_tab().await?,
-            CommandName::Submit => app.selected_tab_mut()?.submit().await?,
-            CommandName::Retry => app.selected_tab_mut()?.retry().await?,
-            CommandName::Abort => app.selected_tab_mut()?.abort().await?,
-            CommandName::EnterInsert => app.selected_tab_mut()?.insert_mode(true),
-            CommandName::ExitInsert => app.selected_tab_mut()?.insert_mode(false),
             CommandName::AssistantNext => app.selected_tab_mut()?.next_assistant().await?,
-            CommandName::ScrollLineUp => app.selected_tab_mut()?.scroll_line_up(),
-            CommandName::ScrollLineDown => app.selected_tab_mut()?.scroll_line_down(),
-            CommandName::ScrollHalfPageUp => app.selected_tab_mut()?.scroll_half_page_up(),
-            CommandName::ScrollHalfPageDown => app.selected_tab_mut()?.scroll_half_page_down(),
-            CommandName::ScrollPageUp => app.selected_tab_mut()?.scroll_page_up(),
-            CommandName::ScrollPageDown => app.selected_tab_mut()?.scroll_page_down(),
-            CommandName::ScrollPrevElement => app.selected_tab_mut()?.scroll_prev_element(),
-            CommandName::ScrollNextElement => app.selected_tab_mut()?.scroll_next_element(),
-            CommandName::ScrollTop => app.selected_tab_mut()?.scroll_top(),
+            CommandName::CmdlineEnter => app.enter_cmdline(),
+            CommandName::InputExit => app.exit_input()?,
+            CommandName::InputSubmit => app.submit().await?,
+            CommandName::InsertEnter => app.selected_tab_mut()?.insert_mode(true),
+            CommandName::Quit => app.should_exit = true,
             CommandName::ScrollBottom => app.selected_tab_mut()?.scroll_bottom(),
+            CommandName::ScrollHalfPageDown => app.selected_tab_mut()?.scroll_half_page_down(),
+            CommandName::ScrollHalfPageUp => app.selected_tab_mut()?.scroll_half_page_up(),
+            CommandName::ScrollLineDown => app.selected_tab_mut()?.scroll_line_down(),
+            CommandName::ScrollLineUp => app.selected_tab_mut()?.scroll_line_up(),
+            CommandName::ScrollNextElement => app.selected_tab_mut()?.scroll_next_element(),
+            CommandName::ScrollPageDown => app.selected_tab_mut()?.scroll_page_down(),
+            CommandName::ScrollPageUp => app.selected_tab_mut()?.scroll_page_up(),
+            CommandName::ScrollPrevElement => app.selected_tab_mut()?.scroll_prev_element(),
+            CommandName::ScrollTop => app.selected_tab_mut()?.scroll_top(),
             CommandName::SetMultiplier => app
                 .selected_tab_mut()?
                 .set_multiplier(self.args.as_deref())?,
+            CommandName::TabDelete => app.delete_tab().await?,
+            CommandName::TabDuplicate => app.duplicate_tab().await?,
+            CommandName::TabNew => app.new_tab().await?,
+            CommandName::TabNext => app.next_tab(),
+            CommandName::TabPrev => app.prev_tab(),
+            CommandName::ToggleDeveloper => app.toggle_developer(),
+            CommandName::ToggleReasoning => app.toggle_reasoning(),
+            CommandName::ToggleTools => app.toggle_tools(),
+            CommandName::TurnAbort => app.selected_tab_mut()?.abort().await?,
+            CommandName::TurnRetry => app.selected_tab_mut()?.retry().await?,
         }
         Ok(())
     }

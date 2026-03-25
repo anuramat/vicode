@@ -28,6 +28,7 @@ use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::textarea;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
@@ -250,9 +251,7 @@ impl<'a> UserInput<'a> {
 
 impl Default for UserInput<'_> {
     fn default() -> Self {
-        let mut text_area = TextArea::default();
-        text_area.set_cursor_line_style(Default::default());
-        Self(text_area)
+        Self(textarea::new())
     }
 }
 

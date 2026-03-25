@@ -17,11 +17,14 @@ use tokio::sync::mpsc::channel;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
 use tokio::time::Instant;
+use tui_textarea::TextArea;
 
 use crate::agent::AgentEvent;
 use crate::agent::handle::ParentMessage;
 use crate::agent::id::AgentId;
+use crate::tui::command::Command;
 use crate::tui::tab::Tab;
+use crate::tui::textarea;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;
 
@@ -59,6 +62,7 @@ pub struct App<'a> {
 
     /// project name shown in status line
     pub project_name: String,
+    pub cmdline: Option<TextArea<'a>>,
     pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
 }
@@ -69,6 +73,7 @@ pub struct AppState {
 }
 
 const CHANNEL_CAPACITY: usize = 100;
+// TODO make configurable
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl<'a> App<'a> {
@@ -91,6 +96,7 @@ impl<'a> App<'a> {
 
         Ok(Self {
             project_name,
+            cmdline: None,
             ctx: Default::default(),
             dirty: true,
             tx,
