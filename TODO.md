@@ -20,7 +20,6 @@
   - would be cool if we could mark specific messages for compaction
   - autocompact
 - skills
-- merge user config into default config, and define root defaults there explicitly
 - lua scripting/configs with mlua
 - yml configs with serde_yml
 
@@ -75,6 +74,7 @@
 - aggressively spawn agents with inherit=true, should be almost always a good idea
 - cli
   - `vc -h/--help`
+  - `vc config show` -- show effective config
   - project commands, `-a/--all` -- apply to all projects
     - `vc nuke mounts` -- unmount all in this project
     - `vc nuke data` -- wipe data and logs for this project
