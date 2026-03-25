@@ -3,10 +3,8 @@
 use ansi_to_tui::IntoText;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::symbols::line::BOTTOM_LEFT;
 use ratatui::text::Line;
 use ratatui::text::Text;
-use ratatui::text::ToSpan;
 use ratatui::widgets::Block;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;

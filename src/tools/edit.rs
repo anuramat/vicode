@@ -19,7 +19,6 @@ use crate::agent::tool::traits::*;
 use crate::declare_tool;
 use crate::project::PROJECT;
 use crate::tui::widgets::container::element::Element;
-use crate::tui::widgets::container::element::IntoElement;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
 
 // TODO add option to create a new file/replace existing

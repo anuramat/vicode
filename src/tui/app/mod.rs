@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use anyhow::Result;
 pub use handle::AppEvent;
 use indexmap::IndexMap;
-use ratatui::DefaultTerminal;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::mpsc::Receiver;

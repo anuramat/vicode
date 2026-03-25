@@ -2,7 +2,6 @@ use async_openai::types::responses;
 
 use crate::llm::message::ItemTiming;
 use crate::llm::message::ReasoningItem;
-use crate::llm::message::now_ms;
 
 impl From<responses::ReasoningItem> for ReasoningItem {
     fn from(item: responses::ReasoningItem) -> Self {

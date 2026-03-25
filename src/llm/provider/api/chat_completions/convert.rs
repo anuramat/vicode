@@ -11,7 +11,6 @@ use crate::agent::tool::registry::ToolSchemas;
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::message::ItemTiming;
 use crate::llm::message::ToolCallItem;
-use crate::llm::message::now_ms;
 
 impl From<ToolSchemas> for Vec<ChatCompletionTools> {
     fn from(schema: ToolSchemas) -> Self {

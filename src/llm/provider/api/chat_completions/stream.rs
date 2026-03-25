@@ -22,7 +22,6 @@ use crate::llm::message::AssistantItem;
 use crate::llm::message::ItemTiming;
 use crate::llm::message::OutputItem;
 use crate::llm::message::ReasoningItem;
-use crate::llm::message::now_ms;
 use crate::llm::provider::api::StreamEvent;
 
 fn output_id(

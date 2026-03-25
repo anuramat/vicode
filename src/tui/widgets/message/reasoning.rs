@@ -1,4 +1,3 @@
-use derive_more::From;
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;

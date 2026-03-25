@@ -14,7 +14,6 @@ mod tools;
 mod tui;
 
 use anyhow::Result;
-use tracing::error;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;

@@ -4,7 +4,6 @@ use serde_json::Value;
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::message::ItemTiming;
 use crate::llm::message::ToolCallItem;
-use crate::llm::message::now_ms;
 
 impl From<&ToolCallItem> for Vec<responses::InputItem> {
     fn from(v: &ToolCallItem) -> Self {

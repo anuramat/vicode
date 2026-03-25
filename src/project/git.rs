@@ -3,7 +3,6 @@ use std::process::Stdio;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use anyhow::ensure;
 use tokio::fs::create_dir_all;
 
 use super::Project;
