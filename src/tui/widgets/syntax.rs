@@ -55,18 +55,19 @@ impl Highlighter {
         })
     }
 
-    pub fn try_highlight(
+    fn try_highlight(
         &self,
         code: &str,
         syntax: &SyntaxReference,
     ) -> Result<Text<'static>> {
         let mut highlighter = HighlightLines::new(syntax, &self.theme);
-
-        // TODO bubble errors immediately
-        Ok(LinesWithEndings::from(code)
-            .filter_map(|line| highlighter.highlight_line(line, &self.set).ok())
-            .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
-            .flatten()
-            .collect())
+        let mut text = Text::default();
+        for line in LinesWithEndings::from(code) {
+            text.extend(
+                as_24_bit_terminal_escaped(&highlighter.highlight_line(line, &self.set)?, false)
+                    .into_text()?,
+            );
+        }
+        Ok(text)
     }
 }
