@@ -35,7 +35,7 @@ use crate::tui::widgets::info::InfoWidget;
 const INPUT_AREA_HEIGHT: u16 = 5;
 const INFO_PANE_WIDTH: u16 = 32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Tab<'a> {
     pub tx: Sender<AppEvent>,
     pub aid: AgentId,

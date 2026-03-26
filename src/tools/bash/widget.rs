@@ -46,14 +46,14 @@ impl From<&BashCall> for Element {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CommandWrapped {
     str: String,
     no_newlines: bool,
     element: Element,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct BashWidget {
     command: Option<CommandWrapped>,
     output: Option<Element>,

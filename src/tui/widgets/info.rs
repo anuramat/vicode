@@ -10,7 +10,7 @@ use crate::project::PROJECT;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::HeightComputable;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct InfoWidget {
     elements: CompositeElement,
 }

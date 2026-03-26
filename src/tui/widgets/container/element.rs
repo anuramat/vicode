@@ -9,8 +9,7 @@ use crate::tui::widgets::container::empty::EmptyElement;
 
 // TODO rename the trait
 
-clone_trait_object!(HeightComputable);
-pub trait HeightComputable: Debug + DynClone {
+pub trait HeightComputable: Debug {
     fn height(
         &mut self,
         width: u16,
@@ -32,7 +31,7 @@ pub trait HeightComputable: Debug + DynClone {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Element {
     widget: Box<dyn HeightComputable>,
     width: u16,

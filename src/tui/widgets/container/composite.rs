@@ -6,7 +6,7 @@ use ratatui::prelude::*;
 
 use crate::tui::widgets::container::element::*;
 
-#[derive(Debug, Clone, Default, From, Into)]
+#[derive(Debug, Default, From, Into)]
 pub struct CompositeElement(pub Vec<Element>);
 
 // TODO cache the layout

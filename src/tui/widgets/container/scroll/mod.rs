@@ -31,7 +31,7 @@ enum Mode {
     Tail,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct ScrollElements {
     ctx: RenderContext,
     dirty: Vec<bool>,
