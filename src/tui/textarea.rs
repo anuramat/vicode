@@ -8,6 +8,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Stylize;
 use ratatui::style::Style;
+use ratatui::widgets::Clear;
 use ratatui::widgets::List;
 use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
@@ -80,6 +81,7 @@ impl<'a> Input<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
+        Clear.render(area, buf);
         self.textarea.render(area, buf);
 
         let prefix_column = prefix(&self.line()).0;
@@ -98,6 +100,7 @@ impl<'a> Input<'a> {
                 width,
                 height,
             };
+            Clear.render(completion_area, buf);
             StatefulWidget::render(
                 // PERF store list in struct and use render_ref
                 List::new(matches.clone().into_iter().map(|(_, item)| item))
@@ -133,7 +136,15 @@ impl<'a> Input<'a> {
         self.textarea.insert_str(self.completion.prefix.as_str());
     }
 
+    fn init_if_empty(&mut self) {
+        if self.completion.prefix.is_empty() && self.completion.matches.is_empty() {
+            self.completion.matches = self.completion.items.clone();
+            self.completion.state.select(None);
+        }
+    }
+
     pub fn completion_next(&mut self) {
+        self.init_if_empty();
         if self.completion.state.selected().is_none() {
             self.completion.state.select(Some(0));
         } else {
@@ -143,6 +154,7 @@ impl<'a> Input<'a> {
     }
 
     pub fn completion_prev(&mut self) {
+        self.init_if_empty();
         if self.completion.state.selected().is_none() {
             self.completion
                 .state
