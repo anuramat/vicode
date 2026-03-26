@@ -2,24 +2,19 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use ansi_to_tui::IntoText;
 use anyhow::Result;
 use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use serde::Deserialize;
 use serde::Serialize;
 use similar::TextDiff;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
-use syntect::util::as_24_bit_terminal_escaped;
 
 use crate::agent::tool::traits::*;
 use crate::declare_tool;
 use crate::project::PROJECT;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
+use crate::tui::widgets::syntax::HIGHLIGHTER;
 
 // TODO add option to create a new file/replace existing
 
@@ -36,6 +31,8 @@ pub struct EditArguments {
     pub pattern: String,
     #[schemars(description = "String to replace the pattern with.")]
     pub replacement: String,
+
+    pub replace_all: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -105,33 +102,16 @@ impl Function<EditContext, EditMeta, EditResult> for EditArguments {
     }
 }
 
-static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
-    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
-
 impl From<&EditCall> for Element {
     fn from(call: &EditCall) -> Element {
         let text: Option<Text<'_>> = if let Some(meta) = &call.meta {
-            // TODO optimize, parameterize theme, unify with bash widget rendering thing
-            let syntax = SYNTAX_SET.find_syntax_by_token("diff").unwrap();
-            let theme = &THEME_SET.themes["base16-ocean.dark"];
-            let mut highlighter = HighlightLines::new(syntax, theme);
-
-            Some(
-                LinesWithEndings::from(&meta.diff)
-                    .filter_map(|line| highlighter.highlight_line(line, &SYNTAX_SET).ok())
-                    .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
-                    .flatten()
-                    .collect(),
-            )
-        } else if let Some(output) = call.output() {
-            Some(output.into())
+            Some(HIGHLIGHTER.highlight(&meta.diff, &HIGHLIGHTER.diff))
         } else {
-            None
+            call.output().map(|o| o.into())
         };
         ToolCallWidget {
             name: format!("edit: {}", call.arguments.clone().unwrap().filepath),
-            inner: text.map(|t| Paragraph::new(t)),
+            inner: text.map(Paragraph::new),
         }
         .into()
     }

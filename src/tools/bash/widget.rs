@@ -23,10 +23,7 @@ use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::message::toolcall::style;
-
-static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
-    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
+use crate::tui::widgets::syntax::HIGHLIGHTER;
 
 impl From<&BashCall> for Element {
     fn from(value: &BashCall) -> Self {
@@ -262,15 +259,7 @@ fn result_to_element(result: &BashResult) -> (Element, Option<Line<'static>>) {
 }
 
 fn bash_to_text(script: &str) -> Text<'static> {
-    // TODO optimize, parameterize theme
-    let syntax = SYNTAX_SET.find_syntax_by_token("bash").unwrap();
-    let theme = &THEME_SET.themes["base16-ocean.dark"];
-    let mut highlighter = HighlightLines::new(syntax, theme);
-    LinesWithEndings::from(script)
-        .filter_map(|line| highlighter.highlight_line(line, &SYNTAX_SET).ok())
-        .filter_map(|parts| as_24_bit_terminal_escaped(&parts, false).into_text().ok())
-        .flatten()
-        .collect()
+    HIGHLIGHTER.highlight(script, &HIGHLIGHTER.bash)
 }
 
 fn bash_to_element(script: &str) -> Element {
