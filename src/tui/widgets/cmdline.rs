@@ -1,8 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
-use ratatui::widgets::StatefulWidget;
-use ratatui::widgets::Widget;
+use ratatui::widgets::Clear;
 use strum::IntoEnumIterator;
 
 use crate::tui::command::CommandName;
@@ -33,13 +31,13 @@ impl<'a> Cmdline<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let char_area = Rect { width: 1, ..area };
         let textarea_area = Rect {
-            x: area.x.saturating_add(char_area.width),
-            width: area.width.saturating_sub(char_area.width),
+            x: area.x.saturating_add(1),
+            width: area.width.saturating_sub(1),
             ..area
         };
+        buf.set_string(area.x, area.y, ":", ratatui::style::Style::default());
+        // WARN might need a Clear render?
         self.input.render(textarea_area, buf);
-        Line::raw(":").render(char_area, buf);
     }
 }
