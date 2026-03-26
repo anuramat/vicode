@@ -10,6 +10,8 @@ use serde::Serialize;
 use serde_plain::derive_deserialize_from_fromstr;
 use strum::EnumIter;
 
+// TODO expose usage in completion menu using https://docs.rs/strum/latest/strum/derive.EnumMessage.html
+
 serde_plain::derive_display_from_serialize!(CommandName);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +46,8 @@ pub enum CommandName {
     ToggleTools,
     TurnAbort,
     TurnRetry,
+    /// dummy command to unmap keys
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,26 +156,53 @@ pub struct Keymap {
     pub insert: IndexMap<KeyChord, Command>,
 }
 
+pub enum Mode {
+    Normal,
+    Insert,
+    Cmdline,
+}
+
 impl Keymap {
+    pub fn get(
+        &self,
+        mode: Mode,
+        event: KeyEvent,
+    ) -> Option<Command> {
+        match mode {
+            Mode::Cmdline => &self.cmdline,
+            Mode::Normal => &self.normal,
+            Mode::Insert => &self.insert,
+        }
+        .get(&KeyChord::from(event))
+        .and_then(|c| {
+            if c.name == CommandName::None {
+                None
+            } else {
+                Some(c)
+            }
+        })
+        .cloned()
+    }
+
     pub fn cmdline(
         &self,
         event: KeyEvent,
     ) -> Option<Command> {
-        self.cmdline.get(&KeyChord::from(event)).cloned()
+        self.get(Mode::Cmdline, event)
     }
 
     pub fn normal(
         &self,
         event: KeyEvent,
     ) -> Option<Command> {
-        self.normal.get(&KeyChord::from(event)).cloned()
+        self.get(Mode::Normal, event)
     }
 
     pub fn insert(
         &self,
         event: KeyEvent,
     ) -> Option<Command> {
-        self.insert.get(&KeyChord::from(event)).cloned()
+        self.get(Mode::Insert, event)
     }
 }
 

@@ -107,7 +107,8 @@ impl<'a> App<'a> {
     }
 
     async fn submit_cmdline(&mut self) -> Result<()> {
-        let text = self.cmdline.input.textarea.lines().join("\n");
+        let area = self.cmdline.input.take_area();
+        let text = area.lines().join("\n");
         let text = text.trim();
         if text.is_empty() {
             return Ok(());
@@ -160,6 +161,7 @@ impl Command {
             CommandName::ToggleTools => app.toggle_tools(),
             CommandName::TurnAbort => app.selected_tab_mut()?.abort().await?,
             CommandName::TurnRetry => app.selected_tab_mut()?.retry().await?,
+            CommandName::None => {}
         }
         Ok(())
     }

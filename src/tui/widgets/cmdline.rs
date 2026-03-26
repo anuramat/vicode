@@ -1,5 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::prelude::*;
 use ratatui::widgets::Clear;
 use strum::IntoEnumIterator;
 
@@ -19,9 +20,9 @@ pub struct Cmdline<'a> {
 
 impl Default for Cmdline<'_> {
     fn default() -> Self {
-        Self {
-            input: Input::new("", COMMANDS.clone(), MAX_COMPLETION_HEIGHT),
-        }
+        let mut input = Input::new("", COMMANDS.clone(), MAX_COMPLETION_HEIGHT);
+        input.clear_on_unfocus = true;
+        Self { input }
     }
 }
 
@@ -31,13 +32,28 @@ impl<'a> Cmdline<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let textarea_area = Rect {
-            x: area.x.saturating_add(1),
-            width: area.width.saturating_sub(1),
+        let height = self.input.textarea.lines().len() as u16;
+        let delta = height.saturating_sub(area.height);
+        let area = Rect {
+            y: area.y.saturating_sub(delta),
+            height: area.height + delta,
             ..area
         };
-        buf.set_string(area.x, area.y, ":", ratatui::style::Style::default());
-        // WARN might need a Clear render?
-        self.input.render(textarea_area, buf);
+        Clear.render(area, buf);
+        buf.set_string(
+            area.x,
+            area.y,
+            ":",
+            ratatui::style::Style::default().dark_gray(),
+        );
+        self.input.render(
+            Rect {
+                x: area.x + 1,
+                y: area.y,
+                width: area.width.saturating_sub(1),
+                height: area.height,
+            },
+            buf,
+        );
     }
 }

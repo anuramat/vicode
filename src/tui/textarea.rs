@@ -1,3 +1,5 @@
+use std::mem;
+
 // TODO rename file
 // TODO rename command stuff to generic
 use crossterm::event::KeyCode;
@@ -29,6 +31,7 @@ pub struct Completion<'a> {
 #[derive(Debug, Clone)]
 pub struct Input<'a> {
     pub focus: bool,
+    pub clear_on_unfocus: bool,
     pub textarea: TextArea<'a>,
     pub completion: Completion<'a>,
 }
@@ -39,7 +42,20 @@ fn prefix(text: &str) -> (usize, &str) {
         .unwrap_or((0, text))
 }
 
+fn new_area() -> TextArea<'static> {
+    let mut area = TextArea::default();
+    area.set_cursor_line_style(Default::default());
+    area
+}
+
 impl<'a> Input<'a> {
+    pub fn take_area(&mut self) -> TextArea<'a> {
+        let mut empty = new_area();
+        mem::swap(&mut self.textarea, &mut empty);
+        self.focus = false;
+        empty
+    }
+
     pub fn focus(
         &mut self,
         value: bool,
@@ -48,6 +64,9 @@ impl<'a> Input<'a> {
         if !value {
             self.completion.state.select(None);
             self.completion.matches.clear();
+            if self.clear_on_unfocus {
+                self.textarea = new_area();
+            }
         }
     }
 
@@ -81,7 +100,6 @@ impl<'a> Input<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        Clear.render(area, buf);
         self.textarea.render(area, buf);
 
         let prefix_column = prefix(&self.line()).0;
@@ -173,6 +191,7 @@ impl<'a> Input<'a> {
         let mut area = TextArea::new(contents.split('\n').map(String::from).collect());
         area.set_cursor_line_style(Default::default());
         Self {
+            clear_on_unfocus: false,
             focus: false,
             textarea: area,
             completion: Completion {
