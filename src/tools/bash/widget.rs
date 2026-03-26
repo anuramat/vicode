@@ -1,6 +1,3 @@
-/// WARN vibecode-quality handcode
-/// TODO unfuck
-use ansi_to_tui::IntoText;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -11,11 +8,6 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use ratatui::widgets::block::Title;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
-use syntect::util::as_24_bit_terminal_escaped;
 
 use super::*;
 use crate::tui::widgets::container::composite::CompositeElement;

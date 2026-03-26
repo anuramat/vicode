@@ -1,16 +1,6 @@
-use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Direction;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
-use ratatui::prelude::Stylize;
-use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::Clear;
-use ratatui::widgets::List;
-use ratatui::widgets::ListItem;
-use ratatui::widgets::ListState;
 use ratatui::widgets::StatefulWidget;
 use ratatui::widgets::Widget;
 use strum::IntoEnumIterator;

@@ -19,7 +19,6 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::Sender;
-use tui_textarea::TextArea;
 
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
@@ -28,7 +27,6 @@ use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
-use crate::tui::textarea;
 use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
