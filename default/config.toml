@@ -14,6 +14,9 @@ clear_keymap = false
 [keymap.cmdline]
 "enter" = "input_submit"
 "esc" = "input_exit"
+"C-n" = "completion_next"
+"C-p" = "completion_prev"
+"C-e" = "completion_cancel"
 
 [keymap.normal]
 ":" = "cmdline_enter"

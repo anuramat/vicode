@@ -1,3 +1,4 @@
+// TODO refactor using Input
 use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyEvent;
@@ -13,7 +14,6 @@ use crate::tui::app::handle::AppEvent;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
-use crate::tui::textarea;
 
 fn block() -> Block<'static> {
     Block::new().borders(Borders::TOP).padding(Padding {
@@ -44,7 +44,7 @@ impl<'a> Tab<'a> {
 
     pub fn update_input_border(&mut self) {
         let block = if self.insert_mode { thick() } else { thin() };
-        let text = self.user_input.0.lines().join("\n");
+        let text = self.user_input.0.textarea.lines().join("\n");
         let tokens = count_text_tokens(&text);
 
         let title = if self.multiplier > 1 {
@@ -53,12 +53,19 @@ impl<'a> Tab<'a> {
             format!(" {} T ", tokens)
         };
 
-        self.user_input.0.set_block(block.title(title));
+        self.user_input.0.textarea.set_block(block.title(title));
     }
 
     pub async fn submit(&mut self) -> Result<()> {
         // read user input
-        let text = self.user_input.0.lines().join("\n").trim().to_string();
+        let text = self
+            .user_input
+            .0
+            .textarea
+            .lines()
+            .join("\n")
+            .trim()
+            .to_string();
 
         // clear input area and exit insert mode
         self.user_input = Default::default();
@@ -127,7 +134,7 @@ impl<'a> Tab<'a> {
         &mut self,
         input: KeyEvent,
     ) -> Result<()> {
-        textarea::handle(&mut self.user_input.0, input);
+        self.user_input.0.handle(input);
         self.update_input_border();
         Ok(())
     }

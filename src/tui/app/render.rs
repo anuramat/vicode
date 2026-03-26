@@ -2,7 +2,6 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 use ratatui::text::Line;
-use ratatui::widgets::Widget;
 
 use crate::tui::app::App;
 use crate::tui::tab::TabState;
@@ -58,22 +57,8 @@ impl<'a> App<'a> {
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
-            if let Some(cmdline) = self.cmdline.as_mut() {
-                let n_lines = cmdline.lines().len() as u16;
-                let line_area = Rect {
-                    y: line_area.y.saturating_sub(n_lines) + 1,
-                    height: n_lines,
-                    ..line_area
-                };
-                let [char_area, input_area] = *Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints(vec![Constraint::Length(1), Constraint::Min(0)])
-                    .split(line_area)
-                else {
-                    unreachable!()
-                };
-                frame.render_widget(Line::raw(":"), char_area);
-                cmdline.render(input_area, frame.buffer_mut());
+            if self.cmdline.input.focus {
+                self.cmdline.render(line_area, frame.buffer_mut());
             } else {
                 let line = self.status_line(tab_info, line_area.width);
                 frame.render_widget(&line, line_area);

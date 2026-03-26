@@ -1,80 +1,262 @@
+// TODO rename file
+// TODO rename command stuff to generic
 use crossterm::event::KeyCode;
 use crossterm::event::KeyCode::Char;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers as Mods;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::prelude::Stylize;
+use ratatui::style::Style;
+use ratatui::widgets::List;
+use ratatui::widgets::ListItem;
+use ratatui::widgets::ListState;
+use ratatui::widgets::StatefulWidget;
+use ratatui::widgets::Widget;
 use tui_textarea::CursorMove::*;
 use tui_textarea::TextArea;
 
-pub fn new<'a>() -> TextArea<'a> {
-    from_str("")
+#[derive(Debug, Clone, Default)]
+pub struct Completion<'a> {
+    items: Vec<(String, ListItem<'a>)>, // TODO make this tuple a struct?
+    matches: Vec<(String, ListItem<'a>)>,
+    state: ListState,
+    prefix: String,
+    max_height: u16,
 }
 
-pub fn from_str<'a>(s: &str) -> TextArea<'a> {
-    let mut area = TextArea::new(s.split('\n').map(String::from).collect());
-    area.insert_str(s);
-    area.set_cursor_line_style(Default::default());
-    area
+#[derive(Debug, Clone)]
+pub struct Input<'a> {
+    pub focus: bool,
+    pub textarea: TextArea<'a>,
+    pub completion: Completion<'a>,
 }
 
-pub fn handle(
-    area: &mut TextArea<'_>,
-    input: KeyEvent,
-) {
-    let KeyEvent {
-        code,
-        modifiers: mods,
-        ..
-    } = input;
-    // TODO check if we have all reasonable shortcuts
-    // TODO maybe make these configurable? not really important but...
-    match code {
-        // move:
-        Char('a') if mods == Mods::CONTROL => {
-            area.move_cursor(Head);
-        }
-        Char('e') if mods == Mods::CONTROL => {
-            area.move_cursor(End);
-        }
-        Char('b') if mods == Mods::ALT => {
-            area.move_cursor(WordBack);
-        }
-        Char('f') if mods == Mods::ALT => {
-            area.move_cursor(WordForward);
-        }
-        Char('b') if mods == Mods::CONTROL => {
-            area.move_cursor(Back);
-        }
-        Char('f') if mods == Mods::CONTROL => {
-            area.move_cursor(Forward);
-        }
+fn prefix(text: &str) -> (usize, &str) {
+    text.rsplit_once(' ')
+        .map(|(head, tail)| (head.len() + 1, tail))
+        .unwrap_or((0, text))
+}
 
-        // delete:
-        Char('u') if mods == Mods::CONTROL => {
-            area.delete_line_by_head();
+impl<'a> Input<'a> {
+    pub fn focus(
+        &mut self,
+        value: bool,
+    ) {
+        self.focus = value;
+        if !value {
+            self.completion.state.select(None);
+            self.completion.matches.clear();
         }
-        Char('k') if mods == Mods::CONTROL => {
-            area.delete_line_by_end();
+    }
+
+    // PERF use a bitset or trie or something
+    // TODO fuzzy match
+
+    pub fn narrow(&mut self) {
+        self.completion.matches = self
+            .completion
+            .matches
+            .clone()
+            .into_iter()
+            .filter(|(command, _)| command.starts_with(self.completion.prefix.as_str()))
+            .collect()
+    }
+
+    pub fn line(&self) -> String {
+        let (row, col) = self.textarea.cursor();
+        self.textarea
+            .lines()
+            .get(row)
+            .cloned()
+            .unwrap_or_default()
+            .chars()
+            .take(col)
+            .collect()
+    }
+
+    pub fn render(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        self.textarea.render(area, buf);
+
+        let prefix_column = prefix(&self.line()).0;
+
+        let matches = &mut self.completion.matches;
+        if !matches.is_empty() {
+            let width = matches
+                .iter()
+                .map(|(command, _)| command.len())
+                .max()
+                .unwrap_or(0) as u16;
+            let height = (matches.len() as u16).min(self.completion.max_height);
+            let completion_area = Rect {
+                x: area.x + prefix_column as u16,
+                y: area.y.saturating_sub(height) + self.textarea.cursor().0 as u16, // TEST this
+                width,
+                height,
+            };
+            StatefulWidget::render(
+                // PERF store list in struct and use render_ref
+                List::new(matches.clone().into_iter().map(|(_, item)| item))
+                    .highlight_style(Style::new().reversed()),
+                completion_area,
+                buf,
+                &mut self.completion.state,
+            );
         }
-        Char('w') if mods == Mods::CONTROL => {
-            // TODO 'WORD', not 'word'
-            area.delete_word();
+    }
+
+    fn completion_accept(&mut self) {
+        if let Some((command, _)) = self
+            .completion
+            .matches
+            .get(self.completion.state.selected().unwrap_or(0))
+        {
+            let line: String = self.line();
+            let last_word = prefix(&line).1;
+            for _ in 0..last_word.len() {
+                self.textarea.delete_char();
+            }
+            self.textarea.insert_str(command);
         }
-        Char('d') if mods == Mods::CONTROL | Mods::ALT => {
-            // TODO 'WORD', not 'word'
-            area.delete_word();
+    }
+
+    pub fn completion_cancel(&mut self) {
+        let line: String = self.line();
+        let last_word = prefix(&line).1;
+        for _ in 0..last_word.len() {
+            self.textarea.delete_char();
         }
-        KeyCode::Backspace if mods == Mods::ALT => {
-            area.delete_word();
+        self.textarea.insert_str(self.completion.prefix.as_str());
+    }
+
+    pub fn completion_next(&mut self) {
+        if self.completion.state.selected().is_none() {
+            self.completion.state.select(Some(0));
+        } else {
+            self.completion.state.select_next();
         }
-        Char('d') if mods == Mods::ALT => {
-            area.delete_next_word();
+        self.completion_accept();
+    }
+
+    pub fn completion_prev(&mut self) {
+        if self.completion.state.selected().is_none() {
+            self.completion
+                .state
+                .select(Some(self.completion.items.len().saturating_sub(1)));
+        } else {
+            self.completion.state.select_previous();
         }
-        Char('h') if mods == Mods::CONTROL => {
-            area.delete_char();
+        self.completion_accept();
+    }
+
+    pub fn new(
+        contents: &str,
+        completion_items: Vec<String>,
+        completion_max_height: u16,
+    ) -> Self {
+        let mut area = TextArea::new(contents.split('\n').map(String::from).collect());
+        area.set_cursor_line_style(Default::default());
+        Self {
+            focus: false,
+            textarea: area,
+            completion: Completion {
+                max_height: completion_max_height,
+                matches: Vec::new(),
+                prefix: String::new(),
+                items: completion_items
+                    .into_iter()
+                    .map(|command| (command.clone(), ListItem::new(command)))
+                    .collect(),
+                state: ListState::default(),
+            },
         }
-        Char('d') if mods == Mods::CONTROL => {
-            area.delete_next_char();
+    }
+
+    pub fn handle_completion(&mut self) {
+        let line: String = self.line();
+        let (_, new_prefix) = prefix(&line);
+        if new_prefix.is_empty() {
+            self.completion.matches.clear();
+            self.completion.prefix.clear();
+            self.completion.state.select(None);
+            return;
         }
-        _ => _ = area.input_without_shortcuts(input),
+        if new_prefix == self.completion.prefix {
+            return;
+        }
+        if !new_prefix.starts_with(&self.completion.prefix) || self.completion.prefix.is_empty() {
+            self.completion.matches = self.completion.items.clone();
+        }
+        self.completion.prefix = new_prefix.to_string();
+        self.narrow();
+        self.completion.state.select(None);
+    }
+
+    pub fn handle(
+        &mut self,
+        input: KeyEvent,
+    ) {
+        let KeyEvent {
+            code,
+            modifiers: mods,
+            ..
+        } = input;
+        // TODO check if we have all reasonable shortcuts
+        // TODO maybe make these configurable? not really important but...
+        match code {
+            // move:
+            Char('a') if mods == Mods::CONTROL => {
+                self.textarea.move_cursor(Head);
+            }
+            Char('e') if mods == Mods::CONTROL => {
+                self.textarea.move_cursor(End);
+            }
+            Char('b') if mods == Mods::ALT => {
+                self.textarea.move_cursor(WordBack);
+            }
+            Char('f') if mods == Mods::ALT => {
+                self.textarea.move_cursor(WordForward);
+            }
+            Char('b') if mods == Mods::CONTROL => {
+                self.textarea.move_cursor(Back);
+            }
+            Char('f') if mods == Mods::CONTROL => {
+                self.textarea.move_cursor(Forward);
+            }
+
+            // delete:
+            Char('u') if mods == Mods::CONTROL => {
+                self.textarea.delete_line_by_head();
+            }
+            Char('k') if mods == Mods::CONTROL => {
+                self.textarea.delete_line_by_end();
+            }
+            Char('w') if mods == Mods::CONTROL => {
+                // TODO 'WORD', not 'word'
+                self.textarea.delete_word();
+            }
+            Char('d') if mods == Mods::CONTROL | Mods::ALT => {
+                // TODO 'WORD', not 'word'
+                self.textarea.delete_word();
+            }
+            KeyCode::Backspace if mods == Mods::ALT => {
+                self.textarea.delete_word();
+            }
+            Char('d') if mods == Mods::ALT => {
+                self.textarea.delete_next_word();
+            }
+            Char('h') if mods == Mods::CONTROL => {
+                self.textarea.delete_char();
+            }
+            Char('d') if mods == Mods::CONTROL => {
+                self.textarea.delete_next_char();
+            }
+            _ => _ = self.textarea.input_without_shortcuts(input),
+        }
+        self.handle_completion();
     }
 }

@@ -10,7 +10,6 @@ use crate::tui::app::NotificationKind;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::tab::Tab;
-use crate::tui::textarea;
 
 fn show_hide(hidden: bool) -> &'static str {
     if hidden { "hide" } else { "show" }
@@ -45,11 +44,11 @@ impl<'a> App<'a> {
             return Ok(());
         }
         // TODO add failsafe, so that there's always a way to exit the app even if the keymap is messed up (e.g. spam ctrl-c to quit)
-        if let Some(cmdline) = self.cmdline.as_mut() {
+        if self.cmdline.input.focus {
             if let Some(command) = CONFIG.keymap.cmdline(event) {
                 command.execute(self).await?;
             } else {
-                textarea::handle(cmdline, event);
+                self.cmdline.input.handle(event);
             }
         } else if self.selected_tab().is_ok_and(|tab| tab.insert_mode) {
             if let Some(command) = CONFIG.keymap.insert(event) {
@@ -90,7 +89,7 @@ impl<'a> App<'a> {
     }
 
     async fn submit(&mut self) -> Result<()> {
-        if self.cmdline.is_some() {
+        if self.cmdline.input.focus {
             self.submit_cmdline().await?
         } else {
             self.selected_tab_mut()?.submit().await?
@@ -99,8 +98,8 @@ impl<'a> App<'a> {
     }
 
     fn exit_input(&mut self) -> Result<()> {
-        if self.cmdline.is_some() {
-            self.cmdline = None
+        if self.cmdline.input.focus {
+            self.cmdline.input.focus(false);
         } else {
             self.selected_tab_mut()?.insert_mode(false)
         }
@@ -108,20 +107,17 @@ impl<'a> App<'a> {
     }
 
     async fn submit_cmdline(&mut self) -> Result<()> {
-        let Some(cmdline) = self.cmdline.take() else {
-            return Ok(());
-        };
-        let text = cmdline.lines()[0].trim().to_string();
+        let text = self.cmdline.input.textarea.lines().join("\n");
+        let text = text.trim();
         if text.is_empty() {
             return Ok(());
         }
-        // XXX
         // TODO can we avoid this somehow? recursive call requires pin
         Box::pin(text.parse::<Command>()?.execute(self)).await
     }
 
     fn enter_cmdline(&mut self) {
-        self.cmdline = Some(textarea::new());
+        self.cmdline.input.focus = true;
     }
 }
 
@@ -134,6 +130,9 @@ impl Command {
         match self.name {
             CommandName::AssistantNext => app.selected_tab_mut()?.next_assistant().await?,
             CommandName::CmdlineEnter => app.enter_cmdline(),
+            CommandName::CompletionCancel => app.cmdline.input.completion_cancel(),
+            CommandName::CompletionNext => app.cmdline.input.completion_next(),
+            CommandName::CompletionPrev => app.cmdline.input.completion_prev(),
             CommandName::InputExit => app.exit_input()?,
             CommandName::InputSubmit => app.submit().await?,
             CommandName::InsertEnter => app.selected_tab_mut()?.insert_mode(true),

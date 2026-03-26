@@ -1,3 +1,4 @@
+pub mod cmdline;
 pub mod container;
 pub mod info;
 pub mod logo;

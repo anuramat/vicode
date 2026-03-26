@@ -6,13 +6,19 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use indexmap::IndexMap;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_plain::derive_deserialize_from_fromstr;
+use strum::EnumIter;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+serde_plain::derive_display_from_serialize!(CommandName);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandName {
     AssistantNext,
     CmdlineEnter,
+    CompletionCancel,
+    CompletionNext,
+    CompletionPrev,
     InputExit,
     InputSubmit,
     InsertEnter,
@@ -200,5 +206,10 @@ mod tests {
             err.to_string()
                 .contains("invalid key 'D' in keybinding 'D'")
         );
+    }
+
+    #[test]
+    fn command_names_display_in_config_format() {
+        assert_eq!(CommandName::CompletionNext.to_string(), "completion_next");
     }
 }

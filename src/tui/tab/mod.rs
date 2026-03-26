@@ -29,6 +29,7 @@ use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::textarea;
+use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
@@ -233,11 +234,11 @@ impl<'a> Tab<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct UserInput<'a>(pub TextArea<'a>);
+pub struct UserInput<'a>(pub Input<'a>);
 
 impl<'a> UserInput<'a> {
     pub fn empty(&self) -> bool {
-        let lines = self.0.lines();
+        let lines = self.0.textarea.lines();
         lines.len() == 1 && lines[0].is_empty()
     }
 
@@ -251,7 +252,7 @@ impl<'a> UserInput<'a> {
 
 impl Default for UserInput<'_> {
     fn default() -> Self {
-        Self(textarea::new())
+        Self(Input::new("", vec![], 0))
     }
 }
 
