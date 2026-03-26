@@ -10,6 +10,7 @@ use xdg::BaseDirectories;
 
 use crate::bwrap::BwrapConfig;
 use crate::tui::command::Keymap;
+use crate::tui::widgets::container::element::RenderContext;
 
 const DEFAULT_INSTRUCTIONS: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/AGENTS.md"));
@@ -134,6 +135,9 @@ pub struct Config {
     /// AGENTS.md-type files to read from the project root; if multiple are defined, contents are
     /// concatenated
     pub context_files: Vec<String>,
+
+    /// rendering options; can be toggled at runtime
+    pub render: RenderContext,
 
     pub providers: IndexMap<String, ProviderConfig>,
     pub assistants: IndexMap<String, AssistantConfig>,

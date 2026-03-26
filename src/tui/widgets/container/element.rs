@@ -4,6 +4,8 @@ use dyn_clone::DynClone;
 use dyn_clone::clone_trait_object;
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::tui::widgets::container::empty::EmptyElement;
 
@@ -39,11 +41,12 @@ pub struct Element {
     ctx: RenderContext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
 pub struct RenderContext {
     pub hide_reasoning: bool,
     pub hide_tools: bool,
     pub hide_developer: bool,
+    pub render_markdown: bool,
 }
 
 impl Default for RenderContext {
@@ -52,6 +55,7 @@ impl Default for RenderContext {
             hide_reasoning: true,
             hide_tools: true,
             hide_developer: true,
+            render_markdown: true,
         }
     }
 }

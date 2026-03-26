@@ -21,6 +21,7 @@ use tokio::time::Instant;
 use crate::agent::AgentEvent;
 use crate::agent::handle::ParentMessage;
 use crate::agent::id::AgentId;
+use crate::config::CONFIG;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
@@ -95,7 +96,7 @@ impl<'a> App<'a> {
         Ok(Self {
             project_name,
             cmdline: Cmdline::default(),
-            ctx: Default::default(),
+            ctx: CONFIG.render,
             dirty: true,
             tx,
             rx,

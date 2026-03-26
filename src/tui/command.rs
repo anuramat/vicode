@@ -42,6 +42,7 @@ pub enum CommandName {
     TabNext,
     TabPrev,
     ToggleDeveloper,
+    ToggleMarkdown,
     ToggleReasoning,
     ToggleTools,
     TurnAbort,

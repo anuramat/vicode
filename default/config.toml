@@ -11,6 +11,12 @@ primary_assistant = ["cerebras"] # CHANGE ME: list of assistants for new tabs to
 subagent_assistant = [] # same as primary_assistant, if empty -- inherits from the parent agent
 clear_keymap = false
 
+[render]
+hide_reasoning = true
+hide_tools = true
+hide_developer = true
+render_markdown = true
+
 [keymap.cmdline]
 "enter" = "input_submit"
 "esc" = "input_exit"

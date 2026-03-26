@@ -64,6 +64,14 @@ impl<'a> App<'a> {
 
     // TODO maybe show the entire rendercontext in the notification, not just the individual flags?
 
+    fn toggle_markdown(&mut self) {
+        self.ctx.render_markdown = !self.ctx.render_markdown;
+        self.notify(
+            NotificationKind::Info,
+            format!("markdown: {}", show_hide(self.ctx.render_markdown)),
+        );
+    }
+
     fn toggle_tools(&mut self) {
         self.ctx.hide_tools = !self.ctx.hide_tools;
         self.notify(
@@ -157,6 +165,7 @@ impl Command {
             CommandName::TabNext => app.next_tab(),
             CommandName::TabPrev => app.prev_tab(),
             CommandName::ToggleDeveloper => app.toggle_developer(),
+            CommandName::ToggleMarkdown => app.toggle_markdown(),
             CommandName::ToggleReasoning => app.toggle_reasoning(),
             CommandName::ToggleTools => app.toggle_tools(),
             CommandName::TurnAbort => app.selected_tab_mut()?.abort().await?,
