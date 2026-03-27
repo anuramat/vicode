@@ -6,6 +6,11 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyCode::Char;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers as Mods;
+use nucleo_matcher::Matcher;
+use nucleo_matcher::pattern::Atom;
+use nucleo_matcher::pattern::AtomKind;
+use nucleo_matcher::pattern::CaseMatching;
+use nucleo_matcher::pattern::Normalization;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Stylize;
@@ -22,11 +27,24 @@ use tui_textarea::TextArea;
 
 #[derive(Debug, Clone, Default)]
 pub struct Completion<'a> {
-    items: Vec<(String, ListItem<'a>)>, // TODO make this tuple a struct?
-    pub matches: Vec<(String, ListItem<'a>)>,
+    items: Vec<Item<'a>>,
+    pub matches: Vec<Item<'a>>,
     state: ListState,
     prefix: String,
     max_height: u16,
+    matcher: Matcher,
+}
+
+#[derive(Debug, Clone)]
+pub struct Item<'a> {
+    pub value: String,
+    pub rendered: ListItem<'a>,
+}
+
+impl AsRef<str> for Item<'_> {
+    fn as_ref(&self) -> &str {
+        self.value.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,17 +110,19 @@ impl<'a> Input<'a> {
         }
     }
 
-    // PERF use a bitset or trie or something
+    // PERF use a bitset for matches?
     // TODO fuzzy match
 
     pub fn narrow(&mut self) {
-        self.completion.matches = self
-            .completion
-            .matches
-            .clone()
-            .into_iter()
-            .filter(|(command, _)| command.starts_with(self.completion.prefix.as_str()))
-            .collect()
+        let matches = Atom::new(
+            &self.completion.prefix,
+            CaseMatching::Smart,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+            false,
+        )
+        .match_list(&self.completion.matches, &mut self.completion.matcher);
+        self.completion.matches = matches.into_iter().map(|item| item.0.clone()).collect();
     }
 
     pub fn line(&self) -> String {
@@ -130,7 +150,7 @@ impl<'a> Input<'a> {
         if !matches.is_empty() {
             let width = matches
                 .iter()
-                .map(|(command, _)| command.len())
+                .map(|item| item.value.len())
                 .max()
                 .unwrap_or(0) as u16;
             let height = (matches.len() as u16).min(self.completion.max_height);
@@ -143,7 +163,7 @@ impl<'a> Input<'a> {
             Clear.render(completion_area, buf);
             StatefulWidget::render(
                 // PERF store list in struct and use render_ref
-                List::new(matches.clone().into_iter().map(|(_, item)| item))
+                List::new(matches.clone().into_iter().map(|item| item.rendered))
                     .highlight_style(Style::new().reversed()),
                 completion_area,
                 buf,
@@ -153,7 +173,7 @@ impl<'a> Input<'a> {
     }
 
     fn completion_accept(&mut self) {
-        if let Some((command, _)) = self
+        if let Some(item) = self
             .completion
             .matches
             .get(self.completion.state.selected().unwrap_or(0))
@@ -163,7 +183,7 @@ impl<'a> Input<'a> {
             for _ in 0..last_word.len() {
                 self.textarea.delete_char();
             }
-            self.textarea.insert_str(command);
+            self.textarea.insert_str(item.value.clone());
         }
     }
 
@@ -217,12 +237,16 @@ impl<'a> Input<'a> {
             focus: false,
             textarea: area,
             completion: Completion {
+                matcher: Matcher::default(),
                 max_height: completion_max_height,
                 matches: Vec::new(),
                 prefix: String::new(),
                 items: completion_items
                     .into_iter()
-                    .map(|command| (command.clone(), ListItem::new(command)))
+                    .map(|command| Item {
+                        value: command.clone(),
+                        rendered: ListItem::new(command),
+                    })
                     .collect(),
                 state: ListState::default(),
             },

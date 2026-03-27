@@ -57,6 +57,7 @@ petname = "2.0.2"
 proc-mounts = "0.3.0"
 tiktoken-rs = { version = "0.9.1", features = [] }
 serde_plain = "1.0.2"
+nucleo-matcher = "0.3.1"
 
 [lints.clippy]
 redundant_clone = "warn"

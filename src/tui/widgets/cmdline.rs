@@ -66,8 +66,9 @@ impl<'a> Cmdline<'a> {
 
         if let Ok(command) = text.parse::<Command>() {
             Ok(command)
-        } else if self.input.completion.matches.len() == 1 {
-            let text = self.input.completion.matches[0].0.clone();
+        } else if text.len() != 0 && self.input.completion.matches.len() == 1 {
+            // TODO maybe tighten matches -- now we take the single fuzzy match, maybe we should only take if it's a prefix match
+            let text = self.input.completion.matches[0].value.clone();
             Ok(Command {
                 name: text.parse().expect("match should be valid command"),
                 args: None,
