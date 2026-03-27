@@ -117,7 +117,7 @@ impl FromStr for KeyChord {
     fn from_str(s: &str) -> Result<Self> {
         let s = s.to_ascii_lowercase();
         let mut parts = s.rsplit('-');
-        let code = match parts
+        let mut code = match parts
             .next()
             .ok_or_else(|| anyhow::anyhow!("empty keybinding"))?
         {
@@ -144,6 +144,9 @@ impl FromStr for KeyChord {
             }
             modifiers
         };
+        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+            code = KeyCode::BackTab;
+        }
         Ok(Self { code, modifiers })
     }
 }
