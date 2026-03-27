@@ -25,8 +25,6 @@
 
 # ui
 
-- show context window free %
-
 - undo msg
   - just wipe to last user msg inclusive, and fill input field with the contents
 
