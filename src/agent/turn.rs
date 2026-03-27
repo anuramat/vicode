@@ -7,18 +7,18 @@ use tracing::trace;
 use super::*;
 use crate::llm::delta::*;
 use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryLoc;
+use crate::llm::history::HistoryGeneration;
 use crate::llm::message::AssistantItem;
 use crate::llm::provider::api::StreamEvent;
 
 async fn send_item(
     tx: &Sender<AgentEvent>,
-    loc: HistoryLoc,
+    generation: HistoryGeneration,
     item: AssistantItem,
 ) -> Result<()> {
     Ok(tx
         .send(AgentEvent::HistoryEvent(
-            loc,
+            generation,
             HistoryEvent::ResponseItem(Box::new(item)),
         ))
         .await?)
@@ -26,12 +26,12 @@ async fn send_item(
 
 async fn send_completed(
     tx: &Sender<AgentEvent>,
-    loc: HistoryLoc,
+    generation: HistoryGeneration,
     items: Vec<AssistantItem>,
 ) -> Result<()> {
     Ok(tx
         .send(AgentEvent::HistoryEvent(
-            loc,
+            generation,
             HistoryEvent::ResponseCompleted(items),
         ))
         .await?)
@@ -39,12 +39,12 @@ async fn send_completed(
 
 async fn send_delta(
     tx: &Sender<AgentEvent>,
-    loc: HistoryLoc,
+    generation: HistoryGeneration,
     delta: Delta,
 ) -> Result<()> {
     Ok(tx
         .send(AgentEvent::HistoryEvent(
-            loc,
+            generation,
             HistoryEvent::ResponseDelta(delta),
         ))
         .await?)
@@ -52,12 +52,12 @@ async fn send_delta(
 
 async fn send_started(
     tx: &Sender<AgentEvent>,
-    loc: HistoryLoc,
+    generation: HistoryGeneration,
     started_at_ms: u64,
 ) -> Result<()> {
     Ok(tx
         .send(AgentEvent::HistoryEvent(
-            loc,
+            generation,
             HistoryEvent::ResponseStarted(started_at_ms),
         ))
         .await?)
@@ -70,7 +70,7 @@ impl Agent {
     pub fn start_turn(&mut self) {
         let instructions = self.state.context.instructions.clone();
         let history = self.state.context.history.clone();
-        let loc = history.len();
+        let generation = history.generation();
 
         tracing::debug!("starting turn with messages: {:#?}", history);
         let tx = self.tx.clone();
@@ -80,7 +80,7 @@ impl Agent {
             let res = Agent::turn(tx.clone(), &assistant, tools, instructions, history).await;
             if let Err(e) = res {
                 let event = HistoryEvent::ResponseFailed(e.to_string());
-                tx.send(AgentEvent::HistoryEvent(loc, event))
+                tx.send(AgentEvent::HistoryEvent(generation, event))
                     .await
                     .expect("failed to send turn error event");
             }
@@ -96,30 +96,31 @@ impl Agent {
         instructions: String,
         history: History,
     ) -> Result<()> {
-        let loc = history.len();
+        let generation = history.generation();
         let started = assistant.stream_turn(instructions, history, tools).await?;
-        send_started(&tx, loc, started.started_at_ms).await?;
+        send_started(&tx, generation, started.started_at_ms).await?;
         let mut stream = started.stream;
+        let generation = generation + 1;
 
         while let Some(event) = stream.next().await {
             trace!(event = ?event, "Stream chunk received");
 
             match event? {
-                StreamEvent::Delta(delta) => send_delta(&tx, loc, delta).await?,
+                StreamEvent::Delta(delta) => send_delta(&tx, generation, delta).await?,
                 StreamEvent::Failed(msg) => {
                     let event = HistoryEvent::ResponseFailed(msg);
-                    tx.send(AgentEvent::HistoryEvent(loc, event)).await?;
+                    tx.send(AgentEvent::HistoryEvent(generation, event)).await?;
                     break;
                 }
                 StreamEvent::ItemDone(mut item) => {
                     item.timing_mut().touch();
-                    send_item(&tx, loc, item).await?;
+                    send_item(&tx, generation, item).await?;
                 }
                 StreamEvent::ItemAdded(item) => {
-                    send_item(&tx, loc, item).await?;
+                    send_item(&tx, generation, item).await?;
                 }
                 StreamEvent::Completed(items) => {
-                    send_completed(&tx, loc, items).await?;
+                    send_completed(&tx, generation, items).await?;
                     break;
                 }
                 StreamEvent::Ignore => {}

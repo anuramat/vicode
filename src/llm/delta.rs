@@ -57,10 +57,12 @@ impl AssistantMessage {
 impl History {
     pub fn push_delta(
         &mut self,
-        loc: usize,
         item_delta: Delta,
     ) {
-        if let Some(modified) = if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
+        // XXX kinda ugly
+        if let Some(modified) = if let Some(entry) = self.last()
+            && let Message::Assistant(msg) = &mut entry.message
+        {
             match item_delta.delta {
                 DeltaContent::Output(delta) => msg.push_output(item_delta.id, delta),
                 DeltaContent::Reasoning(delta) => msg.push_reasoning(item_delta.id, delta),
@@ -71,7 +73,7 @@ impl History {
         } else {
             None
         } {
-            self.entry_mut(loc).unwrap().meta.timing.touch_at(modified);
+            self.last().unwrap().meta.timing.touch_at(modified);
         }
     }
 }

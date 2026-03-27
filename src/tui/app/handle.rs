@@ -10,7 +10,7 @@ use crate::agent::handle::ParentEvent as AgentParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
 use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryLoc;
+use crate::llm::history::HistoryGeneration;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
@@ -20,10 +20,12 @@ pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
 
+    // TODO combine these into a single variant?
     UserPrompt(AgentId, UserPrompt),
     RetryTurn(AgentId),
-    AbortTurn(HistoryLoc, AgentId),
+    HistoryEvent(AgentId, HistoryGeneration, HistoryEvent),
     SetAssistant(AgentId, String),
+
     ParentEvent(AgentId, AgentParentEvent),
     TabStatusChanged(AgentId),
 
@@ -52,16 +54,14 @@ impl<'a> App<'a> {
                     tx.send(AgentEvent::Submit(msg)).await?;
                 }
             }
-            // TODO maybe create a new type for agent events that come from outside
             RetryTurn(agent_id) => {
                 if let Some(tx) = self.agents.get(&agent_id) {
                     tx.send(AgentEvent::Retry).await?;
                 }
             }
-            AbortTurn(loc, agent_id) => {
+            HistoryEvent(agent_id, generation, event) => {
                 if let Some(tx) = self.agents.get(&agent_id) {
-                    tx.send(AgentEvent::HistoryEvent(loc, HistoryEvent::ResponseAborted))
-                        .await?;
+                    tx.send(AgentEvent::HistoryEvent(generation, event)).await?;
                 }
             }
             SetAssistant(agent_id, id) => {

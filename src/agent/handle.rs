@@ -12,8 +12,9 @@ use crate::agent::replica;
 use crate::llm::history;
 use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryLoc;
+use crate::llm::history::HistoryGeneration;
 use crate::llm::message::AssistantItem;
+use crate::llm::message::HistoryEntry;
 use crate::llm::message::now_ms;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
@@ -24,7 +25,7 @@ pub enum AgentEvent {
     Submit(UserPrompt),
     Retry,
     SetAssistant(String),
-    HistoryEvent(HistoryLoc, HistoryEvent),
+    HistoryEvent(HistoryGeneration, HistoryEvent),
     /// delete agent, e.g. when deleting a tab
     Delete,
     DuplicateRequest(AgentId),
@@ -38,7 +39,7 @@ pub enum ParentEvent {
     AttachAgent,
     InfoUpdate,
     HistoryReset(History),
-    HistoryUpdate(HistoryLoc, HistoryEvent),
+    HistoryUpdate(HistoryGeneration, HistoryEvent),
     TurnComplete,
     Error(String),
 }
@@ -47,7 +48,7 @@ pub enum ParentEvent {
 pub struct UserPrompt {
     pub text: Option<String>,
     pub multiplier: usize,
-    pub loc: usize,
+    pub generation: HistoryGeneration,
 }
 
 impl Agent {
@@ -82,10 +83,10 @@ impl Agent {
             Submit(UserPrompt {
                 text,
                 multiplier,
-                loc,
+                generation,
             }) => {
                 if let Some(text) = text {
-                    self.handle_history(loc, history::HistoryEvent::UserMessage(text))
+                    self.handle_history(generation, history::HistoryEvent::UserMessage(text))
                         .await?;
                 }
                 if self.tskmgr.pending.is_empty() {
@@ -110,8 +111,8 @@ impl Agent {
             SetAssistant(id) => {
                 self.set_assistant(&id).await?;
             }
-            HistoryEvent(loc, event) => {
-                self.handle_history(loc, event).await?;
+            HistoryEvent(generation, event) => {
+                self.handle_history(generation, event).await?;
             }
             Delete => {
                 PROJECT.delete_agent(&self.id).await?;
@@ -122,28 +123,29 @@ impl Agent {
 
     pub async fn handle_history(
         &mut self,
-        loc: HistoryLoc,
+        generation: HistoryGeneration,
         event: HistoryEvent,
     ) -> Result<()> {
         // TODO verify
         self.parent
             .send((
                 self.id.clone(),
-                ParentEvent::HistoryUpdate(loc, event.clone()),
+                ParentEvent::HistoryUpdate(generation, event.clone()),
             ))
             .await?;
-        self.state.context.history.handle(loc, event.clone());
+        self.state.context.history.handle(generation, event.clone());
         match event {
             HistoryEvent::ResponseStarted(_) => {}
             HistoryEvent::ResponseItem(ref item) => {
                 if let AssistantItem::ToolCall(mut call) = (**item).clone()
                     && call.task.output().is_none()
                 {
+                    let generation = self.state.context.history.generation();
                     call.task.prepare(self)?;
                     self.tskmgr.spawn(self.tx.clone(), async move {
                         call.task.run().await;
                         call.executed_at_ms = Some(now_ms());
-                        TaskResult::ToolCall(loc, call)
+                        TaskResult::ToolCall(generation, call)
                     });
                 }
             }

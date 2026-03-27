@@ -149,6 +149,8 @@ impl Command {
                     .paste(&self.args.unwrap_or_default())
                     .await
             }
+            CommandName::MsgUndo => app.selected_tab_mut()?.undo(1).await?,
+            CommandName::MsgUndoUser => app.selected_tab_mut()?.undo_user().await?,
             CommandName::Quit => app.should_exit = true,
             CommandName::ScrollBottom => app.selected_tab_mut()?.scroll_bottom(),
             CommandName::ScrollHalfPageDown => app.selected_tab_mut()?.scroll_half_page_down(),

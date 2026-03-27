@@ -26,6 +26,8 @@ pub enum CommandName {
     InputSubmit,
     InsertEnter,
     InsertPaste,
+    MsgUndo,
+    MsgUndoUser,
     Quit,
     ScrollBottom,
     ScrollHalfPageDown,

@@ -19,10 +19,12 @@ use crate::tui::widgets::container::element::Element;
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 pub struct History {
+    #[serde(skip)]
+    generation: HistoryGeneration,
     messages: Vec<HistoryEntry>,
 }
 
-pub type HistoryLoc = usize;
+pub type HistoryGeneration = u64;
 
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
@@ -35,6 +37,7 @@ pub enum HistoryEvent {
     ResponseFailed(String),
     UserMessage(String),
     DeveloperMessage(String),
+    Pop(usize),
 }
 
 impl AsRef<[HistoryEntry]> for History {
@@ -55,6 +58,10 @@ impl History {
         Self::default()
     }
 
+    pub fn generation(&self) -> HistoryGeneration {
+        self.generation
+    }
+
     pub fn rebuild_token_cache(&mut self) {
         self.messages.iter_mut().for_each(|entry| {
             entry.meta.token_count = count_message_tokens(&entry.message);
@@ -68,29 +75,13 @@ impl History {
             .sum()
     }
 
-    pub fn get_mut(
-        &mut self,
-        loc: usize,
-    ) -> Option<&mut Message> {
-        self.messages.get_mut(loc).map(|entry| &mut entry.message)
-    }
-
+    // TODO inline this everywhere?
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
-    pub fn get(
-        &mut self,
-        loc: usize,
-    ) -> Option<&Message> {
-        self.messages.get(loc).map(|entry| &entry.message)
-    }
-
-    pub fn entry_mut(
-        &mut self,
-        loc: usize,
-    ) -> Option<&mut HistoryEntry> {
-        self.messages.get_mut(loc)
+    pub fn last(&mut self) -> Option<&mut HistoryEntry> {
+        self.messages.last_mut()
     }
 
     pub fn needs_another_turn(&self) -> bool {
@@ -111,61 +102,69 @@ impl History {
     /// returns change in token count after applying the event
     pub fn handle(
         &mut self,
-        loc: HistoryLoc,
+        generation: HistoryGeneration,
         event: HistoryEvent,
-    ) -> isize {
+    ) -> Result<isize> {
+        anyhow::ensure!(
+            generation == self.generation,
+            "History event generation {} does not match current generation {} in {:?}",
+            generation,
+            self.generation,
+            self.messages
+        );
+        // XXX only bump generation here?
         match event {
-            HistoryEvent::ResponseStarted(started_at_ms) => self.start_response(loc, started_at_ms),
-            HistoryEvent::ResponseDelta(item_delta) => self.push_delta(loc, item_delta),
-            HistoryEvent::ResponseItem(item) => self.push_item(loc, *item),
-            HistoryEvent::ResponseCompleted(items) => self.complete_response(loc, items),
-            HistoryEvent::ResponseAborted => self.abort_response(loc),
-            HistoryEvent::ResponseFailed(msg) => self.fail_response(loc, msg),
+            HistoryEvent::ResponseStarted(started_at_ms) => self.start_response(started_at_ms),
+            HistoryEvent::ResponseDelta(item_delta) => self.push_delta(item_delta),
+            HistoryEvent::ResponseItem(item) => self.push_item(*item),
+            HistoryEvent::ResponseCompleted(items) => self.complete_response(items),
+            HistoryEvent::ResponseAborted => self.abort_response(),
+            HistoryEvent::ResponseFailed(msg) => self.fail_response(msg),
             HistoryEvent::DeveloperMessage(text) => {
-                // TODO unslop this
-                if loc == self.messages.len() {
-                    let msg = Message::Developer(DeveloperMessage { text });
-                    self.messages.push(HistoryEntry {
-                        meta: MessageMeta::default(),
-                        message: msg,
-                    });
-                } else {
-                    panic!(
-                        "DeveloperMessage location {} does not match history length {} in {:?}",
-                        loc,
-                        self.messages.len(),
-                        self.messages,
-                    );
-                }
+                let msg = Message::Developer(DeveloperMessage { text });
+                self.messages.push(HistoryEntry {
+                    meta: MessageMeta::default(),
+                    message: msg,
+                });
+                self.generation += 1;
             }
             HistoryEvent::UserMessage(text) => {
-                if loc == self.messages.len() {
-                    let msg = Message::User(UserMessage { text });
-                    self.messages.push(HistoryEntry {
-                        meta: MessageMeta::default(),
-                        message: msg,
-                    });
-                } else {
-                    panic!(
-                        "UserMessage location {} does not match history length {} in {:?}",
-                        loc,
-                        self.messages.len(),
-                        self.messages,
-                    );
-                }
+                let msg = Message::User(UserMessage { text });
+                self.messages.push(HistoryEntry {
+                    meta: MessageMeta::default(),
+                    message: msg,
+                });
+                self.generation += 1;
+            }
+            HistoryEvent::Pop(n) => {
+                let len = self.messages.len();
+                anyhow::ensure!(
+                    n <= len,
+                    "Cannot pop {} messages from history of length {}",
+                    n,
+                    len
+                );
+                let popped = self.messages.split_off(len - n);
+                let delta = -popped
+                    .iter()
+                    .map(|entry| entry.meta.token_count as isize)
+                    .sum::<isize>();
+                self.generation += 1;
+                return Ok(delta);
             }
         }
-        self.recount_message(loc)
+        Ok(self.recount_last_message())
     }
 
     pub fn push_item(
         &mut self,
-        loc: usize,
         mut item: AssistantItem,
     ) {
         let item_modified = item.timing().last_modified_ms;
         let item_started = item.timing().started_at_ms;
-        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
+        if let Some(Message::Assistant(msg)) =
+            self.messages.last_mut().map(|entry| &mut entry.message)
+        {
             // if item already exists -- replace it but preserve start
             // if item has finish, it means that we constructed it from delta, the new item is
             // just for consistency guarantee, and thus we actually finished the
@@ -177,7 +176,8 @@ impl History {
                 }
             }
             _ = msg.content.insert(item.id(), item);
-        } else if loc == self.messages.len() {
+        } else {
+            // XXX does this ever happen
             let msg = AssistantMessage {
                 finish_reason: AssistantMessageStatus::InProgress,
                 content: indexmap! {item.id() => item},
@@ -189,12 +189,11 @@ impl History {
                 },
                 message: msg.into(),
             });
-        } else {
-            return;
+            self.generation += 1;
         }
         if let Some(modified) = item_modified {
             self.messages
-                .get_mut(loc)
+                .last_mut()
                 .unwrap()
                 .meta
                 .timing
@@ -204,28 +203,28 @@ impl History {
 
     pub fn start_response(
         &mut self,
-        loc: usize,
         started_at_ms: u64,
     ) {
-        if loc == self.messages.len() {
-            self.messages.push(HistoryEntry {
-                meta: MessageMeta {
-                    timing: ItemTiming::with_start(started_at_ms),
-                    ..Default::default()
-                },
-                message: AssistantMessage::default().into(),
-            });
-        }
+        self.messages.push(HistoryEntry {
+            meta: MessageMeta {
+                timing: ItemTiming::with_start(started_at_ms),
+                ..Default::default()
+            },
+            message: AssistantMessage::default().into(),
+        });
+        self.generation += 1;
     }
 
     pub fn complete_response(
         &mut self,
-        loc: usize,
         _items: Vec<AssistantItem>,
     ) {
-        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
+        if let Some(Message::Assistant(msg)) =
+            self.messages.last_mut().map(|entry| &mut entry.message)
+        {
             msg.finish_reason = AssistantMessageStatus::Success;
-        } else if loc == self.messages.len() {
+        } else {
+            // XXX does this ever happen?
             self.messages.push(HistoryEntry {
                 meta: MessageMeta::default(),
                 message: AssistantMessage {
@@ -234,15 +233,14 @@ impl History {
                 }
                 .into(),
             });
+            self.generation += 1;
         }
     }
 
-    pub fn abort_response(
-        &mut self,
-        loc: usize,
-    ) {
-        // XXX do we need to pass loc? why did we even use loc in the first place
-        let Some(Message::Assistant(msg)) = self.get_mut(loc) else {
+    pub fn abort_response(&mut self) {
+        let Some(Message::Assistant(msg)) =
+            self.messages.last_mut().map(|entry| &mut entry.message)
+        else {
             return;
         };
         match msg.finish_reason {
@@ -262,6 +260,7 @@ impl History {
                     }
                     .into(),
                 });
+                self.generation += 1;
             }
             _ => {}
         }
@@ -269,12 +268,13 @@ impl History {
 
     pub fn fail_response(
         &mut self,
-        loc: usize,
         error_text: String, // TODO rename to msg or whatever
     ) {
-        if let Some(Message::Assistant(msg)) = self.get_mut(loc) {
+        if let Some(Message::Assistant(msg)) =
+            self.messages.last_mut().map(|entry| &mut entry.message)
+        {
             msg.finish_reason = AssistantMessageStatus::Error(error_text);
-        } else if loc == self.messages.len() {
+        } else {
             self.messages.push(HistoryEntry {
                 meta: MessageMeta::default(),
                 message: AssistantMessage {
@@ -283,6 +283,7 @@ impl History {
                 }
                 .into(),
             });
+            self.generation += 1;
         }
     }
 
@@ -298,27 +299,9 @@ impl History {
         }
     }
 
-    pub fn without_last_assistant_tool_calls(&self) -> Self {
-        let mut history = self.clone();
-        let should_pop = matches!(
-            history.messages.last(),
-            Some(HistoryEntry {
-                message: Message::Assistant(msg),
-                ..
-            })
-                if msg.content.values().any(|item| item.try_as_tool_call_ref().is_some())
-        );
-        if should_pop {
-            history.messages.pop();
-        }
-        history
-    }
-
-    pub fn recount_message(
-        &mut self,
-        loc: usize,
-    ) -> isize {
-        let Some(entry) = self.messages.get_mut(loc) else {
+    // XXX rename
+    pub fn recount_last_message(&mut self) -> isize {
+        let Some(entry) = self.messages.last_mut() else {
             return 0;
         };
         let new = count_message_tokens(&entry.message);
@@ -410,7 +393,7 @@ mod tests {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(1));
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::with_start(2),
@@ -428,7 +411,7 @@ mod tests {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(1));
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming {
@@ -449,7 +432,7 @@ mod tests {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(1));
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::with_start(2),
@@ -457,7 +440,7 @@ mod tests {
             }))),
         );
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseDelta(Delta {
                 id: "out".into(),
                 delta: crate::llm::delta::DeltaContent::Output("hello".into()),
@@ -518,7 +501,7 @@ mod tests {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(0));
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming::new(),
@@ -526,7 +509,7 @@ mod tests {
             }))),
         );
         history.handle(
-            0,
+            1,
             HistoryEvent::ResponseCompleted(vec![AssistantItem::Output(OutputItem {
                 id: "out".into(),
                 timing: ItemTiming {
@@ -552,7 +535,7 @@ mod tests {
     fn response_aborted_marks_message_aborted() {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(0));
-        history.handle(0, HistoryEvent::ResponseAborted);
+        history.handle(1, HistoryEvent::ResponseAborted);
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -571,6 +554,38 @@ mod tests {
         let mut history = History::new();
         history.handle(0, HistoryEvent::UserMessage("hello".into()));
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
+    }
+
+    #[test]
+    fn generation_changes_only_when_message_count_changes() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::ResponseStarted(1));
+        assert_eq!(history.generation(), 1);
+        history.handle(
+            1,
+            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                id: "out".into(),
+                timing: ItemTiming::with_start(2),
+                content: vec![],
+            }))),
+        );
+        assert_eq!(history.generation(), 1);
+        history.handle(
+            1,
+            HistoryEvent::ResponseDelta(Delta {
+                id: "out".into(),
+                delta: crate::llm::delta::DeltaContent::Output("hello".into()),
+            }),
+        );
+        assert_eq!(history.generation(), 1);
+    }
+
+    #[test]
+    fn stale_generation_is_rejected() {
+        let mut history = History::new();
+        history.handle(0, HistoryEvent::UserMessage("hello".into()));
+        assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
+        assert_eq!(history.len(), 1);
     }
 
     #[test]

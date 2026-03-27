@@ -9,6 +9,8 @@ use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
 use crate::config::CONFIG;
+use crate::llm::history::HistoryEvent;
+use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
@@ -81,7 +83,7 @@ impl<'a> Tab<'a> {
         let prompt = UserPrompt {
             text: Some(text.clone()),
             multiplier: self.multiplier,
-            loc: self.agent_state.context.history.len(),
+            generation: self.agent_state.context.history.generation(),
         };
 
         self.set_state(TabState::Running(AssistantState::Generating))
@@ -107,11 +109,42 @@ impl<'a> Tab<'a> {
 
     pub async fn abort(&mut self) -> Result<()> {
         self.tx
-            .send(AppEvent::AbortTurn(
-                self.agent_state.context.history.len() - 1,
+            .send(AppEvent::HistoryEvent(
                 self.aid.clone(),
+                self.agent_state.context.history.generation(),
+                HistoryEvent::ResponseAborted,
             ))
             .await?;
+        Ok(())
+    }
+
+    pub async fn undo(
+        &mut self,
+        n: usize,
+    ) -> Result<()> {
+        if !self.state.idle() || n > self.agent_state.context.history.len() {
+            return Ok(());
+        }
+        self.tx
+            .send(AppEvent::HistoryEvent(
+                self.aid.clone(),
+                self.agent_state.context.history.generation(),
+                HistoryEvent::Pop(n),
+            ))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn undo_user(&mut self) -> Result<()> {
+        let messages = &self.agent_state.context.history.as_ref();
+        let Some(loc) = messages
+            .iter()
+            .rposition(|entry| matches!(entry.message, Message::User(_)))
+        else {
+            return Ok(());
+        };
+        let n = messages.len() - loc;
+        self.undo(n).await?;
         Ok(())
     }
 
@@ -145,6 +178,7 @@ impl<'a> Tab<'a> {
         &mut self,
         content: &str,
     ) {
+        // TODO instead of putting it in the input area, show "pasted: <contents>" block above input area or something
         self.user_input.0.textarea.insert_str(content);
         self.update_input_border();
     }

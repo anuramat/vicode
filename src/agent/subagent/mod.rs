@@ -50,7 +50,7 @@ pub async fn run_child(
         .send(AgentEvent::Submit(UserPrompt {
             text,
             multiplier: 1,
-            loc: context.history.len(),
+            generation: context.history.generation(),
         }))
         .await?;
 

@@ -16,6 +16,7 @@ use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::StatefulWidget;
 use ratatui::widgets::Widget;
+use tui_textarea::CursorMove;
 use tui_textarea::CursorMove::*;
 use tui_textarea::TextArea;
 
@@ -48,7 +49,28 @@ fn new_area() -> TextArea<'static> {
     area
 }
 
+fn new_area_from_str(contents: String) -> TextArea<'static> {
+    let lines: Vec<String> = contents.split('\n').map(String::from).collect();
+    let mut area = TextArea::new(lines);
+    area.set_cursor_line_style(Default::default());
+    area
+}
+
 impl<'a> Input<'a> {
+    pub fn prepend_text(
+        &mut self,
+        mut text: String,
+    ) {
+        let (row, col) = self.textarea.cursor();
+        let current = self.take_area().lines().join("\n");
+        let row_offset = text.matches('\n').count() as u16; // XXX test this
+        text.push_str(&current);
+        self.textarea = new_area_from_str(text);
+        self.textarea
+            .move_cursor(CursorMove::Jump(row as u16 + row_offset, col as u16));
+        self.textarea.set_cursor_line_style(Default::default());
+    }
+
     pub fn take_area(&mut self) -> TextArea<'a> {
         let mut empty = new_area();
         mem::swap(&mut self.textarea, &mut empty);
