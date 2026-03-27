@@ -36,6 +36,25 @@ fn thin() -> Block<'static> {
 }
 
 impl<'a> Tab<'a> {
+    async fn cycle_assistant(
+        &mut self,
+        step: isize,
+    ) -> Result<()> {
+        if !self.state.idle() {
+            return Ok(());
+        }
+        let pool = ASSISTANT_POOL.get().unwrap();
+        let id = pool
+            .switch_assistant(&self.agent_state.context.assistant_id, step)
+            .with_context(|| "couldn't find the provided assistant id")?;
+        self.agent_state.context.assistant_id = id.clone();
+        self.assistant_config = CONFIG.assistants[&id].clone();
+        self.tx
+            .send(AppEvent::SetAssistant(self.aid.clone(), id))
+            .await?;
+        Ok(())
+    }
+
     // TODO instead have two methods, and clean up if text area is empty on exit
     pub fn insert_mode(
         &mut self,
@@ -149,20 +168,11 @@ impl<'a> Tab<'a> {
     }
 
     pub async fn next_assistant(&mut self) -> Result<()> {
-        if !self.state.idle() {
-            return Ok(());
-        }
-        let id = ASSISTANT_POOL
-            .get()
-            .unwrap()
-            .next_assistant(&self.agent_state.context.assistant_id)
-            .with_context(|| "couldn't find the provided assistant id")?;
-        self.agent_state.context.assistant_id = id.clone();
-        self.assistant_config = CONFIG.assistants[&id].clone();
-        self.tx
-            .send(AppEvent::SetAssistant(self.aid.clone(), id))
-            .await?;
-        Ok(())
+        self.cycle_assistant(1).await
+    }
+
+    pub async fn prev_assistant(&mut self) -> Result<()> {
+        self.cycle_assistant(-1).await
     }
 
     pub async fn key_insert(

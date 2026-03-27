@@ -18,6 +18,7 @@ serde_plain::derive_fromstr_from_deserialize!(CommandName);
 #[serde(rename_all = "snake_case")]
 pub enum CommandName {
     AssistantNext,
+    AssistantPrev,
     CmdlineEnter,
     CompletionCancel,
     CompletionNext,
@@ -45,6 +46,7 @@ pub enum CommandName {
     TabNew,
     TabNext,
     TabPrev,
+    TabSelect,
     ToggleDeveloper,
     ToggleMarkdown,
     ToggleReasoning,
@@ -232,5 +234,23 @@ mod tests {
     #[test]
     fn command_names_display_in_config_format() {
         assert_eq!(CommandName::CompletionNext.to_string(), "completion_next");
+    }
+
+    #[test]
+    fn parses_command_with_optional_arg() {
+        assert_eq!(
+            "tab_select 2".parse::<Command>().unwrap(),
+            Command {
+                name: CommandName::TabSelect,
+                args: Some("2".into()),
+            }
+        );
+        assert_eq!(
+            "assistant_prev".parse::<Command>().unwrap(),
+            Command {
+                name: CommandName::AssistantPrev,
+                args: None,
+            }
+        );
     }
 }

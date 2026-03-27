@@ -43,6 +43,7 @@ render_markdown = true
 "s-u" = "msg_undo_user"
 
 "tab" = "assistant_next"
+"s-tab" = "assistant_prev"
 
 "up" = "scroll_line_up"
 "down" = "scroll_line_down"

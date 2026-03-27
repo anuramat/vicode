@@ -127,6 +127,20 @@ impl<'a> App<'a> {
     fn toggle_tabs(&mut self) {
         self.show_tabs = !self.show_tabs;
     }
+
+    fn select_tab_arg(
+        &mut self,
+        value: Option<&str>,
+    ) -> Result<()> {
+        let idx = value
+            .map(|s| s.parse().with_context(|| format!("invalid tab index: {s}")))
+            .transpose()?;
+        if let Some(idx) = idx {
+            anyhow::ensure!(idx < self.tabs.len(), "tab index out of bounds: {idx}");
+        }
+        self.select_tab(idx);
+        Ok(())
+    }
 }
 
 // TODO move to an app method?
@@ -137,6 +151,7 @@ impl Command {
     ) -> Result<()> {
         match self.name {
             CommandName::AssistantNext => app.selected_tab_mut()?.next_assistant().await?,
+            CommandName::AssistantPrev => app.selected_tab_mut()?.prev_assistant().await?,
             CommandName::CmdlineEnter => app.enter_cmdline(),
             CommandName::CompletionCancel => app.cmdline.input.completion_cancel(),
             CommandName::CompletionNext => app.cmdline.input.completion_next(),
@@ -170,6 +185,7 @@ impl Command {
             CommandName::TabNew => app.new_tab().await?,
             CommandName::TabNext => app.next_tab(),
             CommandName::TabPrev => app.prev_tab(),
+            CommandName::TabSelect => app.select_tab_arg(self.args.as_deref())?,
             CommandName::ToggleDeveloper => app.toggle_developer(),
             CommandName::ToggleMarkdown => app.toggle_markdown(),
             CommandName::ToggleReasoning => app.toggle_reasoning(),

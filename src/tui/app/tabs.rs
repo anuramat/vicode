@@ -188,7 +188,7 @@ impl<'a> App<'a> {
     }
 
     /// select a tab, checking the index
-    fn select_tab(
+    pub fn select_tab(
         &mut self,
         mut idx: Option<usize>,
     ) -> Option<usize> {
@@ -223,4 +223,36 @@ pub async fn translate_agent_events(
         app_tx.send(AppEvent::ParentEvent(aid, event)).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::channel;
+
+    use super::*;
+    use crate::config::CONFIG;
+
+    #[tokio::test]
+    async fn tab_selection_can_be_cleared_and_restored() {
+        let mut app = App::new().await.unwrap();
+        let (tx, _) = channel(1);
+        let assistant_id = CONFIG.assistants.keys().next().unwrap().clone();
+        app.tabs = ["a", "b"]
+            .into_iter()
+            .map(|id| {
+                let aid = AgentId::from(id.to_string());
+                let mut agent_state = AgentState::default();
+                agent_state.context.assistant_id = assistant_id.clone();
+                (aid.clone(), Tab::loading_tab(tx.clone(), aid, agent_state))
+            })
+            .collect();
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+
+        assert_eq!(app.selected_tab_idx(), Some(0));
+        assert_eq!(app.select_tab(None), None);
+        assert_eq!(app.selected_tab_idx(), None);
+        assert_eq!(app.select_tab(Some(1)), Some(1));
+        assert_eq!(app.selected_tab_idx(), Some(1));
+    }
 }

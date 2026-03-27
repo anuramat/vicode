@@ -167,17 +167,16 @@ impl AssistantPool {
         self.primary.next()
     }
 
-    pub fn next_assistant(
+    pub fn switch_assistant(
         &self,
         id: &str,
+        step: isize,
     ) -> Option<String> {
-        let idx = self.assistants.get_index_of(id)?;
-        Some(
-            self.assistants
-                .get_index((idx + 1) % self.assistants.len())?
-                .0
-                .clone(),
-        )
+        let len = self.assistants.len();
+        let step = step % len as isize;
+        let old = (len + self.assistants.get_index_of(id)?) as isize;
+        let new = (old + step) as usize;
+        Some(self.assistants.get_index(new % len)?.0.clone())
     }
 
     pub fn next_subagent(
@@ -355,5 +354,57 @@ mod tests {
             assert_eq!(pool.next_assistant(&pair[0]).unwrap(), pair[1]);
         }
         assert_eq!(pool.next_assistant(ids.last().unwrap()).unwrap(), ids[0]);
+    }
+
+    #[tokio::test]
+    async fn prev_assistant_uses_full_assistant_order() {
+        let config = Config::parse(
+            r#"
+            primary_assistant = ["fast"]
+
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+
+            [assistants.deep]
+            provider = "main"
+            model = "gpt-deep"
+
+            [assistants.alt]
+            provider = "main"
+            model = "gpt-alt"
+
+            [bash]
+            cmd = ["bash", "-c"]
+
+            [bash.bwrap]
+            bin = "bwrap"
+            args = []
+            stages = []
+            "#,
+        )
+        .unwrap();
+        let pool = AssistantPool::from_config(&config).await.unwrap();
+        let ids: Vec<_> = config.assistants.keys().cloned().collect();
+        for pair in ids.windows(2) {
+            assert_eq!(pool.prev_assistant(&pair[1]).unwrap(), pair[0]);
+        }
+        assert_eq!(
+            pool.prev_assistant(&ids[0]).unwrap(),
+            ids.last().unwrap().clone()
+        );
     }
 }
