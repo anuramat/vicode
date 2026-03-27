@@ -23,6 +23,7 @@ impl<'a> App<'a> {
         B: ratatui::backend::Backend,
     {
         let selected = self.selected_tab_idx();
+        tracing::debug!("start app render");
         term.draw(|frame| {
             let [body_area, line_area] = *Layout::default()
                 .direction(Direction::Vertical)
@@ -67,6 +68,7 @@ impl<'a> App<'a> {
                 frame.render_widget(&line, line_area);
             }
         })?;
+        tracing::debug!("end app render");
         Ok(())
     }
 
