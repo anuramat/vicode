@@ -20,40 +20,42 @@ render_markdown = true
 [keymap.cmdline]
 "enter" = "input_submit"
 "esc" = "input_exit"
-"C-n" = "completion_next"
-"C-p" = "completion_prev"
-"C-e" = "completion_cancel"
+"c-n" = "completion_next"
+"c-p" = "completion_prev"
+"c-e" = "completion_cancel"
 
 [keymap.normal]
 ":" = "cmdline_enter"
 
 "j" = "tab_next"
 "k" = "tab_prev"
-"S-d" = "tab_delete"
-"S-y" = "tab_duplicate"
+"s-d" = "tab_delete"
+"s-y" = "tab_duplicate"
 "o" = "tab_new"
 
-"S-q" = "quit"
+"s-q" = "quit"
 
-"S-r" = "turn_retry"
-"S-x" = "turn_abort"
+"s-r" = "turn_retry"
+"s-x" = "turn_abort"
 
 "i" = "insert_enter"
+"u" = "msg_undo"
+"s-u" = "msg_undo_user"
 
 "tab" = "assistant_next"
 
 "up" = "scroll_line_up"
 "down" = "scroll_line_down"
-"C-y" = "scroll_line_up"
-"C-e" = "scroll_line_down"
-"C-u" = "scroll_half_page_up"
-"C-d" = "scroll_half_page_down"
-"C-b" = "scroll_page_up"
-"C-f" = "scroll_page_down"
+"c-y" = "scroll_line_up"
+"c-e" = "scroll_line_down"
+"c-u" = "scroll_half_page_up"
+"c-d" = "scroll_half_page_down"
+"c-b" = "scroll_page_up"
+"c-f" = "scroll_page_down"
 "[" = "scroll_prev_element"
 "]" = "scroll_next_element"
 "g" = "scroll_top"
-"S-g" = "scroll_bottom"
+"s-g" = "scroll_bottom"
 
 "1" = "set_multiplier 1"
 "2" = "set_multiplier 2"
