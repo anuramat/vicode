@@ -143,13 +143,14 @@ impl<'a> Tab<'a> {
         Ok(tab)
     }
 
+    // TODO this is kinda fucked, we should just have a "Loading|Tab" enum
     pub fn loading_tab(
         tx: Sender<AppEvent>,
         aid: AgentId,
         agent_state: AgentState,
     ) -> Self {
         Self {
-            assistant_config: CONFIG.assistants[&agent_state.context.assistant_id].clone(),
+            assistant_config: CONFIG.assistants.get_index(0).unwrap().1.clone(),
             instructions_tokens: 0,
             context_tokens: 0,
             tx,
