@@ -145,6 +145,11 @@ impl Command {
             CommandName::InputExit => app.exit_input()?,
             CommandName::InputSubmit => app.submit().await?,
             CommandName::InsertEnter => app.selected_tab_mut()?.insert_mode(true),
+            CommandName::InsertPaste => {
+                app.selected_tab_mut()?
+                    .paste(&self.args.unwrap_or_default())
+                    .await
+            }
             CommandName::Quit => app.should_exit = true,
             CommandName::ScrollBottom => app.selected_tab_mut()?.scroll_bottom(),
             CommandName::ScrollHalfPageDown => app.selected_tab_mut()?.scroll_half_page_down(),
