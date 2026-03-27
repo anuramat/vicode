@@ -32,8 +32,9 @@ fn init_tracing() -> Result<WorkerGuard> {
 
 #[tokio::main]
 async fn main() {
+    tracing::debug!("starting main");
     let _guard = init_tracing().unwrap();
     let result = App::launch().await;
-    ratatui::restore();
+    App::reset_terminal();
     result.unwrap();
 }

@@ -138,4 +138,12 @@ impl<'a> Tab<'a> {
         self.update_input_border();
         Ok(())
     }
+
+    pub async fn paste(
+        &mut self,
+        content: &str,
+    ) {
+        self.user_input.0.textarea.insert_str(content);
+        self.update_input_border();
+    }
 }

@@ -187,11 +187,6 @@ impl<'a> App<'a> {
         self.select_tab(idx.checked_sub(1));
     }
 
-    /// reset OSC7 to the project root
-    pub fn reset_osc7(&self) {
-        set_osc7(&PROJECT.root);
-    }
-
     /// select a tab, checking the index
     fn select_tab(
         &mut self,
@@ -200,7 +195,7 @@ impl<'a> App<'a> {
         idx = idx.and_then(|i| {
             let n_tabs = self.tabs.len();
             if n_tabs == 0 || i >= n_tabs {
-                self.reset_osc7();
+                set_osc7(&PROJECT.root);
                 None
             } else {
                 if let Some((_, tab)) = self.tabs.get_index(i) {

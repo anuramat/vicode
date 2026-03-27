@@ -1,7 +1,13 @@
 use std::future::pending;
 
 use anyhow::Result;
+use crossterm::event::DisableBracketedPaste;
+use crossterm::event::EnableBracketedPaste;
 use crossterm::event::Event;
+use crossterm::execute;
+use ratatui::DefaultTerminal;
+use ratatui::Terminal;
+use ratatui::backend::Backend;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 
@@ -9,23 +15,47 @@ use super::App;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
 use crate::project::PROJECT;
+use crate::tui::app::NotificationKind;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
 impl<'a> App<'a> {
     pub async fn launch() -> Result<()> {
-        Self::new().await?.run().await
+        let mut app = Self::new().await?;
+        let term = app.setup_terminal()?;
+        app.run(term).await?;
+        Ok(())
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub fn setup_terminal(&mut self) -> Result<DefaultTerminal> {
         let mut term = ratatui::init();
+        self.draw(&mut term)?; // first render
+        tracing::debug!("first render done");
+        self.spawn_crossterm_translator();
+        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        set_osc7(&PROJECT.root);
+        Ok(term)
+    }
 
-        // first render
-        self.draw(&mut term)?;
+    pub fn reset_terminal() {
+        let e = execute!(std::io::stdout(), DisableBracketedPaste);
+        if let Err(err) = e {
+            tracing::error!("failed to disable braketed paste on exit: {}", err);
+        }
+        let cwd = std::env::current_dir().unwrap_or_default();
+        set_osc7(&cwd);
+        ratatui::restore();
+    }
 
-        // translate key events to app events
-        self.spawn_term_translator();
+    pub async fn run<B>(
+        mut self,
+        mut term: Terminal<B>,
+    ) -> Result<()>
+    where
+        B: Backend,
+    {
         // clean up before starting
         self.cleanup().await?;
         // create shared lowerdir
@@ -35,6 +65,7 @@ impl<'a> App<'a> {
         // load tabs
         self.load_tabs().await?;
 
+        tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
         render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -61,7 +92,9 @@ impl<'a> App<'a> {
 
                 // handle events
                 msg = self.rx.recv() => {
-                    self.handle(msg.expect("app event channel closed")).await?;
+                    if let Err(e) = self.handle(msg.expect("app event channel closed")).await {
+                        self.notify(NotificationKind::Error, e.to_string());
+                    };
                     if self.should_exit {
                         PROJECT.save_app_state(&self).await?;
                         self.cleanup().await.expect("failed app clean up");
@@ -77,12 +110,11 @@ impl<'a> App<'a> {
     /// clean up on start / before exit
     async fn cleanup(&self) -> Result<()> {
         // TODO delete unreachable agents, clear stale git worktrees/branches
-        self.reset_osc7();
         PROJECT.cleanup().await?;
         Ok(())
     }
 
-    fn spawn_term_translator(&mut self) {
+    fn spawn_crossterm_translator(&mut self) {
         use tokio_stream::StreamExt;
         let tx = self.tx.clone();
         self.joinset.spawn(async move {
@@ -91,6 +123,7 @@ impl<'a> App<'a> {
                 let e = match event {
                     Event::Key(key) => tx.send(AppEvent::Key(key)),
                     Event::Resize(_, _) => tx.send(AppEvent::Redraw),
+                    Event::Paste(content) => tx.send(AppEvent::Paste(content)),
                     _ => continue,
                 };
                 e.await?;

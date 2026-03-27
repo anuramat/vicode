@@ -18,6 +18,7 @@ use crate::tui::widgets::info::InfoWidget;
 #[derive(Debug)]
 pub enum AppEvent {
     Key(KeyEvent),
+    Paste(String),
 
     UserPrompt(AgentId, UserPrompt),
     RetryTurn(AgentId),
@@ -40,9 +41,10 @@ impl<'a> App<'a> {
         debug!(event = ?event, "Handling app event");
         match event {
             Key(key_event) => {
-                if let Err(err) = self.key(key_event).await {
-                    self.notify(NotificationKind::Error, err.to_string());
-                }
+                self.key(key_event).await?;
+            }
+            Paste(content) => {
+                self.selected_tab_mut()?.paste(&content).await;
                 self.dirty = true;
             }
             UserPrompt(agent_id, msg) => {

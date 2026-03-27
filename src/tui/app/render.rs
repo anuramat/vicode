@@ -15,10 +15,13 @@ const CONSTRAINTS: [Constraint; 2] = [Constraint::Length(TAB_PANE_WIDTH), Constr
 
 impl<'a> App<'a> {
     #[tracing::instrument(skip(self, term))]
-    pub fn draw(
+    pub fn draw<B>(
         &mut self,
-        term: &mut DefaultTerminal,
-    ) -> Result<()> {
+        term: &mut Terminal<B>,
+    ) -> Result<()>
+    where
+        B: ratatui::backend::Backend,
+    {
         let selected = self.selected_tab_idx();
         term.draw(|frame| {
             let [body_area, line_area] = *Layout::default()
