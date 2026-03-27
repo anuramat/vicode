@@ -107,6 +107,7 @@ impl FromStr for KeyChord {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
+        let s = s.to_ascii_lowercase();
         let mut parts = s.rsplit('-');
         let code = match parts
             .next()
@@ -120,19 +121,16 @@ impl FromStr for KeyChord {
             "down" => KeyCode::Down,
             "left" => KeyCode::Left,
             "right" => KeyCode::Right,
-            "" => anyhow::bail!("empty keybinding"),
-            key if key.len() == 1 && !key.chars().any(|c| c.is_ascii_uppercase()) => {
-                KeyCode::Char(key.chars().next().unwrap())
-            }
+            key if key.len() == 1 => KeyCode::Char(key.chars().next().unwrap()),
             key => anyhow::bail!("invalid key '{key}' in keybinding '{s}'"),
         };
         let modifiers = {
             let mut modifiers = KeyModifiers::empty();
             for part in parts {
                 modifiers |= match part {
-                    "C" => KeyModifiers::CONTROL,
-                    "A" => KeyModifiers::ALT,
-                    "S" => KeyModifiers::SHIFT,
+                    "c" => KeyModifiers::CONTROL,
+                    "a" => KeyModifiers::ALT,
+                    "s" => KeyModifiers::SHIFT,
                     _ => anyhow::bail!("unknown modifier '{part}' in keybinding '{s}'"),
                 }
             }
@@ -223,21 +221,6 @@ mod tests {
         let chord = KeyChord::from(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT));
         assert_eq!(chord.code, KeyCode::Char('n'));
         assert_eq!(chord.modifiers, KeyModifiers::SHIFT);
-    }
-
-    #[test]
-    fn rejects_uppercase_key_names() {
-        let err = "Enter".parse::<KeyChord>().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("invalid key 'Enter' in keybinding 'Enter'")
-        );
-
-        let err = "D".parse::<KeyChord>().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("invalid key 'D' in keybinding 'D'")
-        );
     }
 
     #[test]

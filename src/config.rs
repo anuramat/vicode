@@ -402,43 +402,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_uppercase_keys_in_keymap() {
-        let err = Config::parse(
-            r#"
-            primary_assistant = ["fast"]
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-            "Enter" = "input_submit"
-
-            [keymap.insert]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            [bash]
-            cmd = ["bash", "-c"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
-            "#,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("valid key chord"));
-    }
-
-    #[test]
     fn parses_insert_keymap_scope() {
         let config = Config::parse(
             r#"
