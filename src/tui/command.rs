@@ -13,6 +13,7 @@ use strum::EnumIter;
 // TODO expose usage in completion menu using https://docs.rs/strum/latest/strum/derive.EnumMessage.html
 
 serde_plain::derive_display_from_serialize!(CommandName);
+serde_plain::derive_fromstr_from_deserialize!(CommandName);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandName {
@@ -50,6 +51,7 @@ pub enum CommandName {
     TurnAbort,
     TurnRetry,
     /// dummy command to unmap keys
+    #[serde(alias = "")]
     None,
 }
 

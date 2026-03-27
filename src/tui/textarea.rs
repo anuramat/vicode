@@ -22,7 +22,7 @@ use tui_textarea::TextArea;
 #[derive(Debug, Clone, Default)]
 pub struct Completion<'a> {
     items: Vec<(String, ListItem<'a>)>, // TODO make this tuple a struct?
-    matches: Vec<(String, ListItem<'a>)>,
+    pub matches: Vec<(String, ListItem<'a>)>,
     state: ListState,
     prefix: String,
     max_height: u16,

@@ -1,9 +1,11 @@
+use anyhow::Result;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::widgets::Clear;
 use strum::IntoEnumIterator;
 
+use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::textarea::Input;
 
@@ -55,5 +57,23 @@ impl<'a> Cmdline<'a> {
             },
             buf,
         );
+    }
+
+    pub fn take_command(&mut self) -> Result<Command> {
+        let area = self.input.take_area();
+        let text = area.lines().join("\n");
+        let text = text.trim();
+
+        if let Ok(command) = text.parse::<Command>() {
+            Ok(command)
+        } else if self.input.completion.matches.len() == 1 {
+            let text = self.input.completion.matches[0].0.clone();
+            Ok(Command {
+                name: text.parse().expect("match should be valid command"),
+                args: None,
+            })
+        } else {
+            anyhow::bail!("invalid command '{text}'");
+        }
     }
 }

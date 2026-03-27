@@ -115,14 +115,9 @@ impl<'a> App<'a> {
     }
 
     async fn submit_cmdline(&mut self) -> Result<()> {
-        let area = self.cmdline.input.take_area();
-        let text = area.lines().join("\n");
-        let text = text.trim();
-        if text.is_empty() {
-            return Ok(());
-        }
+        let command = self.cmdline.take_command()?;
         // TODO can we avoid this somehow? recursive call requires pin
-        Box::pin(text.parse::<Command>()?.execute(self)).await
+        Box::pin(command.execute(self)).await
     }
 
     fn enter_cmdline(&mut self) {
