@@ -353,7 +353,10 @@ mod tests {
         for pair in ids.windows(2) {
             assert_eq!(pool.switch_assistant(&pair[0], 1).unwrap(), pair[1]);
         }
-        assert_eq!(pool.switch_assistant(ids.last().unwrap(), 1).unwrap(), ids[0]);
+        assert_eq!(
+            pool.switch_assistant(ids.last().unwrap(), 1).unwrap(),
+            ids[0]
+        );
     }
 
     #[tokio::test]

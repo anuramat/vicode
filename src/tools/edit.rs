@@ -1,7 +1,9 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::Result;
 use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
@@ -16,8 +18,6 @@ use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
 use crate::tui::widgets::syntax::HIGHLIGHTER;
 
-// TODO add option to create a new file/replace existing
-
 #[derive(
     Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -27,11 +27,22 @@ pub struct EditArguments {
         description = "Path to the file to edit. Can be absolute or relative to the workdir."
     )]
     pub filepath: String,
-    #[schemars(description = "Exact string in the file to be replaced.")]
+    #[schemars(description = "Sequence of edits to perform.")]
+    pub edits: Vec<Edit>,
+}
+
+#[derive(
+    Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct Edit {
+    #[schemars(
+        description = "Exact string in the file to be replaced; if empty, the replacement will overwrite the entire file, creating it if it doesn't exist."
+    )]
     pub pattern: String,
     #[schemars(description = "String to replace the pattern with.")]
     pub replacement: String,
-
+    #[schemars(description = "Whether to replace all occurrences of the pattern.")]
     pub replace_all: bool,
 }
 
@@ -42,7 +53,7 @@ pub struct EditResult {
 
 declare_tool!(
     name: "edit",
-    description: "Edit a file by replacing a single occurrence of a string.",
+    description: "Edit a file by applying one or more string replacements.",
     call: EditCall,
     arguments: EditArguments,
     context: EditContext,
@@ -88,16 +99,7 @@ impl Function<EditContext, EditMeta, EditResult> for EditArguments {
                 ctx.workdir.join(path)
             }
         };
-
-        let contents = fs::read_to_string(&target_path)?;
-        let pattern = &self.pattern;
-        let replacement = &self.replacement;
-        let new_contents = replace_one(&contents, pattern, replacement)?;
-        // TODO atomic write (write to temp and move)
-        fs::write(&target_path, &new_contents)?;
-        let diff = TextDiff::from_lines(&contents, &new_contents)
-            .unified_diff()
-            .to_string();
+        let diff = edit_file(&target_path, &self.edits)?;
         Ok((EditResult { success: true }, EditMeta { diff }))
     }
 }
@@ -117,29 +119,176 @@ impl From<&EditCall> for Element {
     }
 }
 
-pub fn replace_one(
-    contents: &str,
-    old: &str,
-    new: &str,
+fn edit_file(
+    target_path: &Path,
+    edits: &[Edit],
 ) -> Result<String> {
-    if old.is_empty() {
-        return Err(anyhow::anyhow!("pattern must not be empty"));
+    let (contents, new_contents) = apply_edits(target_path, edits)?;
+    fs::write(target_path, &new_contents)?;
+    Ok(TextDiff::from_lines(&contents, &new_contents)
+        .unified_diff()
+        .to_string())
+}
+
+fn apply_edits(
+    target_path: &Path,
+    edits: &[Edit],
+) -> Result<(String, String)> {
+    let original = read(target_path)?;
+    let mut result = original.clone();
+
+    for (i, edit) in edits.iter().enumerate() {
+        if edit.pattern.is_empty() {
+            result = edit.replacement.clone();
+        } else {
+            result = replace(result, &edit.pattern, &edit.replacement, edit.replace_all)
+                .with_context(|| format!("failed to apply edit {}/{}", i + 1, edits.len()))?;
+        }
     }
 
-    let mut matches = contents.match_indices(old);
-    let start = match matches.next() {
-        Some((start, _)) => start,
-        None => return Err(anyhow::anyhow!("no match found")),
-    };
-    if matches.next().is_some() {
-        return Err(anyhow::anyhow!("multiple matches found"));
+    Ok((original, result))
+}
+
+fn read(path: &Path) -> Result<String> {
+    // TODO show to user if a new file was created?
+    match fs::read_to_string(path) {
+        Ok(contents) => Ok(contents),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(err.into()),
     }
-    let end = start + old.len();
+}
 
-    let mut result = String::with_capacity(contents.len() - old.len() + new.len());
-    result.push_str(&contents[..start]);
-    result.push_str(new);
-    result.push_str(&contents[end..]);
+fn replace(
+    text: String,
+    pattern: &str,
+    replacement: &str,
+    replace_all: bool,
+) -> Result<String> {
+    if !text.contains(pattern) {
+        return Err(anyhow::anyhow!("no match found"));
+    }
+    Ok(if replace_all {
+        text.replace(pattern, replacement)
+    } else {
+        let result = text.replacen(pattern, replacement, 1);
+        if result.contains(pattern) {
+            return Err(anyhow::anyhow!(
+                "multiple matches found when replace_all is false"
+            ));
+        }
+        result
+    })
+}
 
-    Ok(result)
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn edit_arguments_deserialize_new_schema() {
+        let args: EditArguments = serde_json::from_value(json!({
+            "filepath": "foo.rs",
+            "edits": [
+                {"pattern": "a", "replacement": "b", "replace_all": false},
+                {"pattern": "b", "replacement": "c", "replace_all": true}
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(args.filepath, "foo.rs");
+        assert_eq!(args.edits.len(), 2);
+        assert!(args.edits[1].replace_all);
+    }
+
+    #[test]
+    fn replace_all_matches_replaces_every_match() {
+        assert_eq!(
+            replace(String::from("a b a"), "a", "x", true).unwrap(),
+            "x b x"
+        );
+    }
+
+    #[test]
+    fn applies_edits_sequentially() {
+        let dir = temp_dir();
+        let path = dir.join("file.txt");
+        fs::write(&path, "hello world").unwrap();
+
+        edit_file(
+            &path,
+            &[
+                Edit {
+                    pattern: "hello".into(),
+                    replacement: "hi".into(),
+                    replace_all: false,
+                },
+                Edit {
+                    pattern: "hi world".into(),
+                    replacement: "done".into(),
+                    replace_all: false,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "done");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn empty_pattern_overwrites_existing_file() {
+        let dir = temp_dir();
+        let path = dir.join("file.txt");
+        fs::write(&path, "old").unwrap();
+
+        edit_file(
+            &path,
+            &[Edit {
+                pattern: String::new(),
+                replacement: "new".into(),
+                replace_all: false,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn empty_pattern_creates_missing_file() {
+        let dir = temp_dir();
+        let path = dir.join("file.txt");
+
+        edit_file(
+            &path,
+            &[Edit {
+                pattern: String::new(),
+                replacement: "new".into(),
+                replace_all: false,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn temp_dir() -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "vicode-edit-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
 }
