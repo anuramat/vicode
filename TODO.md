@@ -10,16 +10,17 @@
 # core
 
 - '!...' command -- run bash in current tab, and append a developer message equivalent to bash tool output, with equivalent rendering
-- edit tool -- expand to create file, replace file, append, insert at
 - subagents
   - two types
     - parallel -- each owns a workdir; same as "replica" in best-of-n
     - blocking -- one at a time, shares workdir with parent, probably gets git access
 - compact
-  - would be cool if we could mark specific messages for compaction
-  - autocompact
+  - user command
+  - autocompact on `used > threshold * window`
+  - preserve full original history for future reference
 - skills
-- aborts/retries/failures should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
+- retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
+- mcp
 
 # ui
 
