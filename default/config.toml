@@ -27,10 +27,6 @@ render_markdown = true
 [keymap.normal]
 ":" = "cmdline_enter"
 
-"t" = "toggle_tools"
-"r" = "toggle_reasoning"
-"s" = "toggle_developer"
-
 "j" = "tab_next"
 "k" = "tab_prev"
 "S-d" = "tab_delete"
