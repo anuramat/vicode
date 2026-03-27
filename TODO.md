@@ -37,6 +37,8 @@
 
 - streaming tool outputs
 
+- somehow allow binding e.g C-enter to enter a newline
+
 # chores
 
 - commit hook: cargo fmt+fix
