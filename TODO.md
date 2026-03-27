@@ -6,7 +6,6 @@
 - fix agent state persistence
   - use jsonl for storage
   - debounce file writes
-- aborts/retries/failures should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
 
 # core
 
@@ -20,13 +19,9 @@
   - would be cool if we could mark specific messages for compaction
   - autocompact
 - skills
-- lua scripting/configs with mlua
-- yml configs with serde_yml
+- aborts/retries/failures should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
 
 # ui
-
-- undo msg
-  - just wipe to last user msg inclusive, and fill input field with the contents
 
 - float window with past errors (ones from stl notifications)
 - float window with logs
@@ -35,8 +30,6 @@
 
 - streaming tool outputs
 
-- somehow allow binding e.g C-enter to enter a newline
-
 # chores
 
 - commit hook: cargo fmt+fix
@@ -44,11 +37,13 @@
 - grep for TODO etc
 - make sure our prompting makes sense (check for inconsistencies)
 - cleanup logic for stale agents/worktrees/etc
-- make sure tracing::debug! doesn't get into release build
 - refactor: `if let Some(x) = ... { x } else { return }` into `let Some(x) = ...`
 
-# maybe
+# maybe/eventually
 
+- move ALL prompting into separate files with suffix like `.prompt.md`
+- lua scripting/configs with mlua
+- yml configs with serde_yml
 - try reading token usage field in response instead of estimating with tiktoken?
 - show combined elapsed time for multiturn (ie multiple assistant message)
 - show TTFT?
