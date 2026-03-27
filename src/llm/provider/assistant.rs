@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn next_assistant_uses_full_assistant_order() {
+    async fn switch_assistant_steps_forward_through_full_order() {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast"]
@@ -351,13 +351,13 @@ mod tests {
         let pool = AssistantPool::from_config(&config).await.unwrap();
         let ids: Vec<_> = config.assistants.keys().cloned().collect();
         for pair in ids.windows(2) {
-            assert_eq!(pool.next_assistant(&pair[0]).unwrap(), pair[1]);
+            assert_eq!(pool.switch_assistant(&pair[0], 1).unwrap(), pair[1]);
         }
-        assert_eq!(pool.next_assistant(ids.last().unwrap()).unwrap(), ids[0]);
+        assert_eq!(pool.switch_assistant(ids.last().unwrap(), 1).unwrap(), ids[0]);
     }
 
     #[tokio::test]
-    async fn prev_assistant_uses_full_assistant_order() {
+    async fn switch_assistant_steps_backward_through_full_order() {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast"]
@@ -400,10 +400,10 @@ mod tests {
         let pool = AssistantPool::from_config(&config).await.unwrap();
         let ids: Vec<_> = config.assistants.keys().cloned().collect();
         for pair in ids.windows(2) {
-            assert_eq!(pool.prev_assistant(&pair[1]).unwrap(), pair[0]);
+            assert_eq!(pool.switch_assistant(&pair[1], -1).unwrap(), pair[0]);
         }
         assert_eq!(
-            pool.prev_assistant(&ids[0]).unwrap(),
+            pool.switch_assistant(&ids[0], -1).unwrap(),
             ids.last().unwrap().clone()
         );
     }
