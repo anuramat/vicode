@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use dyn_clone::DynClone;
-use dyn_clone::clone_trait_object;
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
 use serde::Deserialize;

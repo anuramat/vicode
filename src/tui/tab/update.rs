@@ -3,7 +3,6 @@ use anyhow::Result;
 use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryGeneration;
-use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
 use crate::project::PROJECT;

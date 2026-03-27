@@ -14,7 +14,6 @@ use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::message::AssistantItem;
-use crate::llm::message::HistoryEntry;
 use crate::llm::message::now_ms;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
