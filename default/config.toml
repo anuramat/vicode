@@ -71,17 +71,21 @@ render_markdown = true
 
 [assistants.cerebras]
 provider = "cerebras"
-model = "zai-glm-4.7" # CHANGE ME
+model = "zai-glm-4.7"
+window = 131000
 [assistants.gpt]
 provider = "openai"
-model = "gpt-5.1-codex-mini" # CHANGE ME
-effort = "low" # CHANGE ME
+model = "gpt-5.1-codex-mini"
+effort = "low"
+window = 400000
 [assistants.llama]
 provider = "llama"
 model = "dummy"
+window = 123456 # CHANGE ME
 [assistants.zai]
 provider = "zai"
-model = "glm-5" # CHANGE ME
+model = "glm-5"
+window = 200000
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"

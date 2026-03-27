@@ -1,10 +1,8 @@
 use anyhow::Result;
-use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 use ratatui::text::Line;
 
 use crate::tui::app::App;
-use crate::tui::tab::TabState;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const TABLIST_WIDTH: u16 = 24;
@@ -20,7 +18,6 @@ impl<'a> App<'a> {
     where
         B: ratatui::backend::Backend,
     {
-        let selected = self.selected_tab_idx();
         tracing::debug!("start app render");
         term.draw(|frame| {
             let [body_area, line_area] = *Layout::default()
@@ -45,26 +42,18 @@ impl<'a> App<'a> {
                 &mut self.tablist.state,
             );
 
-            let mut tab_info = None;
-            if let Some(tabnum) = selected
-                && let Some((_, tab)) = self.tabs.get_index_mut(tabnum)
-            {
-                tab.render(tab_area, frame.buffer_mut(), self.ctx);
-                tab_info = Some(TabInfo {
-                    name: tab.aid.to_string(),
-                    state: tab.state.clone(),
-                    assistant: tab.agent_state.context.assistant_id.clone(),
-                    context_tokens: tab.context_tokens,
-                    instruction_tokens: tab.instructions_tokens,
-                });
+            let ctx = self.ctx;
+            if let Ok(tab) = self.selected_tab_mut() {
+                tab.render(tab_area, frame.buffer_mut(), ctx);
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
+
             if self.cmdline.input.focus {
                 self.cmdline.render(line_area, frame.buffer_mut());
             } else {
-                let line = self.status_line(tab_info, line_area.width);
-                frame.render_widget(&line, line_area);
+                let stl = self.status_line(line_area.width);
+                frame.render_widget(&stl, line_area);
             }
         })?;
         tracing::debug!("end app render");
@@ -73,7 +62,6 @@ impl<'a> App<'a> {
 
     fn status_line(
         &'a self,
-        tab: Option<TabInfo>,
         width: u16,
     ) -> Line<'a> {
         if let Some(msg) = self.notification.as_ref() {
@@ -82,32 +70,37 @@ impl<'a> App<'a> {
 
         let mut line = Line::raw("");
         line.push_span(Span::styled(&self.project_name, Style::new().dark_gray()));
-        let Some(tab) = tab else { return line };
+        let Ok(tab) = self.selected_tab() else {
+            return line;
+        };
         line.push_span(Span::styled("/", Style::new().dark_gray()));
-        line.push_span(Span::raw(tab.name));
+        line.push_span(Span::raw(tab.aid.to_string()));
 
         let remaining: usize = (width as usize).saturating_sub(line.width());
 
-        let tokens = format!(
-            "{:.1} + {:.1} kT",
-            tab.instruction_tokens as f64 / 1000.0,
-            tab.context_tokens as f64 / 1000.0
+        let tokens = {
+            let window = if let Some(window) = tab.assistant_config.model.window {
+                format!(" / {:.1}", window as f64 / 1000.0)
+            } else {
+                "".to_string()
+            };
+            format!(
+                "{:.1} + {:.1}{} kT",
+                tab.instructions_tokens as f64 / 1000.0,
+                tab.context_tokens as f64 / 1000.0,
+                window
+            )
+        };
+        // TODO prettier status
+        let right_part = format!(
+            "{} | {:?} | {}",
+            tokens, tab.state, tab.agent_state.context.assistant_id
         );
-        // TODO prettier tab status presentation using display macro from serde_plain
-        let assistant = format!("{} | {:?} | {}", tokens, tab.state, tab.assistant);
-        if assistant.len() + 3 < remaining {
-            let spacing: usize = remaining - assistant.len();
+        if right_part.len() + 3 < remaining {
+            let spacing: usize = remaining - right_part.len();
             line.push_span(" ".repeat(spacing));
-            line.push_span(assistant);
+            line.push_span(right_part);
         }
         line
     }
-}
-
-struct TabInfo {
-    name: String,
-    assistant: String,
-    context_tokens: usize,
-    instruction_tokens: usize,
-    state: TabState,
 }

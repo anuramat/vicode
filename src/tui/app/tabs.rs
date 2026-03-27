@@ -151,7 +151,7 @@ impl<'a> App<'a> {
         self.tablist.selected().map(|s| s.min(n_tabs - 1))
     }
 
-    pub fn selected_tab(&mut self) -> Result<&Tab<'a>> {
+    pub fn selected_tab(&self) -> Result<&Tab<'a>> {
         let Some(idx) = self.selected_tab_idx() else {
             anyhow::bail!("no tab selected");
         };

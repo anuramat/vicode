@@ -8,6 +8,7 @@ use ratatui::widgets::Borders;
 use ratatui::widgets::Padding;
 
 use crate::agent::handle::UserPrompt;
+use crate::config::CONFIG;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
 use crate::tui::app::handle::AppEvent;
@@ -124,6 +125,7 @@ impl<'a> Tab<'a> {
             .next_assistant(&self.agent_state.context.assistant_id)
             .with_context(|| "couldn't find the provided assistant id")?;
         self.agent_state.context.assistant_id = id.clone();
+        self.assistant_config = CONFIG.assistants[&id].clone();
         self.tx
             .send(AppEvent::SetAssistant(self.aid.clone(), id))
             .await?;

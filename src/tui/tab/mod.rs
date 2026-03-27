@@ -22,6 +22,8 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
+use crate::config::AssistantConfig;
+use crate::config::CONFIG;
 use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
@@ -42,6 +44,9 @@ pub struct Tab<'a> {
     pub agent_state: AgentState,
     pub instructions_tokens: usize,
     pub context_tokens: usize,
+
+    /// cache for presentation purposes
+    pub assistant_config: AssistantConfig,
 
     pub scroll: ScrollElements,
     pub insert_mode: bool, // TODO use enum
@@ -122,6 +127,7 @@ impl<'a> Tab<'a> {
             agent_state.context.history.as_ref(),
         ));
         let tab = Self {
+            assistant_config: CONFIG.assistants[&agent_state.context.assistant_id].clone(),
             instructions_tokens: count_text_tokens(&agent_state.context.instructions),
             context_tokens: agent_state.context.history.total_tokens(),
             tx,
@@ -143,6 +149,7 @@ impl<'a> Tab<'a> {
         agent_state: AgentState,
     ) -> Self {
         Self {
+            assistant_config: CONFIG.assistants[&agent_state.context.assistant_id].clone(),
             instructions_tokens: 0,
             context_tokens: 0,
             tx,
