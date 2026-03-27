@@ -164,23 +164,26 @@ impl<'a> Tab<'a> {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        let outer = Layout::default()
+        let [body, info_area] = *Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
                 Constraint::Min(0),
                 Constraint::Length(INFO_PANE_WIDTH),
             ])
-            .split(area);
-        self.info.render(outer[1], buf);
+            .split(area)
+        else {
+            unreachable!()
+        };
+        self.info.render(info_area, buf);
 
         let block = Block::new()
             .borders(Borders::LEFT | Borders::RIGHT)
             .border_type(BorderType::Plain);
-        block.render_ref(outer[0], buf);
-        let area = block.inner(outer[0]);
+        block.render_ref(body, buf);
+        let body = block.inner(body);
 
         if matches!(self.state, TabState::Loading) {
-            self.render_loading(area, buf);
+            self.render_loading(body, buf);
             return;
         }
 
@@ -189,21 +192,24 @@ impl<'a> Tab<'a> {
         } else {
             0
         };
-        let layout = Layout::default()
+        let [messages_area, input_area] = *Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![Constraint::Min(0), Constraint::Length(input_height)])
-            .split(area);
+            .split(body)
+        else {
+            unreachable!()
+        };
 
         self.scroll.render(
             self.agent_state.context.history.as_ref(),
-            layout[0].inner(ratatui::layout::Margin {
+            messages_area.inner(ratatui::layout::Margin {
                 horizontal: 1,
                 vertical: 0,
             }),
             buf,
             ctx,
         );
-        self.user_input.0.render(layout[1], buf);
+        self.user_input.0.render(input_area, buf);
     }
 
     fn render_loading(

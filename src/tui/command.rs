@@ -45,6 +45,7 @@ pub enum CommandName {
     ToggleDeveloper,
     ToggleMarkdown,
     ToggleReasoning,
+    ToggleTabs,
     ToggleTools,
     TurnAbort,
     TurnRetry,

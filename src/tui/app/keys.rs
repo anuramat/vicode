@@ -128,6 +128,10 @@ impl<'a> App<'a> {
     fn enter_cmdline(&mut self) {
         self.cmdline.input.focus = true;
     }
+
+    fn toggle_tabs(&mut self) {
+        self.show_tabs = !self.show_tabs;
+    }
 }
 
 // TODO move to an app method?
@@ -172,6 +176,7 @@ impl Command {
             CommandName::ToggleDeveloper => app.toggle_developer(),
             CommandName::ToggleMarkdown => app.toggle_markdown(),
             CommandName::ToggleReasoning => app.toggle_reasoning(),
+            CommandName::ToggleTabs => app.toggle_tabs(),
             CommandName::ToggleTools => app.toggle_tools(),
             CommandName::TurnAbort => app.selected_tab_mut()?.abort().await?,
             CommandName::TurnRetry => app.selected_tab_mut()?.retry().await?,

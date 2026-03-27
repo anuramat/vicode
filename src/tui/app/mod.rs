@@ -64,6 +64,7 @@ pub struct App<'a> {
     pub cmdline: Cmdline<'a>,
     pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
+    pub show_tabs: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -94,6 +95,7 @@ impl<'a> App<'a> {
             .to_string();
 
         Ok(Self {
+            show_tabs: false,
             project_name,
             cmdline: Cmdline::default(),
             ctx: CONFIG.render,

@@ -7,11 +7,9 @@ use crate::tui::app::App;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
-const TAB_PANE_WIDTH: u16 = 24;
+const TABLIST_WIDTH: u16 = 24;
 
-const CONSTRAINTS: [Constraint; 2] = [Constraint::Length(TAB_PANE_WIDTH), Constraint::Min(0)];
-
-// TODO skip tablist and info pane if terminal is too small
+const CONSTRAINTS: [Constraint; 2] = [Constraint::Min(0), Constraint::Length(1)];
 
 impl<'a> App<'a> {
     #[tracing::instrument(skip(self, term))]
@@ -27,15 +25,16 @@ impl<'a> App<'a> {
         term.draw(|frame| {
             let [body_area, line_area] = *Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(vec![Constraint::Min(0), Constraint::Length(1)])
+                .constraints(CONSTRAINTS)
                 .split(frame.area())
             else {
                 unreachable!();
             };
 
+            let tablist_width = if self.show_tabs { TABLIST_WIDTH } else { 3 };
             let [tablist_area, tab_area] = *Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints(CONSTRAINTS)
+                .constraints(vec![Constraint::Length(tablist_width), Constraint::Min(0)])
                 .split(body_area)
             else {
                 unreachable!();
