@@ -61,15 +61,8 @@ fn prefix(text: &str) -> (usize, &str) {
         .unwrap_or((0, text))
 }
 
-fn new_area() -> TextArea<'static> {
-    let mut area = TextArea::default();
-    area.set_cursor_line_style(Default::default());
-    area
-}
-
-fn new_area_from_str(contents: String) -> TextArea<'static> {
-    let lines: Vec<String> = contents.split('\n').map(String::from).collect();
-    let mut area = TextArea::new(lines);
+fn new_area(content: &str) -> TextArea<'static> {
+    let mut area = TextArea::new(content.split('\n').map(String::from).collect());
     area.set_cursor_line_style(Default::default());
     area
 }
@@ -79,18 +72,27 @@ impl<'a> Input<'a> {
         &mut self,
         mut text: String,
     ) {
-        let (row, col) = self.textarea.cursor();
+        let (row_from_bottom, col) = {
+            let (row, col) = self.textarea.cursor();
+            (self.textarea.lines().len() - row, col)
+        };
+
+        text.push('\n');
+
         let current = self.take_area().lines().join("\n");
-        let row_offset = text.matches('\n').count() as u16; // XXX test this
         text.push_str(&current);
-        self.textarea = new_area_from_str(text);
-        self.textarea
-            .move_cursor(CursorMove::Jump(row as u16 + row_offset, col as u16));
-        self.textarea.set_cursor_line_style(Default::default());
+
+        self.textarea = {
+            let mut area = new_area(&text);
+            let n_lines = area.lines().len() as u16;
+            let row = n_lines.saturating_sub(row_from_bottom as u16);
+            area.move_cursor(CursorMove::Jump(row, col as u16));
+            area
+        };
     }
 
     pub fn take_area(&mut self) -> TextArea<'a> {
-        let mut empty = new_area();
+        let mut empty = new_area("");
         mem::swap(&mut self.textarea, &mut empty);
         self.focus = false;
         empty
@@ -105,13 +107,12 @@ impl<'a> Input<'a> {
             self.completion.state.select(None);
             self.completion.matches.clear();
             if self.clear_on_unfocus {
-                self.textarea = new_area();
+                self.textarea = new_area("");
             }
         }
     }
 
     // PERF use a bitset for matches?
-    // TODO fuzzy match
 
     pub fn narrow(&mut self) {
         let matches = Atom::new(
@@ -156,7 +157,7 @@ impl<'a> Input<'a> {
             let height = (matches.len() as u16).min(self.completion.max_height);
             let completion_area = Rect {
                 x: area.x + prefix_column as u16,
-                y: area.y.saturating_sub(height) + self.textarea.cursor().0 as u16, // TEST this
+                y: area.y.saturating_sub(height) + self.textarea.cursor().0 as u16,
                 width,
                 height,
             };
@@ -230,12 +231,10 @@ impl<'a> Input<'a> {
         completion_items: Vec<String>,
         completion_max_height: u16,
     ) -> Self {
-        let mut area = TextArea::new(contents.split('\n').map(String::from).collect());
-        area.set_cursor_line_style(Default::default());
         Self {
             clear_on_unfocus: false,
             focus: false,
-            textarea: area,
+            textarea: new_area(contents),
             completion: Completion {
                 matcher: Matcher::default(),
                 max_height: completion_max_height,
