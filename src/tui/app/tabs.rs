@@ -13,7 +13,6 @@ use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
-use crate::tui::app::AgentHandle;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;

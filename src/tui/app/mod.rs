@@ -7,7 +7,6 @@ pub mod tabs;
 use std::collections::HashMap;
 
 use anyhow::Result;
-use futures::future::AbortHandle;
 pub use handle::AppEvent;
 use indexmap::IndexMap;
 use serde::Deserialize;
@@ -18,7 +17,6 @@ use tokio::sync::mpsc::channel;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
-use crate::agent::AgentEvent;
 use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
 use crate::config::CONFIG;

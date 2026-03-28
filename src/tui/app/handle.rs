@@ -4,7 +4,6 @@ use tracing::debug;
 use tracing::instrument;
 
 use super::App;
-use super::NotificationKind;
 use crate::agent::AgentEvent;
 use crate::agent::handle::ParentEvent as AgentParentEvent;
 use crate::agent::handle::UserPrompt;

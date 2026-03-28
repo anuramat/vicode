@@ -15,7 +15,6 @@ pub use handle::AgentEvent;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
-use task::TaskId;
 use task::TaskResult;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;

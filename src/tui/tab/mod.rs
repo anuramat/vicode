@@ -30,7 +30,6 @@ use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
 use crate::project::PROJECT;
 use crate::tui::app::handle::AppEvent;
-use crate::tui::osc7::set_osc7;
 use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
