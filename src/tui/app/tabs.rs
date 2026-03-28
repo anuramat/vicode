@@ -1,7 +1,6 @@
 use anyhow::Result;
 use git2::Repository;
 use indexmap::IndexMap;
-use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tracing::instrument;
 
@@ -9,13 +8,32 @@ use crate::agent::Agent;
 use crate::agent::AgentEvent;
 use crate::agent::AgentState;
 use crate::agent::handle::ParentEvent;
-use crate::agent::handle::ParentMessage;
+use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
+
+struct AppParentSink {
+    aid: AgentId,
+    tx: Sender<AppEvent>,
+}
+
+#[async_trait::async_trait]
+impl ParentSink for AppParentSink {
+    async fn send(
+        &self,
+        event: ParentEvent,
+    ) -> Result<()> {
+        let aid = self.aid.clone();
+        self.tx
+            .send(AppEvent::ParentEvent(aid, event))
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+}
 
 impl<'a> App<'a> {
     /// rebuild tablist widget
@@ -86,12 +104,28 @@ impl<'a> App<'a> {
         );
 
         let agent: Agent = if PROJECT.agent(&aid).exists() {
-            Agent::load(self.parent_tx.clone(), aid.clone()).await?
+            Agent::load(
+                Box::new(AppParentSink {
+                    aid: aid.clone(),
+                    tx: self.tx.clone(),
+                }),
+                aid.clone(),
+            )
+            .await?
         } else {
             let repo = Repository::discover(PROJECT.root.clone())?;
             let commit = repo.head()?.peel_to_commit()?.id().to_string();
             let instructions = PROJECT.instructions_by_commit(&commit).await?;
-            Agent::new(self.parent_tx.clone(), aid.clone(), commit, instructions).await?
+            Agent::new(
+                Box::new(AppParentSink {
+                    aid: aid.clone(),
+                    tx: self.tx.clone(),
+                }),
+                aid.clone(),
+                commit,
+                instructions,
+            )
+            .await?
         };
 
         let tab = Tab::new(self.tx.clone(), aid.clone(), agent.state.clone()).await?;
@@ -212,17 +246,6 @@ impl<'a> App<'a> {
         let last = self.tabs.len().checked_sub(1);
         self.select_tab(last);
     }
-}
-
-// TODO move
-pub async fn translate_agent_events(
-    app_tx: Sender<AppEvent>,
-    mut parent_rx: Receiver<ParentMessage>,
-) -> Result<()> {
-    while let Some((aid, event)) = parent_rx.recv().await {
-        app_tx.send(AppEvent::ParentEvent(aid, event)).await?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

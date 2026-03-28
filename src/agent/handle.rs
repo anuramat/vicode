@@ -30,9 +30,6 @@ pub enum AgentEvent {
     DuplicateRequest(AgentId),
 }
 
-// TODO drop
-pub type ParentMessage = (AgentId, ParentEvent);
-
 #[derive(Debug)]
 pub enum ParentEvent {
     AttachAgent,
@@ -42,6 +39,16 @@ pub enum ParentEvent {
     TurnComplete,
     Error(String),
 }
+
+#[async_trait::async_trait]
+pub trait ParentSink: Send + Sync {
+    async fn send(
+        &self,
+        event: ParentEvent,
+    ) -> Result<()>;
+}
+
+pub type ParentHandle = Box<dyn ParentSink>;
 
 #[derive(Debug)]
 pub struct UserPrompt {
@@ -67,14 +74,10 @@ impl Agent {
                     if self.state.context.history.needs_another_turn() {
                         self.start_turn();
                     } else {
-                        self.parent
-                            .send((self.id.clone(), ParentEvent::TurnComplete))
-                            .await?;
+                        self.parent.send(ParentEvent::TurnComplete).await?;
                     }
                 }
-                self.parent
-                    .send((self.id.clone(), ParentEvent::InfoUpdate))
-                    .await?;
+                self.parent.send(ParentEvent::InfoUpdate).await?;
             }
             DuplicateRequest(aid) => {
                 self.try_duplicate(aid).await?;
@@ -127,10 +130,7 @@ impl Agent {
     ) -> Result<()> {
         // TODO verify
         self.parent
-            .send((
-                self.id.clone(),
-                ParentEvent::HistoryUpdate(generation, event.clone()),
-            ))
+            .send(ParentEvent::HistoryUpdate(generation, event.clone()))
             .await?;
         self.state.context.history.handle(generation, event.clone());
         match event {
@@ -154,12 +154,8 @@ impl Agent {
                 }
                 self.tskmgr.abort().await;
                 // TODO wish we could move this out
-                self.parent
-                    .send((self.id.clone(), ParentEvent::TurnComplete))
-                    .await?;
-                self.parent
-                    .send((self.id.clone(), ParentEvent::InfoUpdate))
-                    .await?;
+                self.parent.send(ParentEvent::TurnComplete).await?;
+                self.parent.send(ParentEvent::InfoUpdate).await?;
             }
             HistoryEvent::ResponseFailed(msg) => {
                 error!("error in agent {}: {}", self.id, msg);

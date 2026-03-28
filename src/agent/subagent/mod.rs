@@ -14,6 +14,7 @@ use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
+use crate::agent::init::channel_parent_sink;
 use crate::agent::init::duplicate;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 
@@ -41,7 +42,7 @@ pub async fn run_child(
     duplicate(parent, aid, &state, false).await?;
 
     let (parent_tx, mut parent_rx) = channel(100);
-    let agent = Agent::load(parent_tx, aid.clone()).await?;
+    let agent = Agent::load(channel_parent_sink(parent_tx), aid.clone()).await?;
     let child_tx = agent.tx.clone();
     let mut tasks = JoinSet::new();
     tasks.spawn(agent.run());
@@ -56,7 +57,7 @@ pub async fn run_child(
 
     loop {
         match parent_rx.recv().await {
-            Some((completed, ParentEvent::TurnComplete)) if completed == *aid => break,
+            Some(ParentEvent::TurnComplete) => break,
             Some(_) => continue,
             None => anyhow::bail!("subagent channel closed before turn completion"),
         }

@@ -19,7 +19,6 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::agent::AgentEvent;
-use crate::agent::handle::ParentMessage;
 use crate::agent::id::AgentId;
 use crate::config::CONFIG;
 use crate::tui::tab::Tab;
@@ -52,8 +51,6 @@ pub struct App<'a> {
     /// true if we received an event but didn't redraw yet
     pub dirty: bool,
 
-    /// channel for primary agents to report to
-    pub parent_tx: Sender<ParentMessage>,
     /// primary agents
     pub agents: HashMap<AgentId, Sender<AgentEvent>>,
     /// UI for primary agents
@@ -80,12 +77,6 @@ impl<'a> App<'a> {
     async fn new() -> Result<Self> {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let (parent_tx, parent_rx) = channel(CHANNEL_CAPACITY);
-        let mut joinset = JoinSet::new();
-        joinset.spawn(crate::tui::app::tabs::translate_agent_events(
-            tx.clone(),
-            parent_rx,
-        ));
 
         let project_name = crate::project::PROJECT
             .root
@@ -102,13 +93,12 @@ impl<'a> App<'a> {
             dirty: true,
             tx,
             rx,
-            parent_tx,
             should_exit: false,
             tablist: TabList::default(),
             tabs: IndexMap::new(),
             agents: HashMap::new(),
             notification: None,
-            joinset,
+            joinset: JoinSet::new(),
         })
     }
 

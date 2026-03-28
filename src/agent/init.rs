@@ -4,7 +4,8 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 
 use crate::agent::handle::ParentEvent;
-use crate::agent::handle::ParentMessage;
+use crate::agent::handle::ParentHandle;
+use crate::agent::handle::ParentSink;
 use crate::agent::task::AgentTaskManager;
 use crate::agent::*;
 use crate::llm::history::History;
@@ -13,30 +14,50 @@ use crate::project::PROJECT;
 
 const CHANNEL_CAPACITY: usize = 100;
 
+struct ChannelParentSink(Sender<ParentEvent>);
+
+#[async_trait::async_trait]
+impl ParentSink for ChannelParentSink {
+    async fn send(
+        &self,
+        event: ParentEvent,
+    ) -> Result<()> {
+        self.0
+            .send(event)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+}
+
+// XXX after refactoring task manager, this should instead translate parent events into AgentEvent::* or something
+pub fn channel_parent_sink(tx: Sender<ParentEvent>) -> ParentHandle {
+    Box::new(ChannelParentSink(tx))
+}
+
 impl Agent {
     /// create new agent from scratch
     pub async fn new(
-        parent_tx: Sender<ParentMessage>,
+        parent: ParentHandle,
         id: AgentId,
         commit: String,
         instructions: String,
     ) -> Result<Self> {
         let state = AgentState::new(id.clone(), commit, instructions).await?;
-        Self::from_state(parent_tx, id, state).await
+        Self::from_state(parent, id, state).await
     }
 
     /// load agent by id from disk
     pub async fn load(
-        parent_tx: Sender<ParentMessage>,
+        parent: ParentHandle,
         id: AgentId,
     ) -> Result<Self> {
         let state = PROJECT.load_agent_state(&id).await?;
-        Self::from_state(parent_tx, id, state).await
+        Self::from_state(parent, id, state).await
     }
 
     /// shared logic
     async fn from_state(
-        parent: Sender<ParentMessage>,
+        parent: ParentHandle,
         id: AgentId,
         state: AgentState,
     ) -> Result<Self> {
@@ -71,7 +92,7 @@ impl Agent {
             "cannot duplicate while tasks are running"
         );
         duplicate(&self.id, &aid, &self.state, true).await?;
-        self.parent.send((aid, ParentEvent::AttachAgent)).await?;
+        self.parent.send(ParentEvent::AttachAgent).await?;
         Ok(())
     }
 }
@@ -190,7 +211,7 @@ mod tests {
             },
         };
         let (parent_tx, _) = channel(1);
-        let mut agent = Agent::from_state(parent_tx, aid.clone(), state)
+        let mut agent = Agent::from_state(channel_parent_sink(parent_tx), aid.clone(), state)
             .await
             .unwrap();
 
