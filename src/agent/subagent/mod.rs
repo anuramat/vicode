@@ -3,7 +3,6 @@ pub mod candidate;
 
 use anyhow::Result;
 use tokio::sync::mpsc::channel;
-use tokio::task::JoinSet;
 
 use crate::agent::Agent;
 use crate::agent::AgentContext;
@@ -44,8 +43,7 @@ pub async fn run_child(
     let (parent_tx, mut parent_rx) = channel(100);
     let agent = Agent::load(channel_parent_sink(parent_tx), aid.clone()).await?;
     let child_tx = agent.tx.clone();
-    let mut tasks = JoinSet::new();
-    tasks.spawn(agent.run());
+    agent.spawn();
 
     child_tx
         .send(AgentEvent::Submit(UserPrompt {
@@ -62,7 +60,6 @@ pub async fn run_child(
             None => anyhow::bail!("subagent channel closed before turn completion"),
         }
     }
-    tasks.abort_all();
 
     candidate::response(parent, aid).await
 }

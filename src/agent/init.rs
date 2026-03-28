@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fs_extra::dir::copy;
+use futures::future::Abortable;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 
@@ -14,6 +15,7 @@ use crate::project::PROJECT;
 
 const CHANNEL_CAPACITY: usize = 100;
 
+// TODO this should store `aid` just like AppEvent implementation
 struct ChannelParentSink(Sender<ParentEvent>);
 
 #[async_trait::async_trait]
@@ -26,6 +28,13 @@ impl ParentSink for ChannelParentSink {
             .send(event)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    fn sibling(
+        &self,
+        _aid: AgentId,
+    ) -> ParentHandle {
+        Box::new(Self(self.0.clone()))
     }
 }
 
@@ -78,6 +87,14 @@ impl Agent {
         })
     }
 
+    pub fn spawn(self) {
+        // XXX make sure this works fine
+        let (abort, reg) = futures::future::AbortHandle::new_pair();
+        tokio::spawn(async move {
+            let _ = Abortable::new(self.run(abort), reg).await;
+        });
+    }
+
     pub async fn save(&self) -> Result<()> {
         self.state.save(&self.id).await
     }
@@ -92,7 +109,9 @@ impl Agent {
             "cannot duplicate while tasks are running"
         );
         duplicate(&self.id, &aid, &self.state, true).await?;
-        self.parent.send(ParentEvent::AttachAgent).await?;
+        Agent::load(self.parent.sibling(aid.clone()), aid)
+            .await?
+            .spawn();
         Ok(())
     }
 }

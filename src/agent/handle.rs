@@ -1,10 +1,16 @@
+use std::ops::ControlFlow;
+
 use anyhow::Result;
+use futures::future::AbortHandle;
 use futures::future::try_join_all;
+use tokio::sync::mpsc::Sender;
 use tracing::debug;
 use tracing::error;
 use tracing::instrument;
 
 use crate::agent::Agent;
+use crate::agent::AgentHandle;
+use crate::agent::AgentState;
 use crate::agent::TaskId;
 use crate::agent::TaskResult;
 use crate::agent::id::AgentId;
@@ -32,12 +38,19 @@ pub enum AgentEvent {
 
 #[derive(Debug)]
 pub enum ParentEvent {
-    AttachAgent,
+    Started(AgentStarted),
     InfoUpdate,
     HistoryReset(History),
     HistoryUpdate(HistoryGeneration, HistoryEvent),
     TurnComplete,
     Error(String),
+}
+
+#[derive(Debug)]
+pub struct AgentStarted {
+    pub aid: AgentId,
+    pub state: AgentState,
+    pub handle: AgentHandle,
 }
 
 #[async_trait::async_trait]
@@ -46,6 +59,11 @@ pub trait ParentSink: Send + Sync {
         &self,
         event: ParentEvent,
     ) -> Result<()>;
+
+    fn sibling(
+        &self,
+        aid: AgentId,
+    ) -> ParentHandle;
 }
 
 pub type ParentHandle = Box<dyn ParentSink>;
@@ -62,7 +80,7 @@ impl Agent {
     pub async fn handle(
         &mut self,
         event: AgentEvent,
-    ) -> Result<()> {
+    ) -> Result<ControlFlow<()>> {
         use AgentEvent::*;
 
         debug!(event = ?event, "handling agent event");
@@ -106,7 +124,7 @@ impl Agent {
             }
             Retry => {
                 if !self.tskmgr.pending.is_empty() {
-                    return Ok(());
+                    return Ok(ControlFlow::Continue(()));
                 }
                 self.start_turn();
             }
@@ -117,10 +135,12 @@ impl Agent {
                 self.handle_history(generation, event).await?;
             }
             Delete => {
-                PROJECT.delete_agent(&self.id).await?;
+                self.tskmgr.abort().await;
+                PROJECT.delete_agent(&self.id).await?; // TODO maybe some special handling for failed deletes
+                return Ok(ControlFlow::Break(()));
             }
         }
-        Ok(())
+        Ok(ControlFlow::Continue(()))
     }
 
     pub async fn handle_history(
@@ -132,7 +152,10 @@ impl Agent {
         self.parent
             .send(ParentEvent::HistoryUpdate(generation, event.clone()))
             .await?;
-        self.state.context.history.handle(generation, event.clone());
+        self.state
+            .context
+            .history
+            .handle(generation, event.clone())?;
         match event {
             HistoryEvent::ResponseStarted(_) => {}
             HistoryEvent::ResponseItem(ref item) => {

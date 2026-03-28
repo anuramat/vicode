@@ -114,10 +114,11 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    // TODO split into a future with a loop and a function that spawns the task with the future
     fn spawn_crossterm_translator(&mut self) {
         use tokio_stream::StreamExt;
         let tx = self.tx.clone();
-        self.joinset.spawn(async move {
+        tokio::spawn(async move {
             let mut stream = crossterm::event::EventStream::new();
             while let Some(Ok(event)) = stream.next().await {
                 let e = match event {
@@ -128,7 +129,7 @@ impl<'a> App<'a> {
                 };
                 e.await?;
             }
-            Ok(())
+            Ok::<(), anyhow::Error>(())
         });
     }
 }

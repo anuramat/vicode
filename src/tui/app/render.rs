@@ -43,8 +43,10 @@ impl<'a> App<'a> {
             );
 
             let ctx = self.ctx;
-            if let Ok(tab) = self.selected_tab_mut() {
-                tab.render(tab_area, frame.buffer_mut(), ctx);
+            if let Some(idx) = self.selected_tab_idx() {
+                if let Some((_, tab)) = self.tabs.get_index_mut(idx) {
+                    tab.render(tab_area, frame.buffer_mut(), ctx);
+                }
             } else {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }

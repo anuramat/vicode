@@ -5,7 +5,7 @@ use ratatui::style::Style;
 use ratatui::widgets::*;
 
 use crate::agent::id::AgentId;
-use crate::tui::tab::Tab;
+use crate::tui::tab::TabEntry;
 
 lazy_static::lazy_static! {
     static ref SELECTION_STYLE:
@@ -27,11 +27,11 @@ pub struct TabListState(ListState);
 impl<'a> TabList<'a> {
     pub fn rebuild(
         &mut self,
-        tabs: &IndexMap<AgentId, Tab<'a>>,
+        tabs: &IndexMap<AgentId, TabEntry<'a>>,
     ) {
         let items = tabs
             .iter()
-            .map(|(_, tab)| ListItem::new(tab.label()))
+            .map(|(aid, tab)| ListItem::new(tab.label(aid)))
             .collect::<Vec<_>>();
         self.widget = List::new(items).highlight_style(*SELECTION_STYLE).into();
     }

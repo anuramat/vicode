@@ -26,6 +26,7 @@ pub enum AppEvent {
     HistoryEvent(AgentId, HistoryGeneration, HistoryEvent),
     SetAssistant(AgentId, String),
 
+    LoadAgent(AgentId),
     ParentEvent(AgentId, AgentParentEvent),
     TabStatusChanged(AgentId),
 
@@ -50,24 +51,30 @@ impl<'a> App<'a> {
                 self.dirty = true;
             }
             UserPrompt(agent_id, msg) => {
-                if let Some(tx) = self.agents.get(&agent_id) {
-                    tx.send(AgentEvent::Submit(msg)).await?;
+                if let Some(handle) = self.agents.get(&agent_id) {
+                    handle.tx.send(AgentEvent::Submit(msg)).await?;
                 }
             }
             RetryTurn(agent_id) => {
-                if let Some(tx) = self.agents.get(&agent_id) {
-                    tx.send(AgentEvent::Retry).await?;
+                if let Some(handle) = self.agents.get(&agent_id) {
+                    handle.tx.send(AgentEvent::Retry).await?;
                 }
             }
             HistoryEvent(agent_id, generation, event) => {
-                if let Some(tx) = self.agents.get(&agent_id) {
-                    tx.send(AgentEvent::HistoryEvent(generation, event)).await?;
+                if let Some(handle) = self.agents.get(&agent_id) {
+                    handle
+                        .tx
+                        .send(AgentEvent::HistoryEvent(generation, event))
+                        .await?;
                 }
             }
             SetAssistant(agent_id, id) => {
-                if let Some(tx) = self.agents.get(&agent_id) {
-                    tx.send(AgentEvent::SetAssistant(id)).await?;
+                if let Some(handle) = self.agents.get(&agent_id) {
+                    handle.tx.send(AgentEvent::SetAssistant(id)).await?;
                 }
+            }
+            LoadAgent(agent_id) => {
+                self.load_agent(agent_id).await?;
             }
             ParentEvent(agent_id, event) => {
                 self.handle_parent_event(agent_id, event).await?;
@@ -88,43 +95,32 @@ impl<'a> App<'a> {
 
     async fn handle_parent_event(
         &mut self,
-        agent_id: AgentId,
+        aid: AgentId,
         event: AgentParentEvent,
     ) -> Result<()> {
         use AgentParentEvent::*;
 
         match event {
-            AttachAgent => {
-                self.attach_agent(agent_id).await?;
+            Started(started) => {
+                self.handle_started(started).await?;
             }
             InfoUpdate => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.info = InfoWidget::new(&agent_id).await?;
-                }
+                self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&aid).await?;
             }
             HistoryReset(history) => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.replace_history(history);
-                }
+                self.tab_mut_by_aid(&aid)?.replace_history(history);
             }
             HistoryUpdate(loc, event) => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.update(loc, event);
-                }
+                self.tab_mut_by_aid(&aid)?.update(loc, event);
             }
             TurnComplete => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.sync_state_from_history().await?;
-                }
+                self.tab_mut_by_aid(&aid)?.sync_state_from_history().await?;
             }
-            Error(msg) => {
-                if let Some(tab) = self.tabs.get_mut(&agent_id) {
-                    tab.set_state(TabState::Running(AssistantState::Error))
-                        .await?;
-                }
-                if self.selected_aid() == Some(agent_id) {
-                    self.notify(NotificationKind::Error, msg);
-                }
+            Error(_) => {
+                self.tab_mut_by_aid(&aid)?
+                    .set_state(TabState::Running(AssistantState::Error))
+                    .await?;
+                // TODO use msg
             }
         }
         Ok(())

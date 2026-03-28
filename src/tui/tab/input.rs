@@ -114,10 +114,7 @@ impl<'a> Tab<'a> {
     }
 
     pub async fn retry(&mut self) -> Result<()> {
-        if matches!(
-            self.state,
-            TabState::Loading | TabState::Running(AssistantState::Generating)
-        ) {
+        if matches!(self.state, TabState::Running(AssistantState::Generating)) {
             return Ok(());
         }
         self.set_state(TabState::Running(AssistantState::Generating))

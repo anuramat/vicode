@@ -7,6 +7,7 @@ pub mod tabs;
 use std::collections::HashMap;
 
 use anyhow::Result;
+use futures::future::AbortHandle;
 pub use handle::AppEvent;
 use indexmap::IndexMap;
 use serde::Deserialize;
@@ -14,14 +15,14 @@ use serde::Serialize;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
-use tokio::task::JoinSet;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::agent::AgentEvent;
+use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
 use crate::config::CONFIG;
-use crate::tui::tab::Tab;
+use crate::tui::tab::TabEntry;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;
@@ -43,8 +44,6 @@ pub struct App<'a> {
 
     pub rx: Receiver<AppEvent>,
     pub tx: Sender<AppEvent>,
-    /// agents, event translation
-    pub joinset: JoinSet<Result<()>>,
 
     /// hide tool calls, etc
     pub ctx: RenderContext,
@@ -52,9 +51,9 @@ pub struct App<'a> {
     pub dirty: bool,
 
     /// primary agents
-    pub agents: HashMap<AgentId, Sender<AgentEvent>>,
+    pub agents: HashMap<AgentId, AgentHandle>,
     /// UI for primary agents
-    pub tabs: IndexMap<AgentId, Tab<'a>>,
+    pub tabs: IndexMap<AgentId, TabEntry<'a>>,
 
     /// project name shown in status line
     pub project_name: String,
@@ -98,7 +97,6 @@ impl<'a> App<'a> {
             tabs: IndexMap::new(),
             agents: HashMap::new(),
             notification: None,
-            joinset: JoinSet::new(),
         })
     }
 

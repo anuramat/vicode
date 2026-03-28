@@ -28,7 +28,9 @@ use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
+use crate::project::PROJECT;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::osc7::set_osc7;
 use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -58,9 +60,14 @@ pub struct Tab<'a> {
     pub state: TabState,
 }
 
+#[derive(Debug)]
+pub enum TabEntry<'a> {
+    Loading,
+    Ready(Tab<'a>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabState {
-    Loading,
     Running(AssistantState),
 }
 
@@ -107,13 +114,44 @@ impl From<&AssistantMessageStatus> for AssistantState {
 impl TabState {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Loading => "*",
             Self::Running(state) => state.label(),
         }
     }
 
     pub fn idle(&self) -> bool {
         matches!(self, Self::Running(AssistantState::Idle))
+    }
+}
+
+impl<'a> TabEntry<'a> {
+    pub fn label(
+        &self,
+        aid: &AgentId,
+    ) -> String {
+        let prefix = match self {
+            Self::Loading => "*",
+            Self::Ready(tab) => tab.state.label(),
+        };
+        format!("[{}]{}", prefix, aid)
+    }
+
+    pub fn set_osc7(&self) {
+        match self {
+            Self::Loading => PROJECT.set_osc7(),
+            Self::Ready(tab) => tab.set_osc7(),
+        }
+    }
+
+    pub fn render(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        ctx: RenderContext,
+    ) {
+        match self {
+            Self::Loading => render_loading(area, buf),
+            Self::Ready(tab) => tab.render(area, buf, ctx),
+        }
     }
 }
 
@@ -143,28 +181,6 @@ impl<'a> Tab<'a> {
         Ok(tab)
     }
 
-    // TODO this is kinda fucked, we should just have a "Loading|Tab" enum
-    pub fn loading_tab(
-        tx: Sender<AppEvent>,
-        aid: AgentId,
-        agent_state: AgentState,
-    ) -> Self {
-        Self {
-            assistant_config: CONFIG.assistants.get_index(0).unwrap().1.clone(),
-            instructions_tokens: 0,
-            context_tokens: 0,
-            tx,
-            aid,
-            agent_state,
-            scroll: Default::default(),
-            insert_mode: false,
-            user_input: Default::default(),
-            info: Default::default(),
-            multiplier: 1,
-            state: TabState::Loading,
-        }
-    }
-
     #[tracing::instrument(skip(self, buf))]
     pub fn render(
         &mut self,
@@ -189,11 +205,6 @@ impl<'a> Tab<'a> {
             .border_type(BorderType::Plain);
         block.render_ref(body, buf);
         let body = block.inner(body);
-
-        if matches!(self.state, TabState::Loading) {
-            self.render_loading(body, buf);
-            return;
-        }
 
         let input_height = if self.user_input.visible(self.insert_mode) {
             INPUT_AREA_HEIGHT
@@ -220,29 +231,28 @@ impl<'a> Tab<'a> {
         self.user_input.0.render(input_area, buf);
     }
 
-    fn render_loading(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-    ) {
-        let style = Style::default().add_modifier(Modifier::REVERSED);
-        buf.set_style(area, style);
-
-        let text = "LOADING".to_string();
-        let area = Rect {
-            x: area.x + ((area.width - text.len() as u16) / 2),
-            y: area.y + area.height / 2,
-            width: text.len() as u16,
-            height: 1,
-        };
-        let widget = Paragraph::new(text);
-
-        widget.render(area, buf);
-    }
-
     pub fn label(&self) -> String {
         format!("[{}]{}", self.state.label(), self.aid)
     }
+}
+
+fn render_loading(
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let style = Style::default().add_modifier(Modifier::REVERSED);
+    buf.set_style(area, style);
+
+    let text = "LOADING".to_string();
+    let area = Rect {
+        x: area.x + ((area.width - text.len() as u16) / 2),
+        y: area.y + area.height / 2,
+        width: text.len() as u16,
+        height: 1,
+    };
+    let widget = Paragraph::new(text);
+
+    widget.render(area, buf);
 }
 
 #[derive(Debug, Clone)]
@@ -311,7 +321,6 @@ mod tests {
 
     #[test]
     fn tab_state_suffixes_are_short_and_stable() {
-        assert_eq!(TabState::Loading.label(), "*");
         assert_eq!(
             TabState::Running(AssistantState::AbortedByUser).label(),
             "?"

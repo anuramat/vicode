@@ -6,6 +6,7 @@ use git2::Repository;
 
 use super::Project;
 use crate::agent::id::AgentId;
+use crate::tui::osc7::set_osc7;
 
 const APP_STATE_FILENAME: &str = "state.json";
 const SNAPSHOTS_DIRNAME: &str = "snapshots";
@@ -22,6 +23,10 @@ const OVERLAY_WORKDIR_DIRNAME: &str = "workdir";
 const WORKTREE_NAME_PREFIX: &str = "vc-worktree-";
 
 impl Project {
+    pub fn set_osc7(&self) {
+        set_osc7(&self.root);
+    }
+
     pub fn app_state(&self) -> PathBuf {
         self.data.join(APP_STATE_FILENAME)
     }

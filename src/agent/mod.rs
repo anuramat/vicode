@@ -10,6 +10,7 @@ pub mod turn;
 
 use std::sync::Arc;
 
+use futures::future::AbortHandle;
 pub use handle::AgentEvent;
 pub use id::*;
 use serde::Deserialize;
@@ -24,6 +25,12 @@ use crate::agent::task::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::*;
 use crate::llm::provider::assistant::Assistant;
+
+#[derive(Debug)]
+pub struct AgentHandle {
+    pub tx: Sender<AgentEvent>,
+    pub abort: AbortHandle, // TODO should we use tokio abort handle instead?
+}
 
 pub struct Agent {
     pub id: AgentId,
