@@ -346,7 +346,9 @@ mod tests {
     #[test]
     fn response_failed_without_message_creates_error_message() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseFailed("oops".into()));
+        history
+            .handle(0, HistoryEvent::ResponseFailed("oops".into()))
+            .unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -363,14 +365,14 @@ mod tests {
     #[test]
     fn response_aborted_without_message_is_noop() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseAborted);
+        history.handle(0, HistoryEvent::ResponseAborted).unwrap();
         assert!(history.messages.is_empty());
     }
 
     #[test]
     fn response_started_creates_empty_assistant_message() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(7));
+        history.handle(0, HistoryEvent::ResponseStarted(7)).unwrap();
         let Some(HistoryEntry {
             meta,
             message: Message::Assistant(msg),
@@ -391,15 +393,17 @@ mod tests {
     #[test]
     fn item_added_does_not_touch_message_timing() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(1));
-        history.handle(
-            1,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming::with_start(2),
-                content: vec![],
-            }))),
-        );
+        history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming::with_start(2),
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
         let Some(HistoryEntry { meta, .. }) = history.messages.first() else {
             panic!("expected assistant message");
         };
@@ -409,18 +413,20 @@ mod tests {
     #[test]
     fn item_done_without_delta_touches_message_timing() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(1));
-        history.handle(
-            1,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming {
-                    started_at_ms: 2,
-                    last_modified_ms: Some(3),
-                },
-                content: vec![],
-            }))),
-        );
+        history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming {
+                        started_at_ms: 2,
+                        last_modified_ms: Some(3),
+                    },
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
         let Some(HistoryEntry { meta, .. }) = history.messages.first() else {
             panic!("expected assistant message");
         };
@@ -430,22 +436,26 @@ mod tests {
     #[test]
     fn delta_touches_message_timing() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(1));
-        history.handle(
-            1,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming::with_start(2),
-                content: vec![],
-            }))),
-        );
-        history.handle(
-            1,
-            HistoryEvent::ResponseDelta(Delta {
-                id: "out".into(),
-                delta: crate::llm::delta::DeltaContent::Output("hello".into()),
-            }),
-        );
+        history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming::with_start(2),
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseDelta(Delta {
+                    id: "out".into(),
+                    delta: crate::llm::delta::DeltaContent::Output("hello".into()),
+                }),
+            )
+            .unwrap();
         let Some(HistoryEntry {
             meta,
             message: Message::Assistant(msg),
@@ -461,14 +471,16 @@ mod tests {
     #[test]
     fn response_item_starts_message_in_progress() {
         let mut history = History::new();
-        history.handle(
-            0,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming::new(),
-                content: vec![],
-            }))),
-        );
+        history
+            .handle(
+                0,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming::new(),
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -485,7 +497,9 @@ mod tests {
     #[test]
     fn response_completed_without_message_creates_success_message() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseCompleted(vec![]));
+        history
+            .handle(0, HistoryEvent::ResponseCompleted(vec![]))
+            .unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -499,26 +513,30 @@ mod tests {
     #[test]
     fn response_completed_marks_message_success() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(0));
-        history.handle(
-            1,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming::new(),
-                content: vec![],
-            }))),
-        );
-        history.handle(
-            1,
-            HistoryEvent::ResponseCompleted(vec![AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming {
-                    started_at_ms: 1,
-                    last_modified_ms: Some(2),
-                },
-                content: vec![],
-            })]),
-        );
+        history.handle(0, HistoryEvent::ResponseStarted(0)).unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming::new(),
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseCompleted(vec![AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming {
+                        started_at_ms: 1,
+                        last_modified_ms: Some(2),
+                    },
+                    content: vec![],
+                })]),
+            )
+            .unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -534,8 +552,8 @@ mod tests {
     #[test]
     fn response_aborted_marks_message_aborted() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(0));
-        history.handle(1, HistoryEvent::ResponseAborted);
+        history.handle(0, HistoryEvent::ResponseStarted(0)).unwrap();
+        history.handle(1, HistoryEvent::ResponseAborted).unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -552,38 +570,42 @@ mod tests {
     #[test]
     fn user_message_updates_token_cache() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into()));
+        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
 
     #[test]
     fn generation_changes_only_when_message_count_changes() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::ResponseStarted(1));
+        history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
         assert_eq!(history.generation(), 1);
-        history.handle(
-            1,
-            HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
-                id: "out".into(),
-                timing: ItemTiming::with_start(2),
-                content: vec![],
-            }))),
-        );
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
+                    id: "out".into(),
+                    timing: ItemTiming::with_start(2),
+                    content: vec![],
+                }))),
+            )
+            .unwrap();
         assert_eq!(history.generation(), 1);
-        history.handle(
-            1,
-            HistoryEvent::ResponseDelta(Delta {
-                id: "out".into(),
-                delta: crate::llm::delta::DeltaContent::Output("hello".into()),
-            }),
-        );
+        history
+            .handle(
+                1,
+                HistoryEvent::ResponseDelta(Delta {
+                    id: "out".into(),
+                    delta: crate::llm::delta::DeltaContent::Output("hello".into()),
+                }),
+            )
+            .unwrap();
         assert_eq!(history.generation(), 1);
     }
 
     #[test]
     fn stale_generation_is_rejected() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into()));
+        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
         assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
         assert_eq!(history.len(), 1);
     }
