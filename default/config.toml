@@ -11,6 +11,10 @@ primary_assistant = ["cerebras"] # CHANGE ME: list of assistants for new tabs to
 subagent_assistant = [] # same as primary_assistant, if empty -- inherits from the parent agent
 clear_keymap = false
 
+[compact]
+threshold = 80
+target = 30
+
 [render]
 hide_reasoning = true
 hide_tools = true

@@ -21,7 +21,34 @@ use crate::tui::widgets::container::element::Element;
 pub struct History {
     #[serde(skip)]
     generation: HistoryGeneration,
+    /// currently running compact state
+    compact: Option<Compact>,
+    archive: Vec<ArchivedHistory>,
     messages: Vec<HistoryEntry>,
+}
+
+// NOTE compact should be resumable, i.e. if it errors out or gets interrupted, user should be able to continue from where it left off
+#[derive(Default, Clone, Serialize, Deserialize, Debug)]
+pub struct Compact {
+    /// the generated summary of the compacted messages; should be incrementally streamed and shown
+    /// to the user; when compact task is complete, we archive the current history, and replace it
+    /// with `compacted` + the messages that were after the compacted ones
+    compacted: String,
+    /// we're compacting the first N messages, replacing them with a developer message
+    dropped: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ArchivedHistory {
+    pub history: Vec<Message>,
+    pub reason: ArchivedHistoryReason,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum ArchivedHistoryReason {
+    Compact,
+    // NOTE if we archive on undo, we should check that the last reason is not also undo, so that 10 undos in a row don't create 10 archived histories
+    Undo,
 }
 
 pub type HistoryGeneration = u64;
@@ -570,7 +597,9 @@ mod tests {
     #[test]
     fn user_message_updates_token_cache() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
+        history
+            .handle(0, HistoryEvent::UserMessage("hello".into()))
+            .unwrap();
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
 
@@ -605,7 +634,9 @@ mod tests {
     #[test]
     fn stale_generation_is_rejected() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
+        history
+            .handle(0, HistoryEvent::UserMessage("hello".into()))
+            .unwrap();
         assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
         assert_eq!(history.len(), 1);
     }

@@ -43,6 +43,16 @@ pub struct ModelConfig {
     pub window: Option<usize>,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct CompactConfig {
+    /// context window percentage, at which we compact the context, threshold < 100
+    pub threshold: usize,
+    /// context window percentage to compact to
+    /// we compact the first N messages, where N is the smallest number s.t. `old_total - dropped < target_percentage * context_window`
+    /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
+    pub target: usize,
+}
+
 #[derive(Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiType {
@@ -148,6 +158,8 @@ pub struct Config {
     /// if false, keymaps are merged with defaults
     pub clear_keymap: bool,
     pub keymap: Keymap,
+
+    pub compact: CompactConfig,
 }
 
 // TODO flatten into Config
@@ -209,6 +221,10 @@ impl Config {
         if !self.subagent_assistant.is_empty() {
             self.validate_assistant(&self.subagent_assistant)?;
         }
+        anyhow::ensure!(
+            (1..100).contains(&self.compact.threshold),
+            "compact.threshold must be in 1..100"
+        );
         Ok(())
     }
 

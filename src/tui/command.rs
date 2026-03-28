@@ -20,6 +20,7 @@ pub enum CommandName {
     AssistantNext,
     AssistantPrev,
     CmdlineEnter,
+    Compact,
     CompletionCancel,
     CompletionNext,
     CompletionPrev,

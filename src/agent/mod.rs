@@ -1,3 +1,4 @@
+pub mod compact;
 pub mod handle;
 pub mod id;
 pub mod init;
