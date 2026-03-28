@@ -15,12 +15,11 @@ pub use handle::AgentEvent;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
-use task::TaskResult;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::handle::ParentHandle;
-use crate::agent::task::AgentTaskManager;
+use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::*;
 use crate::llm::provider::assistant::Assistant;

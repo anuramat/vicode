@@ -76,7 +76,7 @@ impl Agent {
         let tx = self.tx.clone();
         let assistant = self.assistant.clone();
         let tools = self.tools.clone();
-        self.tskmgr.spawn(self.tx.clone(), async move {
+        self.tskmgr.spawn(self.tx.clone(), move |task| async move {
             let res = Agent::turn(tx.clone(), &assistant, tools, instructions, history).await;
             if let Err(e) = res {
                 let event = HistoryEvent::ResponseFailed(e.to_string());
@@ -84,7 +84,7 @@ impl Agent {
                     .await
                     .expect("failed to send turn error event");
             }
-            TaskResult::AssistantResponse
+            task.result(()).await
         });
     }
 

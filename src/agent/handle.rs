@@ -1,9 +1,7 @@
 use std::ops::ControlFlow;
 
 use anyhow::Result;
-use futures::future::AbortHandle;
 use futures::future::try_join_all;
-use tokio::sync::mpsc::Sender;
 use tracing::debug;
 use tracing::error;
 use tracing::instrument;
@@ -11,10 +9,11 @@ use tracing::instrument;
 use crate::agent::Agent;
 use crate::agent::AgentHandle;
 use crate::agent::AgentState;
-use crate::agent::TaskId;
-use crate::agent::TaskResult;
 use crate::agent::id::AgentId;
 use crate::agent::replica;
+use crate::agent::task::TaskEvent;
+use crate::agent::task::manager::TaskId;
+use crate::agent::tool::generic::ToolCallTaskResult;
 use crate::llm::history;
 use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
@@ -26,7 +25,7 @@ use crate::project::PROJECT;
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    TaskDone(TaskId, TaskResult),
+    Task(TaskId, TaskEvent),
     Submit(UserPrompt),
     Retry,
     SetAssistant(String),
@@ -86,16 +85,8 @@ impl Agent {
         debug!(event = ?event, "handling agent event");
 
         match event {
-            TaskDone(loc, result) => {
-                self.apply_task_result(loc, result).await?;
-                if self.tskmgr.pending.is_empty() {
-                    if self.state.context.history.needs_another_turn() {
-                        self.start_turn();
-                    } else {
-                        self.parent.send(ParentEvent::TurnComplete).await?;
-                    }
-                }
-                self.parent.send(ParentEvent::InfoUpdate).await?;
+            Task(id, event) => {
+                self.handle_task_event(id, event).await?;
             }
             DuplicateRequest(aid) => {
                 self.try_duplicate(aid).await?;
@@ -109,7 +100,7 @@ impl Agent {
                     self.handle_history(generation, history::HistoryEvent::UserMessage(text))
                         .await?;
                 }
-                if self.tskmgr.pending.is_empty() {
+                if self.tskmgr.idle() {
                     if multiplier <= 1 {
                         self.start_turn();
                     } else {
@@ -123,7 +114,7 @@ impl Agent {
                 }
             }
             Retry => {
-                if !self.tskmgr.pending.is_empty() {
+                if !self.tskmgr.idle() {
                     return Ok(ControlFlow::Continue(()));
                 }
                 self.start_turn();
@@ -164,15 +155,15 @@ impl Agent {
                 {
                     let generation = self.state.context.history.generation();
                     call.task.prepare(self)?;
-                    self.tskmgr.spawn(self.tx.clone(), async move {
+                    self.tskmgr.spawn(self.tx.clone(), move |task| async move {
                         call.task.run().await;
                         call.executed_at_ms = Some(now_ms());
-                        TaskResult::ToolCall(generation, call)
+                        task.result(ToolCallTaskResult(generation, call)).await
                     });
                 }
             }
             HistoryEvent::ResponseAborted => {
-                if self.tskmgr.pending.is_empty() {
+                if self.tskmgr.idle() {
                     return Ok(());
                 }
                 self.tskmgr.abort().await;
@@ -197,13 +188,13 @@ impl Agent {
     ) {
         let parent = self.id.clone();
         let context = self.state.context.clone();
-        self.tskmgr.spawn(self.tx.clone(), async move {
-            // TODO error handling
-            TaskResult::ReplicaRun(
+        self.tskmgr.spawn(self.tx.clone(), move |task| async move {
+            task.result(
                 replica::run_replicas(parent, context, replicas)
                     .await
                     .unwrap(),
             )
+            .await
         });
     }
 

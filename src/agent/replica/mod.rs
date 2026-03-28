@@ -2,9 +2,12 @@
 use anyhow::Result;
 use tokio::task::JoinSet;
 
+use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::id::AgentId;
 use crate::agent::subagent;
+use crate::agent::task::TaskResult;
+use crate::llm::history::HistoryEvent;
 
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.
 Please review them and provide a single, consolidated implementation that combines the best aspects
@@ -15,6 +18,21 @@ and explain your reasoning briefly.\n\n";
 #[derive(Debug)]
 pub struct ReplicaResult {
     pub report: String,
+}
+
+#[async_trait::async_trait]
+impl TaskResult for ReplicaResult {
+    async fn apply(
+        self: Box<Self>,
+        agent: &mut Agent,
+    ) -> Result<()> {
+        agent
+            .handle_history(
+                agent.state.context.history.generation(),
+                HistoryEvent::DeveloperMessage(self.report),
+            )
+            .await
+    }
 }
 
 pub async fn run_replicas(

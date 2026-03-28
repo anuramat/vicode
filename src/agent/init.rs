@@ -7,7 +7,7 @@ use tokio::sync::mpsc::channel;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
-use crate::agent::task::AgentTaskManager;
+use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::*;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
@@ -105,7 +105,7 @@ impl Agent {
         aid: AgentId,
     ) -> Result<()> {
         anyhow::ensure!(
-            self.tskmgr.pending.is_empty(),
+            self.tskmgr.idle(),
             "cannot duplicate while tasks are running"
         );
         duplicate(&self.id, &aid, &self.state, true).await?;
