@@ -27,7 +27,6 @@ pub enum TaskResult {
 /// manages tool calls, API requests, subagents
 #[derive(Default)]
 pub struct AgentTaskManager {
-    /// tool calls, API requests, subagents, event translator; might contain outdated tasks (i.e. ones not in pending)
     pub tasks: JoinSet<()>,
     /// if a task is not in pending, we should ignore the results
     pub pending: HashMap<TaskId, AbortHandle>,
