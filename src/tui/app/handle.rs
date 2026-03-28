@@ -21,6 +21,7 @@ pub enum AppEvent {
 
     // TODO combine these into a single variant?
     UserPrompt(AgentId, UserPrompt),
+    Compact(AgentId),
     RetryTurn(AgentId),
     HistoryEvent(AgentId, HistoryGeneration, HistoryEvent),
     SetAssistant(AgentId, String),
@@ -52,6 +53,11 @@ impl<'a> App<'a> {
             UserPrompt(agent_id, msg) => {
                 if let Some(handle) = self.agents.get(&agent_id) {
                     handle.tx.send(AgentEvent::Submit(msg)).await?;
+                }
+            }
+            Compact(agent_id) => {
+                if let Some(handle) = self.agents.get(&agent_id) {
+                    handle.tx.send(AgentEvent::Compact).await?;
                 }
             }
             RetryTurn(agent_id) => {

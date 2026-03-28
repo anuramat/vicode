@@ -153,6 +153,7 @@ impl Command {
             CommandName::AssistantNext => app.selected_tab_mut()?.next_assistant().await?,
             CommandName::AssistantPrev => app.selected_tab_mut()?.prev_assistant().await?,
             CommandName::CmdlineEnter => app.enter_cmdline(),
+            CommandName::Compact => app.selected_tab_mut()?.compact().await?,
             CommandName::CompletionCancel => app.cmdline.input.completion_cancel(),
             CommandName::CompletionNext => app.cmdline.input.completion_next(),
             CommandName::CompletionPrev => app.cmdline.input.completion_prev(),

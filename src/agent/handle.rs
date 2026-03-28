@@ -27,6 +27,7 @@ use crate::project::PROJECT;
 pub enum AgentEvent {
     Task(TaskId, TaskEvent),
     Submit(UserPrompt),
+    Compact,
     Retry,
     SetAssistant(String),
     HistoryEvent(HistoryGeneration, HistoryEvent),
@@ -111,6 +112,11 @@ impl Agent {
                         self.save().await?;
                         self.start_replica_turns(replicas);
                     }
+                }
+            }
+            Compact => {
+                if self.tskmgr.idle() {
+                    self.start_compact()?;
                 }
             }
             Retry => {

@@ -123,6 +123,14 @@ impl<'a> Tab<'a> {
         Ok(())
     }
 
+    pub async fn compact(&mut self) -> Result<()> {
+        if !self.state.idle() {
+            return Ok(());
+        }
+        self.tx.send(AppEvent::Compact(self.aid.clone())).await?;
+        Ok(())
+    }
+
     pub async fn abort(&mut self) -> Result<()> {
         self.tx
             .send(AppEvent::HistoryEvent(

@@ -22,7 +22,9 @@ pub struct History {
     #[serde(skip)]
     generation: HistoryGeneration,
     /// currently running compact state
+    #[serde(default)]
     compact: Option<Compact>,
+    #[serde(default)]
     archive: Vec<ArchivedHistory>,
     messages: Vec<HistoryEntry>,
 }
@@ -85,6 +87,25 @@ impl History {
         Self::default()
     }
 
+    pub fn from_messages(messages: Vec<Message>) -> Self {
+        let mut history = Self {
+            messages: messages
+                .into_iter()
+                .map(|message| HistoryEntry {
+                    meta: MessageMeta::default(),
+                    message,
+                })
+                .collect(),
+            ..Self::default()
+        };
+        history.rebuild_token_cache();
+        history
+    }
+
+    pub fn compacting(&self) -> Option<&Compact> {
+        self.compact.as_ref()
+    }
+
     pub fn generation(&self) -> HistoryGeneration {
         self.generation
     }
@@ -100,6 +121,33 @@ impl History {
             .iter()
             .map(|entry| entry.meta.token_count)
             .sum()
+    }
+
+    pub fn compactable_messages(
+        &self,
+        dropped: usize,
+    ) -> Vec<Message> {
+        self.messages
+            .iter()
+            .take(dropped)
+            .map(|entry| entry.message.clone())
+            .collect()
+    }
+
+    pub fn compact_dropped(
+        &self,
+        window: usize,
+        target: usize,
+    ) -> usize {
+        let target = window * target / 100;
+        let mut kept = self.total_tokens();
+        for (idx, entry) in self.messages.iter().enumerate() {
+            if kept < target {
+                return idx;
+            }
+            kept -= entry.meta.token_count;
+        }
+        self.messages.len()
     }
 
     // TODO inline this everywhere?
@@ -334,6 +382,57 @@ impl History {
         let new = count_message_tokens(&entry.message);
         let old = std::mem::replace(&mut entry.meta.token_count, new);
         new as isize - old as isize
+    }
+
+    pub fn start_compact(
+        &mut self,
+        dropped: usize,
+    ) {
+        self.compact = Some(Compact {
+            compacted: String::new(),
+            dropped,
+        });
+    }
+
+    pub fn push_compact_delta(
+        &mut self,
+        delta: String,
+    ) {
+        if let Some(compact) = &mut self.compact {
+            compact.compacted.push_str(&delta);
+        }
+    }
+
+    pub fn finish_compact(&mut self) -> Result<()> {
+        let compact = self
+            .compact
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("compact not started"))?;
+        anyhow::ensure!(
+            compact.dropped <= self.messages.len(),
+            "cannot compact {} messages from history of length {}",
+            compact.dropped,
+            self.messages.len()
+        );
+        self.archive.push(ArchivedHistory {
+            history: self
+                .messages
+                .iter()
+                .map(|entry| entry.message.clone())
+                .collect(),
+            reason: ArchivedHistoryReason::Compact,
+        });
+        let tail = self.messages.split_off(compact.dropped);
+        self.messages = vec![HistoryEntry {
+            meta: MessageMeta::default(),
+            message: Message::Developer(DeveloperMessage {
+                text: compact.compacted,
+            }),
+        }];
+        self.messages.extend(tail);
+        self.messages[0].meta.token_count = count_message_tokens(&self.messages[0].message);
+        self.generation += 1;
+        Ok(())
     }
 }
 
@@ -652,5 +751,58 @@ mod tests {
         .unwrap();
         history.rebuild_token_cache();
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
+    }
+
+    #[test]
+    fn compact_dropped_keeps_target_budget() {
+        let history = History::from_messages(vec![
+            Message::User(UserMessage {
+                text: "a".repeat(100),
+            }),
+            Message::User(UserMessage {
+                text: "b".repeat(100),
+            }),
+        ]);
+        let dropped = history.compact_dropped(history.total_tokens(), 50);
+        let kept: usize = history.messages[dropped..]
+            .iter()
+            .map(|entry| entry.meta.token_count)
+            .sum();
+        let previous: usize = history.messages[dropped.saturating_sub(1)..]
+            .iter()
+            .map(|entry| entry.meta.token_count)
+            .sum();
+        assert!(kept < history.total_tokens() / 2);
+        if dropped > 0 {
+            assert!(previous >= history.total_tokens() / 2);
+        }
+    }
+
+    #[test]
+    fn finish_compact_archives_and_rewrites_history() {
+        let mut history = History::from_messages(vec![
+            Message::User(UserMessage {
+                text: "first".into(),
+            }),
+            Message::Assistant(AssistantMessage::default()),
+            Message::User(UserMessage {
+                text: "last".into(),
+            }),
+        ]);
+        let generation = history.generation();
+        history.start_compact(2);
+        history.push_compact_delta("summary".into());
+        history.finish_compact().unwrap();
+
+        assert_eq!(history.archive.len(), 1);
+        assert!(history.compact.is_none());
+        assert_eq!(history.messages.len(), 2);
+        assert!(matches!(
+            history.messages[0].message,
+            Message::Developer(DeveloperMessage { ref text }) if text == "summary"
+        ));
+        assert!(matches!(history.messages[1].message, Message::User(_)));
+        assert!(history.total_tokens() > 0);
+        assert_eq!(history.generation(), generation + 1);
     }
 }
