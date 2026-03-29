@@ -4,12 +4,8 @@ use tracing::debug;
 use tracing::instrument;
 
 use super::App;
-use crate::agent::AgentEvent;
 use crate::agent::handle::ParentEvent as AgentParentEvent;
-use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
-use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryGeneration;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::TabState;
 use crate::tui::widgets::info::InfoWidget;
@@ -18,12 +14,6 @@ use crate::tui::widgets::info::InfoWidget;
 pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
-
-    // TODO combine these into a single variant?
-    UserPrompt(AgentId, UserPrompt),
-    RetryTurn(AgentId),
-    HistoryEvent(AgentId, HistoryGeneration, HistoryEvent),
-    SetAssistant(AgentId, String),
 
     LoadAgent(AgentId),
     ParentEvent(AgentId, AgentParentEvent),
@@ -48,29 +38,6 @@ impl<'a> App<'a> {
             Paste(content) => {
                 self.selected_tab_mut()?.paste(&content).await;
                 self.dirty = true;
-            }
-            UserPrompt(agent_id, msg) => {
-                if let Some(handle) = self.agents.get(&agent_id) {
-                    handle.tx.send(AgentEvent::Submit(msg)).await?;
-                }
-            }
-            RetryTurn(agent_id) => {
-                if let Some(handle) = self.agents.get(&agent_id) {
-                    handle.tx.send(AgentEvent::Retry).await?;
-                }
-            }
-            HistoryEvent(agent_id, generation, event) => {
-                if let Some(handle) = self.agents.get(&agent_id) {
-                    handle
-                        .tx
-                        .send(AgentEvent::HistoryEvent(generation, event))
-                        .await?;
-                }
-            }
-            SetAssistant(agent_id, id) => {
-                if let Some(handle) = self.agents.get(&agent_id) {
-                    handle.tx.send(AgentEvent::SetAssistant(id)).await?;
-                }
             }
             LoadAgent(agent_id) => {
                 self.load_agent(agent_id).await?;

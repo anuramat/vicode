@@ -7,9 +7,10 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::AbortHandle;
 use tokio::task::JoinSet;
 
-use crate::agent::AgentEvent;
+use crate::agent::handle::AgentEvent;
 use crate::agent::task::sink::*;
 use crate::define_uuid;
+use crate::llm::history::HistoryGeneration;
 
 define_uuid!(TaskId);
 
@@ -20,12 +21,6 @@ pub struct AgentTaskManager {
     pending: HashMap<TaskId, AbortHandle>,
     /// lock to ensure that state/files are not modified while we're cloning the agent
     pub lock: RwLock<()>,
-}
-
-impl Drop for AgentTaskManager {
-    fn drop(&mut self) {
-        self.tasks.abort_all();
-    }
 }
 
 impl AgentTaskManager {
@@ -40,21 +35,20 @@ impl AgentTaskManager {
     pub fn spawn<F, Fut>(
         &mut self,
         tx: Sender<AgentEvent>,
+        generation: HistoryGeneration,
         task: F,
     ) where
         F: FnOnce(TaskHandle) -> Fut + Send + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let id = TaskId::new();
-        let handle = TaskHandle::new(id.clone(), tx);
+        let handle = TaskHandle::new(id.clone(), generation, tx.clone());
+        let task_id = id.clone();
         let wrapped = async move {
-            let fallback = handle.clone();
-            if let Err(e) = task(handle).await {
-                fallback
-                    .error(e.to_string())
-                    .await
-                    .expect("failed to send task error");
-            }
+            let event: Result<()> = task(handle).await;
+            tx.send(AgentEvent::TaskDone(task_id, event))
+                .await
+                .expect("failed to send task done event");
         };
         self.pending.insert(id, self.tasks.spawn(wrapped));
     }

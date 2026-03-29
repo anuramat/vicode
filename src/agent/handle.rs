@@ -11,9 +11,7 @@ use crate::agent::AgentHandle;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::agent::replica;
-use crate::agent::task::TaskEvent;
 use crate::agent::task::manager::TaskId;
-use crate::agent::tool::generic::ToolCallTaskResult;
 use crate::llm::history;
 use crate::llm::history::History;
 use crate::llm::history::HistoryEvent;
@@ -25,14 +23,9 @@ use crate::project::PROJECT;
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    Task(TaskId, TaskEvent),
-    Submit(UserPrompt),
-    Retry,
-    SetAssistant(String),
-    HistoryEvent(HistoryGeneration, HistoryEvent),
-    /// delete agent, e.g. when deleting a tab
-    Delete,
-    DuplicateRequest(AgentId),
+    TaskDone(TaskId, Result<()>),
+    TaskEvent(TaskId, HistoryGeneration, HistoryEvent),
+    External(ExternalEvent),
 }
 
 #[derive(Debug)]
@@ -46,6 +39,17 @@ pub enum ParentEvent {
 }
 
 #[derive(Debug)]
+pub enum ExternalEvent {
+    Delete,
+    Retry,
+    Abort,
+    Undo(usize), // TODO maybe this should send generation or whatever
+    SetAssistant(String),
+    Submit(UserPrompt),
+    DuplicateRequest(AgentId),
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentStarted {
     pub aid: AgentId,
     pub state: AgentState,
@@ -85,8 +89,51 @@ impl Agent {
         debug!(event = ?event, "handling agent event");
 
         match event {
-            Task(id, event) => {
-                self.handle_task_event(id, event).await?;
+            TaskDone(tid, result) => {
+                self.handle_task_result(tid, result).await?;
+            }
+            TaskEvent(tid, generation, event) => {
+                if self.tskmgr.pending(&tid) {
+                    self.handle_history(generation, event).await?;
+                }
+            }
+            External(event) => {
+                return self.handle_external(event).await;
+            }
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    pub fn idle_and(&mut self) -> Result<&mut Self> {
+        anyhow::ensure!(self.tskmgr.idle(), "agent is busy");
+        Ok(self)
+    }
+
+    pub fn incremented(&mut self) -> Result<HistoryGeneration> {
+        let history = &mut self.idle_and()?.state.context.history;
+        history.increment();
+        Ok(history.generation())
+    }
+
+    async fn handle_external(
+        &mut self,
+        event: ExternalEvent,
+    ) -> Result<ControlFlow<()>> {
+        use ExternalEvent::*;
+        match event {
+            Undo(n) => {
+                let g = self.incremented()?;
+                self.handle_history(g, HistoryEvent::Pop(n)).await?;
+            }
+            Abort => {
+                let g = self.incremented()?;
+                self.handle_history(g, HistoryEvent::ResponseAborted)
+                    .await?;
+            }
+            Delete => {
+                self.tskmgr.abort().await;
+                PROJECT.delete_agent(&self.id).await?; // TODO maybe some special handling for failed deletes
+                return Ok(ControlFlow::Break(()));
             }
             DuplicateRequest(aid) => {
                 self.try_duplicate(aid).await?;
@@ -104,7 +151,6 @@ impl Agent {
                     if multiplier <= 1 {
                         self.start_turn();
                     } else {
-                        // TODO insert a developer message <n replicas pending>
                         let replicas =
                             try_join_all((0..multiplier).map(|_| AgentId::new())).await?;
                         self.state.topology.children.extend(replicas.clone());
@@ -122,19 +168,11 @@ impl Agent {
             SetAssistant(id) => {
                 self.set_assistant(&id).await?;
             }
-            HistoryEvent(generation, event) => {
-                self.handle_history(generation, event).await?;
-            }
-            Delete => {
-                self.tskmgr.abort().await;
-                PROJECT.delete_agent(&self.id).await?; // TODO maybe some special handling for failed deletes
-                return Ok(ControlFlow::Break(()));
-            }
         }
         Ok(ControlFlow::Continue(()))
     }
 
-    pub async fn handle_history(
+    async fn handle_history(
         &mut self,
         generation: HistoryGeneration,
         event: HistoryEvent,
@@ -155,11 +193,15 @@ impl Agent {
                 {
                     let generation = self.state.context.history.generation();
                     call.task.prepare(self)?;
-                    self.tskmgr.spawn(self.tx.clone(), move |task| async move {
-                        call.task.run().await;
-                        call.executed_at_ms = Some(now_ms());
-                        task.result(ToolCallTaskResult(generation, call)).await
-                    });
+                    self.tskmgr
+                        .spawn(self.tx.clone(), generation, move |task| async move {
+                            call.task.run().await;
+                            call.executed_at_ms = Some(now_ms());
+                            task.history(HistoryEvent::ResponseItem(Box::new(
+                                AssistantItem::ToolCall(call),
+                            )))
+                            .await
+                        });
                 }
             }
             HistoryEvent::ResponseAborted => {
@@ -188,14 +230,15 @@ impl Agent {
     ) {
         let parent = self.id.clone();
         let context = self.state.context.clone();
-        self.tskmgr.spawn(self.tx.clone(), move |task| async move {
-            task.result(
-                replica::run_replicas(parent, context, replicas)
+        self.tskmgr.spawn(
+            self.tx.clone(),
+            context.history.generation(),
+            move |task| async move {
+                let result = replica::run_replicas(parent, context, replicas).await?;
+                task.history(HistoryEvent::DeveloperMessage(result.report))
                     .await
-                    .unwrap(),
-            )
-            .await
-        });
+            },
+        );
     }
 
     pub async fn set_assistant(

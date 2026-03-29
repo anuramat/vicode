@@ -4,6 +4,7 @@ pub mod candidate;
 use anyhow::Result;
 use tokio::sync::mpsc::channel;
 
+use super::handle::ExternalEvent;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentEvent;
@@ -46,11 +47,11 @@ pub async fn run_child(
     agent.spawn();
 
     child_tx
-        .send(AgentEvent::Submit(UserPrompt {
+        .send(AgentEvent::External(ExternalEvent::Submit(UserPrompt {
             text,
             multiplier: 1,
             generation: context.history.generation(),
-        }))
+        })))
         .await?;
 
     loop {

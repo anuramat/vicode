@@ -58,6 +58,10 @@ impl History {
         Self::default()
     }
 
+    pub fn increment(&mut self) {
+        self.generation += 1;
+    }
+
     pub fn generation(&self) -> HistoryGeneration {
         self.generation
     }
@@ -112,21 +116,39 @@ impl History {
             self.generation,
             self.messages
         );
-        // XXX only bump generation here?
-        match event {
-            HistoryEvent::ResponseStarted(started_at_ms) => self.start_response(started_at_ms),
-            HistoryEvent::ResponseDelta(item_delta) => self.push_delta(item_delta),
-            HistoryEvent::ResponseItem(item) => self.push_item(*item),
-            HistoryEvent::ResponseCompleted(items) => self.complete_response(items),
-            HistoryEvent::ResponseAborted => self.abort_response(),
-            HistoryEvent::ResponseFailed(msg) => self.fail_response(msg),
+        // XXX verify recount_last_message logic
+        let delta = match event {
+            HistoryEvent::ResponseStarted(started_at_ms) => {
+                self.start_response(started_at_ms);
+                self.recount_last_message()
+            }
+            HistoryEvent::ResponseDelta(item_delta) => {
+                self.push_delta(item_delta);
+                self.recount_last_message()
+            }
+            HistoryEvent::ResponseItem(item) => {
+                self.push_item(*item);
+                self.recount_last_message()
+            }
+            HistoryEvent::ResponseCompleted(items) => {
+                self.complete_response(items);
+                self.recount_last_message()
+            }
+            HistoryEvent::ResponseAborted => {
+                self.abort_response();
+                self.recount_last_message()
+            }
+            HistoryEvent::ResponseFailed(msg) => {
+                self.fail_response(msg);
+                self.recount_last_message()
+            }
             HistoryEvent::DeveloperMessage(text) => {
                 let msg = Message::Developer(DeveloperMessage { text });
                 self.messages.push(HistoryEntry {
                     meta: MessageMeta::default(),
                     message: msg,
                 });
-                self.generation += 1;
+                self.recount_last_message()
             }
             HistoryEvent::UserMessage(text) => {
                 let msg = Message::User(UserMessage { text });
@@ -134,7 +156,7 @@ impl History {
                     meta: MessageMeta::default(),
                     message: msg,
                 });
-                self.generation += 1;
+                self.recount_last_message()
             }
             HistoryEvent::Pop(n) => {
                 let len = self.messages.len();
@@ -149,11 +171,10 @@ impl History {
                     .iter()
                     .map(|entry| entry.meta.token_count as isize)
                     .sum::<isize>();
-                self.generation += 1;
-                return Ok(delta);
+                delta
             }
-        }
-        Ok(self.recount_last_message())
+        };
+        Ok(delta)
     }
 
     pub fn push_item(
@@ -189,7 +210,6 @@ impl History {
                 },
                 message: msg.into(),
             });
-            self.generation += 1;
         }
         if let Some(modified) = item_modified {
             self.messages
@@ -212,7 +232,6 @@ impl History {
             },
             message: AssistantMessage::default().into(),
         });
-        self.generation += 1;
     }
 
     pub fn complete_response(
@@ -233,7 +252,6 @@ impl History {
                 }
                 .into(),
             });
-            self.generation += 1;
         }
     }
 
@@ -260,7 +278,6 @@ impl History {
                     }
                     .into(),
                 });
-                self.generation += 1;
             }
             _ => {}
         }
@@ -283,7 +300,6 @@ impl History {
                 }
                 .into(),
             });
-            self.generation += 1;
         }
     }
 
@@ -396,7 +412,7 @@ mod tests {
         history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming::with_start(2),
@@ -416,7 +432,7 @@ mod tests {
         history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming {
@@ -439,7 +455,7 @@ mod tests {
         history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming::with_start(2),
@@ -449,7 +465,7 @@ mod tests {
             .unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseDelta(Delta {
                     id: "out".into(),
                     delta: crate::llm::delta::DeltaContent::Output("hello".into()),
@@ -516,7 +532,7 @@ mod tests {
         history.handle(0, HistoryEvent::ResponseStarted(0)).unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming::new(),
@@ -526,7 +542,7 @@ mod tests {
             .unwrap();
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseCompleted(vec![AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming {
@@ -553,7 +569,7 @@ mod tests {
     fn response_aborted_marks_message_aborted() {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(0)).unwrap();
-        history.handle(1, HistoryEvent::ResponseAborted).unwrap();
+        history.handle(0, HistoryEvent::ResponseAborted).unwrap();
         let Some(HistoryEntry {
             message: Message::Assistant(msg),
             ..
@@ -570,7 +586,9 @@ mod tests {
     #[test]
     fn user_message_updates_token_cache() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
+        history
+            .handle(0, HistoryEvent::UserMessage("hello".into()))
+            .unwrap();
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
 
@@ -578,10 +596,10 @@ mod tests {
     fn generation_changes_only_when_message_count_changes() {
         let mut history = History::new();
         history.handle(0, HistoryEvent::ResponseStarted(1)).unwrap();
-        assert_eq!(history.generation(), 1);
+        assert_eq!(history.generation(), 0);
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseItem(Box::new(AssistantItem::Output(OutputItem {
                     id: "out".into(),
                     timing: ItemTiming::with_start(2),
@@ -589,15 +607,19 @@ mod tests {
                 }))),
             )
             .unwrap();
-        assert_eq!(history.generation(), 1);
+        assert_eq!(history.generation(), 0);
         history
             .handle(
-                1,
+                0,
                 HistoryEvent::ResponseDelta(Delta {
                     id: "out".into(),
                     delta: crate::llm::delta::DeltaContent::Output("hello".into()),
                 }),
             )
+            .unwrap();
+        assert_eq!(history.generation(), 0);
+        history
+            .handle(0, HistoryEvent::UserMessage("hi".into()))
             .unwrap();
         assert_eq!(history.generation(), 1);
     }
@@ -605,9 +627,22 @@ mod tests {
     #[test]
     fn stale_generation_is_rejected() {
         let mut history = History::new();
-        history.handle(0, HistoryEvent::UserMessage("hello".into())).unwrap();
+        history
+            .handle(0, HistoryEvent::UserMessage("hello".into()))
+            .unwrap();
         assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
         assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn generation_changes_for_external_history_edits() {
+        let mut history = History::new();
+        history
+            .handle(0, HistoryEvent::DeveloperMessage("note".into()))
+            .unwrap();
+        assert_eq!(history.generation(), 1);
+        history.handle(1, HistoryEvent::Pop(1)).unwrap();
+        assert_eq!(history.generation(), 2);
     }
 
     #[test]
