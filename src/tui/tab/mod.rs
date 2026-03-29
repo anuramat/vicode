@@ -31,7 +31,9 @@ use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::llm::tokens::count_text_tokens;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::osc7::set_osc7;
 use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -139,7 +141,7 @@ impl<'a> TabEntry<'a> {
 
     pub fn set_osc7(&self) {
         match self {
-            Self::Loading => PROJECT.set_osc7(),
+            Self::Loading => set_osc7(&PROJECT.root()),
             Self::Ready(tab) => tab.set_osc7(),
         }
     }

@@ -19,7 +19,6 @@ use crate::llm::history::HistoryGeneration;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::now_ms;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::PROJECT;
 
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -132,7 +131,7 @@ impl Agent {
             }
             Delete => {
                 self.tskmgr.abort().await;
-                PROJECT.delete_agent(&self.id).await?; // TODO maybe some special handling for failed deletes
+                self.delete_agent().await?; // TODO maybe some special handling for failed deletes
                 return Ok(ControlFlow::Break(()));
             }
             DuplicateRequest(aid) => {

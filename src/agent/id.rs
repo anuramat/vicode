@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 
 #[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AgentId(String);

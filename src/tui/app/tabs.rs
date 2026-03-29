@@ -1,4 +1,3 @@
-use anyhow::Context;
 use anyhow::Result;
 use git2::Repository;
 use indexmap::IndexMap;
@@ -13,6 +12,7 @@ use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
@@ -55,10 +55,7 @@ impl<'a> App<'a> {
     }
 
     pub async fn load_tabs(&mut self) -> Result<()> {
-        let state = PROJECT
-            .load_app_state()
-            .await
-            .expect("failed to load app state");
+        let state = Self::load_app_state().await?;
         let mut tabs = IndexMap::new();
         for aid in &state.primary_agents {
             tabs.insert(aid.clone(), TabEntry::Loading);
@@ -76,7 +73,7 @@ impl<'a> App<'a> {
     pub async fn new_tab(&mut self) -> Result<()> {
         let aid = AgentId::new().await?;
         self.insert_loading_tab(aid.clone());
-        self.tx.send(AppEvent::LoadAgent(aid)).await?;
+        self.tx.send(AppEvent::NewAgent(aid)).await?;
         Ok(())
     }
 
@@ -102,14 +99,24 @@ impl<'a> App<'a> {
             aid: aid.clone(),
             tx: self.tx.clone(),
         });
-        let agent = if PROJECT.agent(&aid).exists() {
-            Agent::load(parent, aid).await?
-        } else {
-            let repo = Repository::discover(PROJECT.root.clone())?;
-            let commit = repo.head()?.peel_to_commit()?.id().to_string();
-            let instructions = PROJECT.instructions_by_commit(&commit).await?;
-            Agent::new(parent, aid, commit, instructions).await?
-        };
+        let agent = Agent::load(parent, aid).await?;
+        agent.spawn();
+        Ok(())
+    }
+
+    pub async fn new_agent(
+        &mut self,
+        aid: AgentId,
+    ) -> Result<()> {
+        let parent = Box::new(AppParentSink {
+            aid: aid.clone(),
+            tx: self.tx.clone(),
+        });
+
+        let repo = Repository::discover(PROJECT.root())?;
+        let commit = repo.head()?.peel_to_commit()?.id().to_string();
+        let instructions = PROJECT.instructions(&aid).await?;
+        let agent = Agent::new(parent, aid, commit, instructions).await?;
         agent.spawn();
         Ok(())
     }
@@ -236,7 +243,7 @@ impl<'a> App<'a> {
         idx = idx.and_then(|i| {
             let n_tabs = self.tabs.len();
             if n_tabs == 0 || i >= n_tabs {
-                set_osc7(&PROJECT.root);
+                set_osc7(&PROJECT.root());
                 None
             } else {
                 if let Some((_, tab)) = self.tabs.get_index(i) {
@@ -258,6 +265,18 @@ impl<'a> App<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn new_tab_enqueues_agent_creation() {
+        let mut app = App::new().await.unwrap();
+
+        app.new_tab().await.unwrap();
+
+        match app.rx.recv().await {
+            Some(AppEvent::NewAgent(_)) => {}
+            other => panic!("expected NewAgent, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {

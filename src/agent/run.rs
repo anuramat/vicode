@@ -14,7 +14,9 @@ impl Agent {
         mut self,
         abort: AbortHandle,
     ) -> Result<()> {
-        PROJECT.mount(&self.state.context.commit, &self.id).await?;
+        PROJECT
+            .mount_agent(&self.state.context.commit, &self.id)
+            .await?;
         self.parent
             .send(ParentEvent::Started(AgentStarted {
                 aid: self.id.clone(),

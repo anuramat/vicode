@@ -12,19 +12,18 @@ use ignore::gitignore::Gitignore;
 use ignore::gitignore::GitignoreBuilder;
 use similar::TextDiff;
 
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 
 pub async fn response(
     parent: &AgentId,
     aid: &AgentId,
 ) -> Result<String> {
-    let text = PROJECT
-        .load_agent_state(aid)
-        .await?
-        .context
-        .history
-        .last_output()?;
+    let serialized = tokio::fs::read_to_string(PROJECT.agent_state(aid)).await?;
+    let state: AgentState = serde_json::from_str(&serialized)?;
+    let text = state.context.history.last_output()?;
     let diff = diff(parent, aid)?;
     Ok(format!(
         "<implementation id={}>\n{}\n```diff\n{}```\n</implementation>",
@@ -36,8 +35,8 @@ fn diff(
     parent: &AgentId,
     aid: &AgentId,
 ) -> Result<String> {
-    let parent_upper = PROJECT.overlay_upper(parent);
-    let child_upper = PROJECT.overlay_upper(aid);
+    let parent_upper = PROJECT.agent_changes_dir(parent);
+    let child_upper = PROJECT.agent_changes_dir(aid);
     let parent_workdir = PROJECT.agent_workdir(parent);
     let child_workdir = PROJECT.agent_workdir(aid);
     let ignore = gitignore(&child_workdir)?;

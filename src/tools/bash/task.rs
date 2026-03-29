@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::agent::tool::traits::*;
 use crate::bwrap::BwrapRunner;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tools::bash::BashArguments;
 use crate::tools::bash::BashContext;
 use crate::tools::bash::BashResult;

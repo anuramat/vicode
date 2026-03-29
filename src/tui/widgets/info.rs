@@ -7,6 +7,7 @@ use tokio::process::Command;
 
 use crate::agent::id::AgentId;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::HeightComputable;
 

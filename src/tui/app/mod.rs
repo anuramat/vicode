@@ -4,7 +4,6 @@ pub mod render;
 pub mod run;
 pub mod tabs;
 
-use std::collections::HashMap;
 
 use anyhow::Result;
 pub use handle::AppEvent;
@@ -17,9 +16,10 @@ use tokio::sync::mpsc::channel;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
-use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
 use crate::config::CONFIG;
+use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
@@ -73,12 +73,7 @@ impl<'a> App<'a> {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
 
-        let project_name = crate::project::PROJECT
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let project_name = PROJECT.name();
 
         Ok(Self {
             show_tabs: false,
@@ -111,5 +106,22 @@ impl<'a> App<'a> {
             msg,
             expires_at: Instant::now() + NOTIFICATION_DURATION,
         });
+    }
+
+    pub async fn save_app_state(&self) -> Result<()> {
+        let data = self.state();
+        let serialized = serde_json::to_string_pretty(&data)?;
+        let path = PROJECT.app_state();
+        tokio::fs::write(path, serialized).await?;
+        Ok(())
+    }
+
+    pub async fn load_app_state() -> Result<AppState> {
+        let path = PROJECT.app_state();
+        if !path.exists() {
+            return Ok(AppState::default());
+        }
+        let serialized = tokio::fs::read_to_string(path).await?;
+        Ok(serde_json::from_str(&serialized)?)
     }
 }

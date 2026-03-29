@@ -6,6 +6,7 @@ use crate::llm::history::HistoryGeneration;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::AssistantState;

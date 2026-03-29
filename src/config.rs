@@ -125,6 +125,9 @@ pub struct AssistantConfig {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
+    /// disable fuse-overlayfs/bindfs overlays and just copy stuff around; mac compatibility hack
+    #[serde(default)]
+    pub disable_overlay: bool,
     /// Paths (relative to project root) to expose in the agent workdir through a special lowerdir shared by all agents.
     /// All directories are assumed to be gitignored. Usecase: compilation cache, .env files etc.
     /// - directories are bind-mounted
