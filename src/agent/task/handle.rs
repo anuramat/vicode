@@ -2,16 +2,15 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::agent::handle::ParentEvent;
-use crate::agent::task::TaskEvent;
 use crate::agent::task::manager::TaskId;
 
 impl Agent {
-    pub async fn handle_task_event(
+    pub async fn handle_task_result(
         &mut self,
         id: TaskId,
-        event: TaskEvent,
+        event: Result<()>,
     ) -> Result<()> {
-        let finished = self.apply_task_event(id, event).await?;
+        let finished = self.apply_task_result(id, event).await?;
         if !finished {
             return Ok(());
         }
@@ -26,26 +25,23 @@ impl Agent {
         Ok(())
     }
 
-    async fn apply_task_event(
+    async fn apply_task_result(
         &mut self,
         id: TaskId,
-        event: TaskEvent,
+        event: Result<()>,
     ) -> Result<bool> {
         if !self.tskmgr.pending(&id) {
             return Ok(false);
         }
         match event {
-            TaskEvent::Delta(update) => {
-                update.apply(self).await?;
-                Ok(false)
-            }
-            TaskEvent::Result(result) => {
-                result.apply(self).await?;
+            Ok(()) => {
                 self.tskmgr.finish_task(&id)?;
                 Ok(true)
             }
-            TaskEvent::Error(msg) => {
-                self.parent.send(ParentEvent::Error(msg)).await?;
+            Err(err) => {
+                self.parent
+                    .send(ParentEvent::Error(err.to_string()))
+                    .await?;
                 self.tskmgr.finish_task(&id)?;
                 Ok(true)
             }

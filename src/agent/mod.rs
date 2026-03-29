@@ -10,24 +10,36 @@ pub mod turn;
 
 use std::sync::Arc;
 
+use anyhow::Result;
 use futures::future::AbortHandle;
-pub use handle::AgentEvent;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
+use crate::agent::handle::AgentEvent;
+use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::*;
 use crate::llm::provider::assistant::Assistant;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AgentHandle {
     pub tx: Sender<AgentEvent>,
     pub abort: AbortHandle, // TODO should we use tokio abort handle instead?
+}
+
+impl AgentHandle {
+    pub async fn send(
+        &self,
+        event: ExternalEvent,
+    ) -> Result<()> {
+        self.tx.send(AgentEvent::External(event)).await?;
+        Ok(())
+    }
 }
 
 pub struct Agent {

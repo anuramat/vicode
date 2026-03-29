@@ -6,8 +6,8 @@ use tokio::sync::mpsc::Sender;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::AgentEvent;
 use crate::agent::handle::AgentStarted;
+use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
@@ -80,6 +80,7 @@ impl<'a> App<'a> {
         Ok(())
     }
 
+    /// inserts and selects a dummy tab
     fn insert_loading_tab(
         &mut self,
         aid: AgentId,
@@ -117,45 +118,33 @@ impl<'a> App<'a> {
         &mut self,
         started: AgentStarted,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), started.aid.clone(), started.state).await?;
+        let tab = Tab::new(self.tx.clone(), started.clone()).await?;
         self.tabs.insert(started.aid.clone(), TabEntry::Ready(tab));
-        self.agents.insert(started.aid.clone(), started.handle);
         self.rebuild_tablist();
         Ok(())
     }
 
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
-        // TODO this is kinda ugly
-        let tab = self.selected_tab()?;
-        if !tab.state.idle() {
-            return Ok(());
-        }
-        let tx = self
-            .agents
-            .get(&tab.aid)
-            .with_context(|| format!("agent handle for {} not found", tab.aid))?
-            .tx
-            .clone();
-        let new_aid = AgentId::new().await?;
-        self.insert_loading_tab(new_aid.clone());
-        tx.send(AgentEvent::DuplicateRequest(new_aid)).await?;
+        let original = self.selected_tab()?.aid.clone();
+
+        let allocated = AgentId::new().await?;
+        self.insert_loading_tab(allocated.clone());
+
+        self.tab_mut_by_aid(&original)?
+            .agent
+            .send(ExternalEvent::DuplicateRequest(allocated))
+            .await?;
         Ok(())
     }
 
     /// delete selected tab and corresponding agent
     pub async fn delete_tab(&mut self) -> Result<()> {
-        if let Some(idx) = self.selected_tab_idx() {
-            if let Some((aid, _)) = self.tabs.shift_remove_index(idx)
-                && let Some(handle) = self.agents.remove(&aid)
-                && handle.tx.send(AgentEvent::Delete).await.is_err()
-            {
-                handle.abort.abort();
-            }
-        } else {
-            return Ok(());
+        if let Some(idx) = self.selected_tab_idx()
+            && let Some((_, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx)
+        {
+            tab.agent.send(ExternalEvent::Delete).await?
         }
-
         self.rebuild_tablist();
         Ok(())
     }

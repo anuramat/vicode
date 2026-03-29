@@ -48,8 +48,6 @@ pub struct App<'a> {
     /// true if we received an event but didn't redraw yet
     pub dirty: bool,
 
-    /// primary agents
-    pub agents: HashMap<AgentId, AgentHandle>,
     /// UI for primary agents
     pub tabs: IndexMap<AgentId, TabEntry<'a>>,
 
@@ -93,7 +91,6 @@ impl<'a> App<'a> {
             should_exit: false,
             tablist: TabList::default(),
             tabs: IndexMap::new(),
-            agents: HashMap::new(),
             notification: None,
         })
     }
@@ -102,12 +99,6 @@ impl<'a> App<'a> {
         AppState {
             primary_agents: self.tabs.keys().cloned().collect(),
         }
-    }
-
-    pub fn selected_aid(&self) -> Option<AgentId> {
-        self.selected_tab_idx()
-            .and_then(|idx| self.tabs.get_index(idx))
-            .map(|(aid, _)| aid.clone())
     }
 
     pub fn notify(

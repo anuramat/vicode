@@ -7,13 +7,12 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Padding;
 
+use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
 use crate::config::CONFIG;
-use crate::llm::history::HistoryEvent;
 use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
-use crate::tui::app::handle::AppEvent;
 use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabState;
@@ -49,9 +48,7 @@ impl<'a> Tab<'a> {
             .with_context(|| "couldn't find the provided assistant id")?;
         self.agent_state.context.assistant_id = id.clone();
         self.assistant_config = CONFIG.assistants[&id].clone();
-        self.tx
-            .send(AppEvent::SetAssistant(self.aid.clone(), id))
-            .await?;
+        self.agent.send(ExternalEvent::SetAssistant(id)).await?;
         Ok(())
     }
 
@@ -107,9 +104,7 @@ impl<'a> Tab<'a> {
 
         self.set_state(TabState::Running(AssistantState::Generating))
             .await?;
-        self.tx
-            .send(AppEvent::UserPrompt(self.aid.clone(), prompt))
-            .await?;
+        self.agent.send(ExternalEvent::Submit(prompt)).await?;
         Ok(())
     }
 
@@ -119,18 +114,12 @@ impl<'a> Tab<'a> {
         }
         self.set_state(TabState::Running(AssistantState::Generating))
             .await?;
-        self.tx.send(AppEvent::RetryTurn(self.aid.clone())).await?;
+        self.agent.send(ExternalEvent::Retry).await?;
         Ok(())
     }
 
     pub async fn abort(&mut self) -> Result<()> {
-        self.tx
-            .send(AppEvent::HistoryEvent(
-                self.aid.clone(),
-                self.agent_state.context.history.generation(),
-                HistoryEvent::ResponseAborted,
-            ))
-            .await?;
+        self.agent.send(ExternalEvent::Abort).await?;
         Ok(())
     }
 
@@ -141,13 +130,7 @@ impl<'a> Tab<'a> {
         if !self.state.idle() || n > self.agent_state.context.history.len() {
             return Ok(());
         }
-        self.tx
-            .send(AppEvent::HistoryEvent(
-                self.aid.clone(),
-                self.agent_state.context.history.generation(),
-                HistoryEvent::Pop(n),
-            ))
-            .await?;
+        self.agent.send(ExternalEvent::Undo(n)).await?;
         Ok(())
     }
 

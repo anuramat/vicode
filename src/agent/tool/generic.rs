@@ -5,11 +5,6 @@ use serde::Serialize;
 
 use super::traits::*;
 use crate::agent::Agent;
-use crate::agent::task::TaskResult;
-use crate::llm::history::HistoryEvent;
-use crate::llm::history::HistoryGeneration;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::ToolCallItem;
 
 // NOTE we have to write explicit bounds because serde heuristics break on Option<T> -- they incorrectly require T to implement Default
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -76,23 +71,5 @@ where
                 self.output = Some(Err(e.to_string()));
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct ToolCallTaskResult(pub HistoryGeneration, pub ToolCallItem);
-
-#[async_trait::async_trait]
-impl TaskResult for ToolCallTaskResult {
-    async fn apply(
-        self: Box<Self>,
-        agent: &mut Agent,
-    ) -> Result<()> {
-        agent
-            .handle_history(
-                self.0,
-                HistoryEvent::ResponseItem(Box::new(AssistantItem::ToolCall(self.1))),
-            )
-            .await
     }
 }

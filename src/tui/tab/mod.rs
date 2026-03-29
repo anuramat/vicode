@@ -20,7 +20,9 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::Sender;
 
+use crate::agent::AgentHandle;
 use crate::agent::AgentState;
+use crate::agent::handle::AgentStarted;
 use crate::agent::id::AgentId;
 use crate::config::AssistantConfig;
 use crate::config::CONFIG;
@@ -40,7 +42,8 @@ const INFO_PANE_WIDTH: u16 = 32;
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    pub tx: Sender<AppEvent>,
+    pub tx: Sender<AppEvent>, // TODO we can ALMOST drop this
+    pub agent: AgentHandle,
     pub aid: AgentId,
     pub agent_state: AgentState,
     pub instructions_tokens: usize,
@@ -157,19 +160,19 @@ impl<'a> TabEntry<'a> {
 impl<'a> Tab<'a> {
     pub async fn new(
         tx: Sender<AppEvent>,
-        aid: AgentId,
-        agent_state: AgentState,
+        agent: AgentStarted,
     ) -> Result<Self> {
         let state = TabState::Running(AssistantState::from_history(
-            agent_state.context.history.as_ref(),
+            agent.state.context.history.as_ref(),
         ));
         let tab = Self {
-            assistant_config: CONFIG.assistants[&agent_state.context.assistant_id].clone(),
-            instructions_tokens: count_text_tokens(&agent_state.context.instructions),
-            context_tokens: agent_state.context.history.total_tokens(),
             tx,
-            aid,
-            agent_state,
+            aid: agent.aid, // TODO I think we can drop this
+            agent: agent.handle,
+            assistant_config: CONFIG.assistants[&agent.state.context.assistant_id].clone(),
+            instructions_tokens: count_text_tokens(&agent.state.context.instructions),
+            context_tokens: agent.state.context.history.total_tokens(),
+            agent_state: agent.state,
             scroll: Default::default(),
             insert_mode: false,
             user_input: Default::default(),
