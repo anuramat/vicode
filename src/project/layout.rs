@@ -1,111 +1,112 @@
-use std::path::Path;
 use std::path::PathBuf;
 
+use ambassador::delegatable_trait;
 use anyhow::Result;
 use git2::Repository;
 
-use super::Project;
+use super::Layout;
 use crate::agent::id::AgentId;
-use crate::tui::osc7::set_osc7;
 
 const APP_STATE_FILENAME: &str = "state.json";
-const SNAPSHOTS_DIRNAME: &str = "snapshots";
 const AGENTS_DIRNAME: &str = "agents";
-const SHARED_DIRNAME: &str = "shared";
-
 const AGENT_STATE_FILENAME: &str = "state.json";
 pub const AGENT_WORKDIR_DIRNAME: &str = "workdir";
-const OVERLAY_DIRNAME: &str = ".overlay";
-
-const OVERLAY_UPPER_DIRNAME: &str = "upper";
-const OVERLAY_WORKDIR_DIRNAME: &str = "workdir";
-
 const WORKTREE_NAME_PREFIX: &str = "vc-worktree-";
 
-impl Project {
-    pub fn set_osc7(&self) {
-        set_osc7(&self.root);
+#[async_trait::async_trait]
+#[delegatable_trait]
+pub trait LayoutTrait {
+    fn root(&self) -> PathBuf;
+
+    fn id(&self) -> String;
+
+    fn app_state(&self) -> PathBuf;
+
+    fn gitdir(&self) -> Result<PathBuf>;
+
+    fn agents(&self) -> PathBuf;
+
+    fn agent(
+        &self,
+        aid: &AgentId,
+    ) -> PathBuf;
+
+    fn agent_workdir(
+        &self,
+        aid: &AgentId,
+    ) -> PathBuf;
+
+    fn agent_state(
+        &self,
+        aid: &AgentId,
+    ) -> PathBuf;
+
+    fn worktree_name(
+        &self,
+        aid: &AgentId,
+    ) -> String;
+
+    async fn agent_id_exists(
+        &self,
+        aid: &AgentId,
+    ) -> Result<bool>;
+}
+
+#[async_trait::async_trait]
+impl LayoutTrait for Layout {
+    fn root(&self) -> PathBuf {
+        self.root.clone()
     }
 
-    pub fn app_state(&self) -> PathBuf {
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn app_state(&self) -> PathBuf {
         self.data.join(APP_STATE_FILENAME)
     }
 
-    pub fn gitdir(&self) -> Result<PathBuf> {
+    fn gitdir(&self) -> Result<PathBuf> {
         let repo = Repository::open(self.root.clone())?;
         Ok(repo.commondir().to_path_buf())
     }
 
-    pub fn worktree_name(aid: &AgentId) -> String {
-        format!("{}{}", WORKTREE_NAME_PREFIX, aid)
-    }
-
-    pub fn overlay(
-        &self,
-        aid: &AgentId,
-    ) -> PathBuf {
-        self.agent(aid).join(OVERLAY_DIRNAME)
-    }
-
-    pub fn overlay_workdir(
-        &self,
-        aid: &AgentId,
-    ) -> PathBuf {
-        self.overlay(aid).join(OVERLAY_WORKDIR_DIRNAME)
-    }
-
-    pub fn overlay_upper(
-        &self,
-        aid: &AgentId,
-    ) -> PathBuf {
-        self.overlay(aid).join(OVERLAY_UPPER_DIRNAME)
-    }
-
-    pub fn agents(&self) -> PathBuf {
+    fn agents(&self) -> PathBuf {
         self.data.join(AGENTS_DIRNAME)
     }
 
-    // TODO maybe rename these
-    pub fn shared_root(&self) -> PathBuf {
-        self.data.join(SHARED_DIRNAME)
-    }
-
-    pub fn shared(
-        &self,
-        path: &Path,
-    ) -> PathBuf {
-        self.shared_root().join(path)
-    }
-
-    pub fn agent(
+    fn agent(
         &self,
         aid: &AgentId,
     ) -> PathBuf {
         self.agents().join(aid.to_string())
     }
 
-    pub fn agent_workdir(
+    fn agent_workdir(
         &self,
         aid: &AgentId,
     ) -> PathBuf {
         self.agent(aid).join(AGENT_WORKDIR_DIRNAME)
     }
 
-    pub fn agent_state(
+    fn agent_state(
         &self,
         aid: &AgentId,
     ) -> PathBuf {
         self.agent(aid).join(AGENT_STATE_FILENAME)
     }
 
-    pub fn snapshots(&self) -> PathBuf {
-        self.data.join(SNAPSHOTS_DIRNAME)
+    fn worktree_name(
+        &self,
+        aid: &AgentId,
+    ) -> String {
+        format!("{}{}", WORKTREE_NAME_PREFIX, aid)
     }
 
-    pub fn snapshot(
+    async fn agent_id_exists(
         &self,
-        commit: &str,
-    ) -> PathBuf {
-        self.snapshots().join(commit)
+        aid: &AgentId,
+    ) -> Result<bool> {
+        Ok(tokio::fs::try_exists(self.agent(aid)).await?)
     }
 }

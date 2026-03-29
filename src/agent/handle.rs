@@ -132,7 +132,7 @@ impl Agent {
             }
             Delete => {
                 self.tskmgr.abort().await;
-                PROJECT.delete_agent(&self.id).await?; // TODO maybe some special handling for failed deletes
+                self.delete_agent().await?; // TODO maybe some special handling for failed deletes
                 return Ok(ControlFlow::Break(()));
             }
             DuplicateRequest(aid) => {

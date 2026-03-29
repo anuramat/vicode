@@ -15,6 +15,7 @@ use super::App;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 use crate::tui::app::NotificationKind;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::osc7::set_osc7;
@@ -35,7 +36,7 @@ impl<'a> App<'a> {
         tracing::debug!("first render done");
         self.spawn_crossterm_translator();
         execute!(std::io::stdout(), EnableBracketedPaste)?;
-        set_osc7(&PROJECT.root);
+        set_osc7(&PROJECT.root());
         Ok(term)
     }
 
@@ -59,7 +60,7 @@ impl<'a> App<'a> {
         // clean up before starting
         self.cleanup().await?;
         // create shared lowerdir
-        PROJECT.init_shared_lowerdir().await?;
+        PROJECT.init().await?;
         // load assistants
         ASSISTANT_POOL.get_or_try_init(AssistantPool::new).await?;
         // load tabs
@@ -96,7 +97,7 @@ impl<'a> App<'a> {
                         self.notify(NotificationKind::Error, e.to_string());
                     };
                     if self.should_exit {
-                        PROJECT.save_app_state(&self).await?;
+                        self.save_app_state().await?;
                         self.cleanup().await.expect("failed app clean up");
                         break;
                     }
@@ -110,7 +111,7 @@ impl<'a> App<'a> {
     /// clean up on start / before exit
     async fn cleanup(&self) -> Result<()> {
         // TODO delete unreachable agents, clear stale git worktrees/branches
-        PROJECT.cleanup().await?;
+        PROJECT.unmount_all().await?;
         Ok(())
     }
 

@@ -20,10 +20,11 @@ use tracing_subscriber::fmt;
 use tui::app::App;
 
 use crate::project::PROJECT;
+use crate::project::layout::LayoutTrait;
 
 fn init_tracing() -> Result<WorkerGuard> {
     let dir = config::DIRS.create_state_directory("")?;
-    let appender = tracing_appender::rolling::never(&dir, format!("{}.log", PROJECT.id));
+    let appender = tracing_appender::rolling::never(&dir, format!("{}.log", PROJECT.id()));
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let filter = EnvFilter::from_default_env();
     fmt().with_env_filter(filter).with_writer(writer).init();

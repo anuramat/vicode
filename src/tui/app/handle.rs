@@ -16,6 +16,7 @@ pub enum AppEvent {
     Paste(String),
 
     LoadAgent(AgentId),
+    NewAgent(AgentId),
     ParentEvent(AgentId, AgentParentEvent),
     TabStatusChanged(AgentId),
 
@@ -41,6 +42,9 @@ impl<'a> App<'a> {
             }
             LoadAgent(agent_id) => {
                 self.load_agent(agent_id).await?;
+            }
+            NewAgent(agent_id) => {
+                self.new_agent(agent_id).await?;
             }
             ParentEvent(agent_id, event) => {
                 self.handle_parent_event(agent_id, event).await?;
