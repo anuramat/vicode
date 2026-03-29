@@ -1,4 +1,8 @@
 mod delta;
+mod message;
+mod output;
+mod reasoning;
+mod toolcall;
 
 use std::pin::Pin;
 use std::task::Context as TaskContext;
