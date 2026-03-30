@@ -4,6 +4,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::Block;
 use serde::Deserialize;
 use serde::Serialize;
+use smart_default::SmartDefault;
 
 use crate::tui::widgets::container::empty::EmptyElement;
 
@@ -39,23 +40,17 @@ pub struct Element {
     ctx: RenderContext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize, SmartDefault)]
+#[serde(default)]
 pub struct RenderContext {
+    #[default(true)]
     pub hide_reasoning: bool,
+    #[default(true)]
     pub hide_tools: bool,
+    #[default(true)]
     pub hide_developer: bool,
+    #[default(true)]
     pub render_markdown: bool,
-}
-
-impl Default for RenderContext {
-    fn default() -> Self {
-        Self {
-            hide_reasoning: true,
-            hide_tools: true,
-            hide_developer: true,
-            render_markdown: true,
-        }
-    }
 }
 
 pub trait IntoElement {

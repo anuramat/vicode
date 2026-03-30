@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_plain::derive_deserialize_from_fromstr;
+use serde_plain::derive_serialize_from_display;
 use strum::EnumIter;
 
 // TODO expose usage in completion menu using https://docs.rs/strum/latest/strum/derive.EnumMessage.html
@@ -59,13 +60,27 @@ pub enum CommandName {
     None,
 }
 
+derive_deserialize_from_fromstr!(Command, "valid command");
+derive_serialize_from_display!(Command);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub name: CommandName,
     pub args: Option<String>,
 }
 
-derive_deserialize_from_fromstr!(Command, "valid command");
+impl std::fmt::Display for Command {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        if let Some(args) = &self.args {
+            write!(f, "{} {args}", self.name)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
+}
+
 impl FromStr for Command {
     type Err = anyhow::Error;
 
@@ -87,6 +102,8 @@ impl FromStr for Command {
     }
 }
 
+derive_deserialize_from_fromstr!(KeyChord, "valid key chord");
+derive_serialize_from_display!(KeyChord);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyChord {
     pub code: KeyCode,
@@ -100,24 +117,28 @@ impl From<KeyEvent> for KeyChord {
             mut modifiers,
             ..
         } = value;
-        if let KeyCode::Char(c) = code
-            && c.is_ascii_uppercase()
-        {
-            code = KeyCode::Char(c.to_ascii_lowercase());
-            modifiers |= KeyModifiers::SHIFT;
+        match code {
+            KeyCode::Char(c) if c.is_ascii_uppercase() => {
+                code = KeyCode::Char(c.to_ascii_lowercase());
+                modifiers |= KeyModifiers::SHIFT;
+            }
+            KeyCode::BackTab => {
+                code = KeyCode::Tab;
+                modifiers |= KeyModifiers::SHIFT;
+            }
+            _ => {}
         }
         Self { code, modifiers }
     }
 }
 
-derive_deserialize_from_fromstr!(KeyChord, "valid key chord");
 impl FromStr for KeyChord {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
         let s = s.to_ascii_lowercase();
         let mut parts = s.rsplit('-');
-        let mut code = match parts
+        let code = match parts
             .next()
             .ok_or_else(|| anyhow::anyhow!("empty keybinding"))?
         {
@@ -137,17 +158,43 @@ impl FromStr for KeyChord {
             for part in parts {
                 modifiers |= match part {
                     "c" => KeyModifiers::CONTROL,
-                    "a" => KeyModifiers::ALT,
                     "s" => KeyModifiers::SHIFT,
+                    "a" => KeyModifiers::ALT,
                     _ => anyhow::bail!("unknown modifier '{part}' in keybinding '{s}'"),
                 }
             }
             modifiers
         };
-        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
-            code = KeyCode::BackTab;
-        }
         Ok(Self { code, modifiers })
+    }
+}
+
+impl std::fmt::Display for KeyChord {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            write!(f, "c-")?;
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            write!(f, "s-")?;
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            write!(f, "a-")?;
+        }
+        match self.code {
+            KeyCode::Enter => write!(f, "enter"),
+            KeyCode::Esc => write!(f, "esc"),
+            KeyCode::Tab => write!(f, "tab"),
+            KeyCode::Backspace => write!(f, "backspace"),
+            KeyCode::Up => write!(f, "up"),
+            KeyCode::Down => write!(f, "down"),
+            KeyCode::Left => write!(f, "left"),
+            KeyCode::Right => write!(f, "right"),
+            KeyCode::Char(c) => write!(f, "{c}"),
+            _ => Err(std::fmt::Error), // TODO
+        }
     }
 }
 
@@ -156,14 +203,78 @@ impl FromStr for KeyChord {
 // TODO allow sequences of chords?
 // TODO allow easily defining keymap for multiple modes at the same time
 
-#[derive(Debug, Clone, Deserialize)]
+// TODO why indexmap?
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Keymap {
-    #[serde(default)]
     pub cmdline: IndexMap<KeyChord, Command>,
-    #[serde(default)]
     pub normal: IndexMap<KeyChord, Command>,
-    #[serde(default)]
     pub insert: IndexMap<KeyChord, Command>,
+}
+
+impl Default for Keymap {
+    fn default() -> Self {
+        fn parse<'a, I>(x: I) -> IndexMap<KeyChord, Command>
+        where I: IntoIterator<Item = (&'a str, &'a str)> {
+            x.into_iter()
+                .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap()))
+                .collect()
+        }
+
+        let cmdline = [
+            ("enter", "input_submit"),
+            ("esc", "input_exit"),
+            ("c-n", "completion_next"),
+            ("c-p", "completion_prev"),
+            ("c-e", "completion_cancel"),
+        ];
+
+        let normal = [
+            (":", "cmdline_enter"),
+            ("j", "tab_next"),
+            ("k", "tab_prev"),
+            ("s-d", "tab_delete"),
+            ("s-y", "tab_duplicate"),
+            ("o", "tab_new"),
+            ("s-q", "quit"),
+            ("s-r", "turn_retry"),
+            ("s-x", "turn_abort"),
+            ("i", "insert_enter"),
+            ("u", "msg_undo"),
+            ("s-u", "msg_undo_user"),
+            ("tab", "assistant_next"),
+            ("s-tab", "assistant_prev"),
+            ("up", "scroll_line_up"),
+            ("down", "scroll_line_down"),
+            ("c-y", "scroll_line_up"),
+            ("c-e", "scroll_line_down"),
+            ("c-u", "scroll_half_page_up"),
+            ("c-d", "scroll_half_page_down"),
+            ("c-b", "scroll_page_up"),
+            ("c-f", "scroll_page_down"),
+            ("[", "scroll_prev_element"),
+            ("]", "scroll_next_element"),
+            ("g", "scroll_top"),
+            ("s-g", "scroll_bottom"),
+            ("1", "set_multiplier 1"),
+            ("2", "set_multiplier 2"),
+            ("3", "set_multiplier 3"),
+            ("4", "set_multiplier 4"),
+            ("5", "set_multiplier 5"),
+            ("6", "set_multiplier 6"),
+            ("7", "set_multiplier 7"),
+            ("8", "set_multiplier 8"),
+            ("9", "set_multiplier 9"),
+        ];
+
+        let insert = [("enter", "input_submit"), ("esc", "input_exit")];
+        Self {
+            cmdline: parse(cmdline),
+            normal: parse(normal),
+            insert: parse(insert),
+        }
+    }
 }
 
 pub enum Mode {

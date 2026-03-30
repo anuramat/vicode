@@ -4,7 +4,6 @@ pub mod render;
 pub mod run;
 pub mod tabs;
 
-
 use anyhow::Result;
 pub use handle::AppEvent;
 use indexmap::IndexMap;

@@ -11,6 +11,7 @@ use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::project::Layout;
 
+// TODO drop the enum and use some macro?
 #[derive(Debug, Clone, Delegate)]
 #[delegate(Backend)]
 pub enum BackendKind {

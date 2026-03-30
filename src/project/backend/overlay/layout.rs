@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-
 use super::Overlay;
 use crate::agent::id::AgentId;
 use crate::project::Layout;

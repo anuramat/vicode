@@ -2,12 +2,11 @@ use std::fmt::Debug;
 
 use anyhow::Result;
 use dyn_clone::DynClone;
-use dyn_clone::clone_trait_object;
 
 use crate::agent::Agent;
 use crate::tui::widgets::container::element::IntoElement;
 
-clone_trait_object!(ToolCallSerializable);
+dyn_clone::clone_trait_object!(ToolCallSerializable);
 #[typetag::serde(tag = "name")]
 pub trait ToolCallSerializable: Debug + Send + Sync + DynClone + IntoElement + ToolCall {}
 

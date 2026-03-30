@@ -1,8 +1,8 @@
 pub mod task;
 pub mod widget;
 
-use crate::bwrap::BwrapRunner;
 use crate::declare_tool;
+use crate::sandbox::SandboxRunner;
 
 declare_tool! {
     name: "bash",
@@ -25,7 +25,7 @@ pub struct BashArguments {
 
 #[derive(Clone, Debug)]
 pub struct BashContext {
-    runner: BwrapRunner,
+    runner: SandboxRunner,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

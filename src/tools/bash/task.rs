@@ -3,9 +3,10 @@ use std::os::unix::process::ExitStatusExt;
 use anyhow::Result;
 
 use crate::agent::tool::traits::*;
-use crate::bwrap::BwrapRunner;
+use crate::config::CONFIG;
 use crate::project::PROJECT;
 use crate::project::layout::LayoutTrait;
+use crate::sandbox::Sandbox;
 use crate::tools::bash::BashArguments;
 use crate::tools::bash::BashContext;
 use crate::tools::bash::BashResult;
@@ -19,7 +20,9 @@ impl ToolContext<BashArguments> for BashContext {
         Self: Sized,
     {
         Ok(Self {
-            runner: BwrapRunner::new(PROJECT.agent_workdir(&agent.id), PROJECT.gitdir()?),
+            runner: CONFIG
+                .sandbox
+                .runner(PROJECT.agent_workdir(&agent.id), PROJECT.gitdir()?),
         })
     }
 }

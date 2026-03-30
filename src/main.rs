@@ -4,12 +4,12 @@
 #![feature(iterator_try_collect)]
 
 mod agent;
-mod bwrap;
 mod config;
 mod git;
 mod id;
 mod llm;
 mod project;
+mod sandbox;
 mod tools;
 mod tui;
 

@@ -29,7 +29,7 @@ impl Assistant {
                     .api
                     .stream(
                         permit,
-                        self.config.model.clone(),
+                        self.config.clone(),
                         instructions.clone(),
                         history.clone(),
                         tools.clone(),

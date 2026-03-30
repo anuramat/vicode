@@ -5,37 +5,37 @@ use std::sync::atomic::Ordering;
 
 use anyhow::Context;
 use anyhow::Result;
-use async_openai::Client;
-use async_openai::config::OpenAIConfig;
 use futures::future::try_join_all;
-use governor::DefaultDirectRateLimiter;
-use governor::Quota;
-use governor::RateLimiter;
 use indexmap::IndexMap;
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::sync::OnceCell;
-use tokio::sync::Semaphore;
 
-use crate::config::AssistantConfig;
+use super::Provider;
 use crate::config::CONFIG;
 use crate::config::Config;
-use crate::config::ProviderConfig;
-use crate::llm::provider::api::Api;
-use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
-use crate::llm::provider::api::responses::ResponsesApi;
 
 // TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
 pub static ASSISTANT_POOL: OnceCell<AssistantPool> = OnceCell::const_new();
 
-pub struct Provider {
-    pub config: ProviderConfig,
-    pub ratelimiter: DefaultDirectRateLimiter,
-    pub api: Arc<dyn Api>,
-    pub semaphore: Arc<Semaphore>,
-}
-
 pub struct Assistant {
     pub provider: Arc<Provider>,
-    pub config: AssistantConfig,
+    pub config: ModelConfig,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+pub struct AssistantConfig {
+    pub provider: String,
+    #[serde(flatten)]
+    pub model: ModelConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModelConfig {
+    pub model: String,
+    pub effort: Option<async_openai::types::responses::ReasoningEffort>,
+    /// max context window
+    pub window: Option<usize>,
 }
 
 pub struct AssistantPool {
@@ -52,62 +52,6 @@ struct RoundRobin {
 enum SubagentSelector {
     Inherit,
     RoundRobin(RoundRobin),
-}
-
-impl Provider {
-    async fn new(provider_config: ProviderConfig) -> Result<Self> {
-        let openai_config = {
-            let mut openai_config = OpenAIConfig::new().with_api_base(&provider_config.base_url()?);
-            if let Some(key) = Self::key(provider_config.key_command.as_deref()).await? {
-                openai_config = openai_config.with_api_key(key);
-            }
-            openai_config
-        };
-
-        let client = Client::with_config(openai_config);
-        let api: Arc<dyn Api> = match provider_config.api {
-            crate::config::ApiType::Responses => {
-                Arc::new(ResponsesApi::new(client, provider_config.clone()))
-            }
-            crate::config::ApiType::ChatCompletions => {
-                Arc::new(ChatCompletionsApi::new(client, provider_config.clone()))
-            }
-        };
-
-        Ok(Self {
-            ratelimiter: RateLimiter::direct(Quota::per_minute(
-                provider_config
-                    .rpm
-                    .try_into()
-                    .with_context(|| "invalid rpm provided")?,
-            )),
-            api,
-            semaphore: Arc::new(Semaphore::new(provider_config.concurrency)),
-            config: provider_config,
-        })
-    }
-
-    async fn key(command: Option<&str>) -> Result<Option<String>> {
-        let Some(command) = command else {
-            return Ok(None);
-        };
-        let output = tokio::process::Command::new("bash")
-            .args(["-c", command])
-            .output()
-            .await
-            .context("Failed to run API key command")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "API key command failed with status {}",
-            output.status
-        );
-        Ok(Some(
-            String::from_utf8(output.stdout)
-                .context("API key command did not produce valid UTF-8")?
-                .trim()
-                .to_string(),
-        ))
-    }
 }
 
 impl AssistantPool {
@@ -136,7 +80,7 @@ impl AssistantPool {
                             .get(&config.provider)
                             .cloned()
                             .with_context(|| format!("unknown provider {:?}", config.provider))?,
-                        config: config.clone(),
+                        config: config.model.clone(),
                     }),
                 ))
             })
@@ -224,6 +168,13 @@ mod tests {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast", "deep"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
 
             [keymap.cmdline]
 
@@ -247,13 +198,6 @@ mod tests {
             model = "gpt-deep"
             effort = "low"
 
-            [bash]
-            cmd = ["bash", "-c"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
             "#,
         )
         .unwrap();
@@ -270,6 +214,13 @@ mod tests {
             r#"
             primary_assistant = ["fast"]
             subagent_assistant = ["deep", "fast"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
 
             [keymap.cmdline]
 
@@ -292,13 +243,6 @@ mod tests {
             provider = "main"
             model = "gpt-deep"
 
-            [bash]
-            cmd = ["bash", "-c"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
             "#,
         )
         .unwrap();
@@ -312,6 +256,13 @@ mod tests {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
 
             [keymap.cmdline]
 
@@ -338,13 +289,6 @@ mod tests {
             provider = "main"
             model = "gpt-alt"
 
-            [bash]
-            cmd = ["bash", "-c"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
             "#,
         )
         .unwrap();
@@ -364,6 +308,13 @@ mod tests {
         let config = Config::parse(
             r#"
             primary_assistant = ["fast"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
 
             [keymap.cmdline]
 
@@ -390,13 +341,6 @@ mod tests {
             provider = "main"
             model = "gpt-alt"
 
-            [bash]
-            cmd = ["bash", "-c"]
-
-            [bash.bwrap]
-            bin = "bwrap"
-            args = []
-            stages = []
             "#,
         )
         .unwrap();
