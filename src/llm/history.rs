@@ -621,6 +621,8 @@ mod tests {
         history
             .handle(0, HistoryEvent::UserMessage("hi".into()))
             .unwrap();
+        assert_eq!(history.generation(), 0);
+        history.increment();
         assert_eq!(history.generation(), 1);
     }
 
@@ -630,6 +632,7 @@ mod tests {
         history
             .handle(0, HistoryEvent::UserMessage("hello".into()))
             .unwrap();
+        history.increment();
         assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
         assert_eq!(history.len(), 1);
     }
@@ -640,9 +643,11 @@ mod tests {
         history
             .handle(0, HistoryEvent::DeveloperMessage("note".into()))
             .unwrap();
+        assert_eq!(history.generation(), 0);
+        history.increment();
         assert_eq!(history.generation(), 1);
         history.handle(1, HistoryEvent::Pop(1)).unwrap();
-        assert_eq!(history.generation(), 2);
+        assert_eq!(history.generation(), 1);
     }
 
     #[test]
