@@ -6,9 +6,18 @@
 - fix agent state persistence
   - use jsonl for storage
   - debounce file writes
+- unwraps
+- grep for TODO XXX PERF TEST
+- make sure our prompting makes sense (check for inconsistencies)
+- cleanup logic for stale agents/worktrees/etc
 
 # core
 
+- file completion on @
+- mac support: no overlays, sandbox-exec instead of bwrap
+- reuse commands for config
+- :help
+- show bindings/usage for commands in cmpmenu
 - '!...' command -- run bash in current tab, and append a developer message equivalent to bash tool output, with equivalent rendering
 - subagents
   - two types
@@ -21,27 +30,15 @@
 - skills
 - retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
 - mcp
+- float window fzf-lua style
+  - past errors (ones from stl notifications)
+  - logs
+  - message picker for undo/compact/jump
+- streaming replica progress/tool outputs
 
-# ui
+# backlog
 
-- float window with past errors (ones from stl notifications)
-- float window with logs
-
-- visible replica progress
-
-- streaming tool outputs
-
-# chores
-
-- commit hook: cargo fmt+fix
-- grep for unwraps
-- grep for TODO etc
-- make sure our prompting makes sense (check for inconsistencies)
-- cleanup logic for stale agents/worktrees/etc
 - refactor: `if let Some(x) = ... { x } else { return }` into `let Some(x) = ...`
-
-# maybe/eventually
-
 - move ALL prompting into separate files with suffix like `.prompt.md`
 - lua scripting/configs with mlua
 - yml configs with serde_yml
