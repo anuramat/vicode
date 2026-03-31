@@ -24,9 +24,7 @@ use crate::tui::widgets::syntax::HIGHLIGHTER;
 )]
 #[serde(deny_unknown_fields)]
 pub struct EditArguments {
-    #[schemars(
-        description = "Path to the file to edit. Can be absolute or relative to the workdir."
-    )]
+    #[schemars(description = "Path to the file to edit; relative to the workdir.")]
     pub filepath: String,
     #[schemars(description = "Sequence of edits to perform.")]
     pub edits: Vec<Edit>,
@@ -92,14 +90,7 @@ impl Function<EditContext, EditMeta, EditResult> for EditArguments {
         &self,
         ctx: EditContext,
     ) -> Result<(EditResult, EditMeta)> {
-        let target_path = {
-            let path = Path::new(&self.filepath);
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                ctx.workdir.join(path)
-            }
-        };
+        let target_path = ctx.workdir.join(&self.filepath);
         let diff = edit_file(&target_path, &self.edits)?;
         Ok((EditResult { success: true }, EditMeta { diff }))
     }
