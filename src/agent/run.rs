@@ -33,6 +33,7 @@ impl Agent {
                 Ok(ControlFlow::Continue(())) => {}
                 Ok(ControlFlow::Break(())) => break,
                 Err(e) => {
+                    tracing::error!("error in agent {}: {:?}", self.id, e);
                     let msg = e.to_string();
                     self.parent.send(ParentEvent::Error(msg)).await?;
                 }
