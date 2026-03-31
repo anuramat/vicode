@@ -28,6 +28,7 @@ pub type HistoryGeneration = u64;
 
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
+    GenerationIncremented,
     /// timestamp of start of response in ms
     ResponseStarted(u64),
     ResponseDelta(Delta),
@@ -118,6 +119,10 @@ impl History {
         );
         // XXX verify recount_last_message logic
         let delta = match event {
+            HistoryEvent::GenerationIncremented => {
+                self.increment();
+                0
+            }
             HistoryEvent::ResponseStarted(started_at_ms) => {
                 self.start_response(started_at_ms);
                 self.recount_last_message()
@@ -635,6 +640,30 @@ mod tests {
         history.increment();
         assert!(history.handle(0, HistoryEvent::Pop(1)).is_err());
         assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn generation_increment_event_updates_generation() {
+        let mut history = History::new();
+        history
+            .handle(0, HistoryEvent::GenerationIncremented)
+            .unwrap();
+        assert_eq!(history.generation(), 1);
+        assert_eq!(history.len(), 0);
+    }
+
+    #[test]
+    fn response_can_follow_generation_increment() {
+        let mut history = History::new();
+        history
+            .handle(0, HistoryEvent::UserMessage("hello".into()))
+            .unwrap();
+        history
+            .handle(0, HistoryEvent::GenerationIncremented)
+            .unwrap();
+        history.handle(1, HistoryEvent::ResponseStarted(7)).unwrap();
+        assert_eq!(history.generation(), 1);
+        assert_eq!(history.len(), 2);
     }
 
     #[test]

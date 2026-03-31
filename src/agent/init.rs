@@ -109,10 +109,6 @@ impl Agent {
         &self,
         aid: AgentId,
     ) -> Result<()> {
-        anyhow::ensure!(
-            self.tskmgr.idle(),
-            "cannot duplicate while tasks are running"
-        );
         PROJECT
             .duplicate_agent(&self.id, &aid, &self.state, true)
             .await?;

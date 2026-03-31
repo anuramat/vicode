@@ -103,15 +103,16 @@ impl Agent {
         Ok(ControlFlow::Continue(()))
     }
 
-    pub fn idle_and(&mut self) -> Result<&mut Self> {
+    pub fn idle(&mut self) -> Result<()> {
         anyhow::ensure!(self.tskmgr.idle(), "agent is busy");
-        Ok(self)
+        Ok(())
     }
 
-    pub fn incremented(&mut self) -> Result<HistoryGeneration> {
-        let history = &mut self.idle_and()?.state.context.history;
-        history.increment();
-        Ok(history.generation())
+    async fn increment_generation(&mut self) -> Result<HistoryGeneration> {
+        let generation = self.state.context.history.generation();
+        self.handle_history(generation, HistoryEvent::GenerationIncremented)
+            .await?;
+        Ok(self.state.context.history.generation())
     }
 
     async fn handle_external(
@@ -121,11 +122,12 @@ impl Agent {
         use ExternalEvent::*;
         match event {
             Undo(n) => {
-                let g = self.incremented()?;
+                self.idle()?;
+                let g = self.increment_generation().await?;
                 self.handle_history(g, HistoryEvent::Pop(n)).await?;
             }
             Abort => {
-                let g = self.incremented()?;
+                let g = self.increment_generation().await?;
                 self.handle_history(g, HistoryEvent::ResponseAborted)
                     .await?;
             }
@@ -135,6 +137,7 @@ impl Agent {
                 return Ok(ControlFlow::Break(()));
             }
             DuplicateRequest(aid) => {
+                self.idle()?;
                 self.try_duplicate(aid).await?;
             }
             Submit(UserPrompt {
@@ -147,6 +150,7 @@ impl Agent {
                         .await?;
                 }
                 if self.tskmgr.idle() {
+                    self.increment_generation().await?;
                     if multiplier <= 1 {
                         self.start_turn();
                     } else {
@@ -159,9 +163,8 @@ impl Agent {
                 }
             }
             Retry => {
-                if !self.tskmgr.idle() {
-                    return Ok(ControlFlow::Continue(()));
-                }
+                self.idle()?;
+                self.increment_generation().await?;
                 self.start_turn();
             }
             SetAssistant(id) => {
@@ -185,6 +188,7 @@ impl Agent {
             .history
             .handle(generation, event.clone())?;
         match event {
+            HistoryEvent::GenerationIncremented => return Ok(()),
             HistoryEvent::ResponseStarted(_) => {}
             HistoryEvent::ResponseItem(ref item) => {
                 if let AssistantItem::ToolCall(mut call) = (**item).clone()

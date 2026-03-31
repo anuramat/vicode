@@ -14,7 +14,6 @@ impl Agent {
     pub fn start_turn(&mut self) {
         let instructions = self.state.context.instructions.clone();
         let history = self.state.context.history.clone();
-        self.state.context.history.increment();
         let generation = self.state.context.history.generation();
 
         tracing::debug!("starting turn with messages: {:#?}", history);
