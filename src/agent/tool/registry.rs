@@ -24,6 +24,10 @@ impl Default for ToolSchemas {
 }
 
 impl ToolSchemas {
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new() -> Self {
         Self(
             inventory::iter::<ToolDeclaration>

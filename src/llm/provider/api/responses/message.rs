@@ -14,11 +14,10 @@ impl From<&Message> for Vec<responses::InputItem> {
 
 impl From<&DeveloperMessage> for responses::InputItem {
     fn from(msg: &DeveloperMessage) -> Self {
-        let DeveloperMessage { text } = msg;
         responses::InputItem::EasyMessage(responses::EasyInputMessage {
             r#type: responses::MessageType::Message,
             role: responses::Role::Developer,
-            content: responses::EasyInputContent::Text(text.clone()),
+            content: responses::EasyInputContent::Text(msg.as_message_text()),
         })
     }
 }

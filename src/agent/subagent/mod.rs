@@ -6,10 +6,10 @@ use tokio::sync::mpsc::channel;
 
 use super::handle::ExternalEvent;
 use crate::agent::Agent;
-use crate::agent::AgentContext;
 use crate::agent::AgentEvent;
 use crate::agent::AgentKind;
 use crate::agent::AgentState;
+use crate::agent::AgentStatus;
 use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
@@ -17,28 +17,28 @@ use crate::agent::id::AgentId;
 use crate::agent::init::channel_parent_sink;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
-use crate::project::backend::Backend;
 
 pub async fn run_child(
     parent: &AgentId,
     aid: &AgentId,
-    context: &AgentContext,
+    state: &AgentState,
     text: Option<String>,
 ) -> Result<String> {
     let state = AgentState {
+        status: AgentStatus::Idle,
+        assistant: ASSISTANT_POOL.get().unwrap().assistant(
+            &ASSISTANT_POOL
+                .get()
+                .unwrap()
+                .next_subagent(&state.assistant.id),
+        )?,
         topology: AgentTopology {
             kind: AgentKind::Subagent {
                 parent: parent.clone(),
             },
             children: Vec::new(),
         },
-        context: AgentContext {
-            assistant_id: ASSISTANT_POOL
-                .get()
-                .unwrap()
-                .next_subagent(&context.assistant_id),
-            ..context.clone()
-        },
+        context: state.context.clone(),
     };
     PROJECT.duplicate_agent(parent, aid, &state, false).await?;
 
@@ -51,13 +51,13 @@ pub async fn run_child(
         .send(AgentEvent::External(ExternalEvent::Submit(UserPrompt {
             text,
             multiplier: 1,
-            generation: context.history.generation(),
+            generation: state.context.history.generation(),
         })))
         .await?;
 
     loop {
         match parent_rx.recv().await {
-            Some(ParentEvent::TurnComplete) => break,
+            Some(ParentEvent::StatusUpdate(s)) if s.idle() => break,
             Some(_) => continue,
             None => anyhow::bail!("subagent channel closed before turn completion"),
         }

@@ -6,8 +6,7 @@ use tracing::instrument;
 use super::App;
 use crate::agent::handle::ParentEvent as AgentParentEvent;
 use crate::agent::id::AgentId;
-use crate::tui::tab::AssistantState;
-use crate::tui::tab::TabState;
+use crate::tui::app::NotificationKind;
 use crate::tui::widgets::info::InfoWidget;
 
 #[derive(Debug)]
@@ -71,28 +70,46 @@ impl<'a> App<'a> {
         use AgentParentEvent::*;
 
         match event {
-            Started(started) => {
-                self.handle_started(started).await?;
-            }
-            InfoUpdate => {
-                self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&aid).await?;
+            Started(agent) => {
+                self.handle_started(aid, *agent).await?;
             }
             HistoryReset(history) => {
                 self.tab_mut_by_aid(&aid)?.replace_history(history);
             }
             HistoryUpdate(loc, event) => {
-                self.tab_mut_by_aid(&aid)?.update(loc, event);
+                self.tab_mut_by_aid(&aid)?.update(loc, event).await?;
             }
-            TurnComplete => {
-                self.tab_mut_by_aid(&aid)?.sync_state_from_history().await?;
+            Error(msg) => {
+                self.notify(NotificationKind::Error, msg);
             }
-            Error(_) => {
-                self.tab_mut_by_aid(&aid)?
-                    .set_state(TabState::Running(AssistantState::Error))
-                    .await?;
-                // TODO use msg
+            StatusUpdate(status) => {
+                if self.tab_mut_by_aid(&aid)?.set_state(status).await? {
+                    self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&aid).await?;
+                }
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::app::NotificationKind;
+
+    #[tokio::test]
+    async fn parent_error_creates_notification() {
+        let mut app = App::new().await.unwrap();
+
+        app.handle_parent_event(
+            AgentId::from("a".to_string()),
+            AgentParentEvent::Error("oops".into()),
+        )
+        .await
+        .unwrap();
+
+        let notification = app.notification.expect("expected notification");
+        assert!(matches!(notification.kind, NotificationKind::Error));
+        assert_eq!(notification.msg, "oops");
     }
 }

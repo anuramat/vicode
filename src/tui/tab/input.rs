@@ -9,13 +9,10 @@ use ratatui::widgets::Padding;
 
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
-use crate::config::CONFIG;
 use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::tokens::count_text_tokens;
-use crate::tui::tab::AssistantState;
 use crate::tui::tab::Tab;
-use crate::tui::tab::TabState;
 
 fn block() -> Block<'static> {
     Block::new().borders(Borders::TOP).padding(Padding {
@@ -39,15 +36,15 @@ impl<'a> Tab<'a> {
         &mut self,
         step: isize,
     ) -> Result<()> {
-        if !self.state.idle() {
+        // XXX replace this with an externalEvent
+        if !self.agent.state.status.idle() {
             return Ok(());
         }
         let pool = ASSISTANT_POOL.get().unwrap();
         let id = pool
-            .switch_assistant(&self.agent_state.context.assistant_id, step)
+            .switch_assistant(&self.agent.state.assistant.id, step)
             .with_context(|| "couldn't find the provided assistant id")?;
-        self.agent_state.context.assistant_id = id.clone();
-        self.assistant_config = CONFIG.assistants[&id].clone();
+        self.agent.state.assistant = pool.assistant(&id)?;
         self.agent.send(ExternalEvent::SetAssistant(id)).await?;
         Ok(())
     }
@@ -99,22 +96,29 @@ impl<'a> Tab<'a> {
         let prompt = UserPrompt {
             text: Some(text.clone()),
             multiplier: self.multiplier,
-            generation: self.agent_state.context.history.generation(),
+            generation: self.agent.state.context.history.generation(),
         };
 
-        self.set_state(TabState::Running(AssistantState::Generating))
-            .await?;
         self.agent.send(ExternalEvent::Submit(prompt)).await?;
         Ok(())
     }
 
     pub async fn retry(&mut self) -> Result<()> {
-        if matches!(self.state, TabState::Running(AssistantState::Generating)) {
-            return Ok(());
-        }
-        self.set_state(TabState::Running(AssistantState::Generating))
-            .await?;
         self.agent.send(ExternalEvent::Retry).await?;
+        Ok(())
+    }
+
+    pub async fn compact(
+        &mut self,
+        n: Option<&str>,
+    ) -> Result<()> {
+        let n = if let Some(n) = n {
+            n.parse()
+                .with_context(|| format!("invalid compact number: {n}"))?
+        } else {
+            self.agent.state.context.history.len()
+        };
+        self.agent.send(ExternalEvent::Compact(n)).await?;
         Ok(())
     }
 
@@ -127,7 +131,7 @@ impl<'a> Tab<'a> {
         &mut self,
         n: usize,
     ) -> Result<()> {
-        if !self.state.idle() || n > self.agent_state.context.history.len() {
+        if n > self.agent.state.context.history.len() {
             return Ok(());
         }
         self.agent.send(ExternalEvent::Undo(n)).await?;
@@ -135,7 +139,7 @@ impl<'a> Tab<'a> {
     }
 
     pub async fn undo_user(&mut self) -> Result<()> {
-        let messages = &self.agent_state.context.history.as_ref();
+        let messages = &self.agent.state.context.history;
         let Some(loc) = messages
             .iter()
             .rposition(|entry| matches!(entry.message, Message::User(_)))

@@ -5,7 +5,7 @@ use futures::stream::AbortHandle;
 
 use crate::agent::Agent;
 use crate::agent::AgentHandle;
-use crate::agent::handle::AgentStarted;
+use crate::agent::AgentStatus;
 use crate::agent::handle::ParentEvent;
 use crate::project::PROJECT;
 
@@ -18,24 +18,23 @@ impl Agent {
             .mount_agent(&self.state.context.commit, &self.id)
             .await?;
         self.parent
-            .send(ParentEvent::Started(AgentStarted {
-                aid: self.id.clone(),
-                state: self.state.clone(),
-                handle: AgentHandle {
+            .send(ParentEvent::Started(
+                AgentHandle {
                     tx: self.tx.clone(),
+                    state: self.state.clone(),
                     abort,
-                },
-            }))
+                }
+                .into(),
+            ))
             .await?;
-        self.parent.send(ParentEvent::InfoUpdate).await?;
         while let Some(event) = self.rx.recv().await {
             match self.handle(event).await {
                 Ok(ControlFlow::Continue(())) => {}
                 Ok(ControlFlow::Break(())) => break,
                 Err(e) => {
                     tracing::error!("error in agent {}: {:?}", self.id, e);
-                    let msg = e.to_string();
-                    self.parent.send(ParentEvent::Error(msg)).await?;
+                    self.parent.send(ParentEvent::Error(e.to_string())).await?;
+                    self.set_status(AgentStatus::Error(e.to_string())).await?;
                 }
             }
         }

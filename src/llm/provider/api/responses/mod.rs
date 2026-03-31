@@ -20,12 +20,12 @@ use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::config::ProviderConfig;
-use crate::llm::history::History;
 use crate::llm::message::*;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::api::StreamEvent;
 
+#[derive(Debug)]
 pub struct ResponsesApi {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
@@ -50,10 +50,10 @@ impl Api for ResponsesApi {
         permit: OwnedSemaphorePermit,
         model: ModelConfig,
         instructions: String,
-        history: History,
+        messages: Vec<Message>,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream> {
-        let request = request(model, instructions, history, tools, &self.compat)?;
+        let request = request(model, instructions, messages, tools, &self.compat)?;
         let started_at_ms = now_ms();
         let inner = self.client.responses().create_stream(request).await?;
         Ok(StartedAssistantStream {
@@ -69,7 +69,7 @@ impl Api for ResponsesApi {
 fn request(
     model: ModelConfig,
     instructions: String,
-    history: History,
+    mut messages: Vec<Message>,
     tools: ToolSchemas,
     compat: &ApiCompatConfig,
 ) -> Result<responses::CreateResponse> {
@@ -83,21 +83,20 @@ fn request(
         })
         .include(vec![responses::IncludeEnum::ReasoningEncryptedContent])
         .store(false);
-    let mut messages = history.messages();
 
     // NOTE here order is important -- message with instructions (if any) should stay a developer message regardless
     if compat.developer_as_user {
         messages.iter_mut().for_each(|message| {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
-                    text: dev_msg.text.clone(),
+                    text: dev_msg.as_message_text(),
                 })
             }
         });
     }
 
     if compat.instructions_as_message {
-        let msg = Message::Developer(DeveloperMessage { text: instructions });
+        let msg = Message::Developer(DeveloperMessage::new(instructions));
         messages.insert(0, msg);
     } else {
         builder.instructions(instructions);

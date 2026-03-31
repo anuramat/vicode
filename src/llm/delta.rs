@@ -1,4 +1,4 @@
-use crate::llm::history::History;
+use crate::llm::history::Entries;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::Message;
 
@@ -54,13 +54,13 @@ impl AssistantMessage {
     }
 }
 
-impl History {
+impl Entries {
     pub fn push_delta(
         &mut self,
         item_delta: Delta,
     ) {
         // XXX kinda ugly
-        if let Some(modified) = if let Some(entry) = self.last()
+        if let Some(modified) = if let Some(entry) = self.last_mut()
             && let Message::Assistant(msg) = &mut entry.message
         {
             match item_delta.delta {
@@ -73,7 +73,7 @@ impl History {
         } else {
             None
         } {
-            self.last().unwrap().meta.timing.touch_at(modified);
+            self.last_mut().unwrap().meta.timing.touch_at(modified);
         }
     }
 }

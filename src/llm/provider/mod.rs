@@ -19,6 +19,7 @@ use crate::llm::provider::api::Api;
 use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
 use crate::llm::provider::api::responses::ResponsesApi;
 
+#[derive(Debug)]
 pub struct Provider {
     pub config: ProviderConfig,
     pub ratelimiter: DefaultDirectRateLimiter,

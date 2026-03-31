@@ -9,7 +9,7 @@ use tokio::sync::AcquireError;
 use tracing::instrument;
 
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::history::History;
+use crate::llm::message::Message;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::assistant::Assistant;
 
@@ -18,7 +18,7 @@ impl Assistant {
     pub async fn stream_turn(
         &self,
         instructions: String,
-        history: History,
+        history: Vec<Message>,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream> {
         retry(

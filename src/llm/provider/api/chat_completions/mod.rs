@@ -9,7 +9,7 @@ use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::config::ProviderConfig;
-use crate::llm::history::History;
+use crate::llm::message::Message;
 use crate::llm::message::now_ms;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
@@ -18,6 +18,7 @@ mod convert;
 mod request;
 mod stream;
 
+#[derive(Debug)]
 pub struct ChatCompletionsApi {
     client: Client<OpenAIConfig>,
     compat: ApiCompatConfig,
@@ -42,7 +43,7 @@ impl Api for ChatCompletionsApi {
         permit: OwnedSemaphorePermit,
         config: ModelConfig,
         instructions: String,
-        history: History,
+        history: Vec<Message>,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream> {
         let request = request::request(config, instructions, history, tools, true, &self.compat)?;

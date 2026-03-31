@@ -8,8 +8,8 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ModelConfig;
 use crate::llm::delta::Delta;
-use crate::llm::history::History;
 use crate::llm::message::AssistantItem;
+use crate::llm::message::Message;
 
 pub mod chat_completions;
 pub mod responses;
@@ -22,14 +22,14 @@ pub struct StartedAssistantStream {
 }
 
 #[async_trait]
-pub trait Api: Send + Sync {
+pub trait Api: Send + Sync + std::fmt::Debug {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
         // TODO can we somehow avoid model config here? ideally don't pass it around
         model: ModelConfig,
         instructions: String,
-        history: History,
+        messages: Vec<Message>,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream>;
 }

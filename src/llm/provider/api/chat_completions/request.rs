@@ -15,7 +15,7 @@ use async_openai::types::chat::CreateChatCompletionRequestArgs;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::llm::history::History;
+use crate::llm::message::AsMessageText;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::DeveloperMessage;
@@ -28,7 +28,7 @@ use crate::llm::message::UserMessage;
 pub fn request(
     assistant: ModelConfig,
     instructions: String,
-    history: History,
+    mut items: Vec<Message>,
     tools: ToolSchemas,
     streaming: bool,
     compat: &ApiCompatConfig,
@@ -38,11 +38,7 @@ pub fn request(
     if let Some(effort) = assistant.effort {
         builder.reasoning_effort(effort);
     }
-    let mut items = history.messages();
-    items.insert(
-        0,
-        Message::Developer(DeveloperMessage { text: instructions }),
-    );
+    items.insert(0, Message::Developer(DeveloperMessage::new(instructions)));
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
         items.iter_mut().for_each(move |message| {
@@ -54,7 +50,7 @@ pub fn request(
         items.iter_mut().for_each(|message| {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
-                    text: dev_msg.text.clone(),
+                    text: dev_msg.as_message_text(),
                 });
             }
         });
@@ -82,7 +78,7 @@ fn from_message(message: &Message) -> Vec<ChatCompletionRequestMessage> {
     match message {
         Message::Developer(msg) => vec![ChatCompletionRequestMessage::System(
             ChatCompletionRequestSystemMessage {
-                content: msg.text.clone().into(),
+                content: msg.as_message_text().into(),
                 name: None,
             },
         )],

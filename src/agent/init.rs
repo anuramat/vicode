@@ -11,7 +11,6 @@ use crate::agent::*;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::PROJECT;
-use crate::project::backend::Backend;
 use crate::project::layout::LayoutTrait;
 
 const CHANNEL_CAPACITY: usize = 100;
@@ -64,7 +63,7 @@ impl Agent {
         let path = PROJECT.agent_state(&id);
         let serialized = tokio::fs::read_to_string(path).await?;
         let mut state: AgentState = serde_json::from_str(&serialized)?;
-        state.context.history.rebuild_token_cache();
+        state.context.history.count_tokens();
 
         Self::from_state(parent, id, state).await
     }
@@ -76,10 +75,6 @@ impl Agent {
         state: AgentState,
     ) -> Result<Self> {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let assistant = ASSISTANT_POOL
-            .get()
-            .unwrap()
-            .assistant(&state.context.assistant_id)?;
         Ok(Self {
             id,
             state,
@@ -87,7 +82,6 @@ impl Agent {
             rx,
             tskmgr: AgentTaskManager::new(),
             tx,
-            assistant,
             tools: Default::default(),
         })
     }
@@ -134,15 +128,18 @@ impl AgentState {
     ) -> Result<Self> {
         PROJECT.new_agent(&commit, &id, true).await?;
         let state = Self {
+            status: AgentStatus::Idle,
+            assistant: ASSISTANT_POOL
+                .get()
+                .unwrap()
+                .assistant(&ASSISTANT_POOL.get().unwrap().next_primary())?,
             topology: AgentTopology {
                 children: Vec::new(),
                 kind: AgentKind::Primary,
             },
             context: AgentContext {
                 commit,
-                history: History::new(),
-                instructions,
-                assistant_id: ASSISTANT_POOL.get().unwrap().next_primary(),
+                history: History::with_instructions(instructions),
             },
         };
         state.save(&id).await?;

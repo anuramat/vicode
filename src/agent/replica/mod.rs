@@ -3,8 +3,10 @@ use anyhow::Result;
 use tokio::task::JoinSet;
 
 use crate::agent::AgentContext;
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::agent::subagent;
+use crate::llm::provider::assistant::Assistant;
 
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.
 Please review them and provide a single, consolidated implementation that combines the best aspects
@@ -20,13 +22,20 @@ pub struct ReplicaResult {
 pub async fn run_replicas(
     parent: AgentId,
     context: AgentContext,
+    assistant: Assistant,
     children: Vec<AgentId>,
 ) -> Result<ReplicaResult> {
     let mut tasks = JoinSet::new();
     for aid in children {
         let parent = parent.clone();
         let context = context.clone();
-        tasks.spawn(async move { subagent::run_child(&parent, &aid, &context, None).await });
+        let state = AgentState {
+            status: Default::default(),
+            assistant: assistant.clone(),
+            topology: Default::default(),
+            context,
+        };
+        tasks.spawn(async move { subagent::run_child(&parent, &aid, &state, None).await });
     }
     let mut results = Vec::new();
     while let Some(res) = tasks.join_next().await {

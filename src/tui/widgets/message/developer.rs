@@ -5,6 +5,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
+use crate::llm::message::AsMessageText;
 use crate::llm::message::DeveloperMessage;
 use crate::tui::widgets::container::element::*;
 
@@ -61,7 +62,7 @@ impl HeightComputable for DeveloperMessageWidget {
 
 impl From<&DeveloperMessage> for Element {
     fn from(msg: &DeveloperMessage) -> Self {
-        let text = msg.text.clone();
+        let text = msg.as_message_text();
         let char_count = text.chars().count();
         let widget = DeveloperMessageWidget {
             widget: Paragraph::new(text)

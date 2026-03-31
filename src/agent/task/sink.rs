@@ -1,46 +1,40 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::handle::AgentEvent;
 use crate::agent::task::manager::TaskId;
-use crate::llm::history::HistoryEvent;
 use crate::llm::history::HistoryGeneration;
+use crate::llm::history::HistoryUpdate;
+use crate::llm::history::ResponseEvent;
 
 #[derive(Clone)]
 pub struct TaskHandle {
     tid: TaskId,
     generation: HistoryGeneration,
-    sink: Arc<dyn TaskSink>,
-}
-
-#[async_trait::async_trait]
-trait TaskSink: Send + Sync {
-    async fn send_history(
-        &self,
-        tid: TaskId,
-        generation: HistoryGeneration,
-        event: HistoryEvent,
-    ) -> Result<()>;
-}
-
-struct AgentTaskSink {
     tx: Sender<AgentEvent>,
 }
 
-#[async_trait::async_trait]
-impl TaskSink for AgentTaskSink {
-    async fn send_history(
+#[derive(Clone)]
+pub struct TurnHandle {
+    pub task: TaskHandle,
+    pub turn_type: TurnType,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TurnType {
+    Default,
+    Compact,
+}
+
+impl TurnHandle {
+    pub async fn send(
         &self,
-        tid: TaskId,
-        generation: HistoryGeneration,
-        event: HistoryEvent,
+        event: ResponseEvent,
     ) -> Result<()> {
-        self.tx
-            .send(AgentEvent::TaskEvent(tid, generation, event))
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+        match self.turn_type {
+            TurnType::Default => self.task.send(HistoryUpdate::TurnResponse(event)).await,
+            TurnType::Compact => self.task.send(HistoryUpdate::CompactResponse(event)).await,
+        }
     }
 }
 
@@ -53,16 +47,21 @@ impl TaskHandle {
         Self {
             tid,
             generation,
-            sink: Arc::new(AgentTaskSink { tx }),
+            tx,
         }
     }
 
-    pub async fn history(
+    pub async fn send(
         &self,
-        event: HistoryEvent,
+        event: HistoryUpdate,
     ) -> Result<()> {
-        self.sink
-            .send_history(self.tid.clone(), self.generation, event)
+        self.tx
+            .send(AgentEvent::TaskEvent(
+                self.tid.clone(),
+                self.generation,
+                event,
+            ))
             .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 }

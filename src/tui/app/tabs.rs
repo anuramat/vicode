@@ -5,7 +5,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::handle::AgentStarted;
+use crate::agent::AgentHandle;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
@@ -123,10 +123,11 @@ impl<'a> App<'a> {
 
     pub async fn handle_started(
         &mut self,
-        started: AgentStarted,
+        aid: AgentId,
+        agent: AgentHandle,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), started.clone()).await?;
-        self.tabs.insert(started.aid.clone(), TabEntry::Ready(tab));
+        let tab = Tab::new(self.tx.clone(), aid.clone(), agent).await?;
+        self.tabs.insert(aid.clone(), TabEntry::Ready(tab));
         self.rebuild_tablist();
         Ok(())
     }

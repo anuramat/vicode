@@ -81,22 +81,21 @@ impl<'a> App<'a> {
         let remaining: usize = (width as usize).saturating_sub(line.width());
 
         let tokens = {
-            let window = if let Some(window) = tab.assistant_config.model.window {
+            let window = if let Some(window) = tab.agent.state.assistant.config.window {
                 format!(" / {:.1}", window as f64 / 1000.0)
             } else {
                 "".to_string()
             };
             format!(
-                "{:.1} + {:.1}{} kT",
-                tab.instructions_tokens as f64 / 1000.0,
-                tab.context_tokens as f64 / 1000.0,
+                "{:.1}{} kT",
+                tab.agent.state.context.history.total_tokens() as f64 / 1000.0,
                 window
             )
         };
         // TODO prettier status
         let right_part = format!(
             "{} | {:?} | {}",
-            tokens, tab.state, tab.agent_state.context.assistant_id
+            tokens, tab.agent.state.status, tab.agent.state.assistant.id
         );
         if right_part.len() + 3 < remaining {
             let spacing: usize = remaining - right_part.len();

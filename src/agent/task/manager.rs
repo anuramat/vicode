@@ -72,11 +72,11 @@ impl AgentTaskManager {
     pub fn finish_task(
         &mut self,
         id: &TaskId,
-    ) -> Result<()> {
+    ) -> bool {
         if let Some(task) = self.pending.remove(id) {
             task.abort();
-            return Ok(());
+            return true;
         }
-        panic!("task result applied but task not found in pending");
+        false
     }
 }

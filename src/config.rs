@@ -38,6 +38,18 @@ lazy_static::lazy_static! {
     };
 }
 
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize)]
+pub struct CompactConfig {
+    /// context window percentage, at which we compact the context, threshold < 100
+    #[default = 80]
+    pub threshold: usize,
+    /// context window percentage to compact to
+    /// we compact the first N messages, where N is the smallest number s.t. `old_total - dropped < target_percentage * context_window`
+    /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
+    #[default = 20]
+    pub target: usize,
+}
+
 pub fn expand_vec<I>(values: I) -> Vec<String>
 where
     I: IntoIterator,
@@ -94,6 +106,8 @@ pub struct Config {
     /// if false, keymaps are merged with defaults
     pub clear_keymap: bool,
     pub keymap: Keymap,
+
+    pub compact: CompactConfig,
 }
 
 impl Config {
@@ -375,17 +389,14 @@ mod tests {
     }
 
     #[test]
-    fn partial_config_inherits_defaults() {
-        let config = Config::parse(
+    fn requires_explicit_assistant_setup() {
+        let err = Config::parse(
             r#"
             shared = [".cache"]
             "#,
         )
-        .unwrap();
-        assert_eq!(config.shared, vec![".cache"]);
-        assert!(!config.providers.is_empty());
-        assert!(!config.assistants.is_empty());
-        assert!(!config.primary_assistant.is_empty());
+        .unwrap_err();
+        assert!(err.to_string().contains("assistant must not be empty"));
     }
 
     #[test]
@@ -393,9 +404,27 @@ mod tests {
         let config = Config::parse(
             r#"
             clear_keymap = true
+            primary_assistant = ["fast"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
 
             [keymap.normal]
             "q" = "quit"
+
+            [providers.main]
+            base_url = "https://api.example.com/v1"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
             "#,
         )
         .unwrap();

@@ -1,20 +1,22 @@
-# example config; copied to $XDG_CONFIG_HOME/vicode/config.toml if missing
-
-primary_assistant = ["cerebras"] # CHANGE ME: list of assistants for new tabs to round robin over
+# list of assistants for new tabs to round robin over
+primary_assistant = ["cerebras"]
 
 [assistants.cerebras]
 provider = "cerebras"
 model = "zai-glm-4.7"
 window = 131000
+
 [assistants.gpt]
 provider = "openai"
 model = "gpt-5.1-codex-mini"
 effort = "low"
 window = 400000
+
 [assistants.llama]
 provider = "llama"
 model = "dummy"
-window = 123456 # CHANGE ME
+window = 123456
+
 [assistants.zai]
 provider = "zai"
 model = "glm-5"
@@ -22,21 +24,25 @@ window = 200000
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
-key_command = "cat /run/agenix/openrouter" # CHANGE ME
+key_command = "cat /run/agenix/openrouter"
+
 [providers.llama]
-base_url = "$LLAMA_HOST/v1" # CHANGE ME
+base_url = "$LLAMA_HOST/v1"
 developer_as_user = true
+
 [providers.openai]
 base_url = "https://api.openai.com/v1"
-key_command = "cat /run/agenix/openai" # CHANGE ME
+key_command = "cat /run/agenix/openai"
+
 [providers.cerebras]
 base_url = "https://api.cerebras.ai/v1"
-key_command = "cat /run/agenix/cerebras" # CHANGE ME
+key_command = "cat /run/agenix/cerebras"
 api = "chat_completions"
 reasoning_content_field = "reasoning"
 reasoning_as_output = "think"
+
 [providers.zai]
 base_url = "https://api.z.ai/api/coding/paas/v4"
-key_command = "cat /run/agenix/zai" # CHANGE ME
+key_command = "cat /run/agenix/zai"
 api = "chat_completions"
 reasoning_content_field = "reasoning_content"

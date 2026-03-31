@@ -9,6 +9,8 @@ use futures::future::try_join_all;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_plain::derive_deserialize_from_fromstr;
+use serde_plain::derive_serialize_from_display;
 use tokio::sync::OnceCell;
 
 use super::Provider;
@@ -18,9 +20,33 @@ use crate::config::Config;
 // TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
 pub static ASSISTANT_POOL: OnceCell<AssistantPool> = OnceCell::const_new();
 
+#[derive(Debug, Clone)]
 pub struct Assistant {
+    pub id: String,
     pub provider: Arc<Provider>,
     pub config: ModelConfig,
+}
+
+derive_serialize_from_display!(Assistant);
+impl std::fmt::Display for Assistant {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{}", self.id)
+    }
+}
+
+derive_deserialize_from_fromstr!(Assistant, "existing assistant id");
+impl std::str::FromStr for Assistant {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ASSISTANT_POOL
+            .get()
+            .context("assistant pool not initialized")?
+            .assistant(s)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize)]
@@ -39,7 +65,7 @@ pub struct ModelConfig {
 }
 
 pub struct AssistantPool {
-    assistants: IndexMap<String, Arc<Assistant>>,
+    assistants: IndexMap<String, Assistant>,
     primary: RoundRobin,
     subagent: SubagentSelector,
 }
@@ -75,13 +101,14 @@ impl AssistantPool {
             .map(|(id, config)| {
                 Ok((
                     id.clone(),
-                    Arc::new(Assistant {
+                    Assistant {
+                        id: id.clone(),
                         provider: providers
                             .get(&config.provider)
                             .cloned()
                             .with_context(|| format!("unknown provider {:?}", config.provider))?,
                         config: config.model.clone(),
-                    }),
+                    },
                 ))
             })
             .collect::<Result<_>>()?;
@@ -100,7 +127,7 @@ impl AssistantPool {
     pub fn assistant(
         &self,
         id: &str,
-    ) -> Result<Arc<Assistant>> {
+    ) -> Result<Assistant> {
         self.assistants
             .get(id)
             .cloned()

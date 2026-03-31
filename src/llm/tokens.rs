@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 use tiktoken_rs::CoreBPE;
 use tiktoken_rs::o200k_base;
 
+use crate::llm::message::AsMessageText;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::Message;
 use crate::llm::message::OutputContent;
@@ -17,7 +18,7 @@ pub fn count_text_tokens(text: &str) -> usize {
 
 pub fn count_message_tokens(message: &Message) -> usize {
     10 + match message {
-        Message::Developer(msg) => count_text_tokens(&msg.text),
+        Message::Developer(msg) => count_text_tokens(&msg.as_message_text()),
         Message::User(msg) => count_text_tokens(&msg.text),
         Message::Assistant(msg) => msg.content.values().map(count_assistant_item_tokens).sum(),
     }

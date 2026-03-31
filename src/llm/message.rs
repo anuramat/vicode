@@ -1,5 +1,8 @@
 use std::fmt::Display;
 
+use ambassador::Delegate;
+use derive_more::Deref;
+use derive_more::DerefMut;
 use derive_more::From;
 use derive_more::Into;
 use indexmap::IndexMap;
@@ -8,12 +11,14 @@ use serde::Serialize;
 use strum::EnumTryAs;
 
 use crate::agent::tool::traits::*;
+use crate::llm::tokens::count_message_tokens;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]
 pub struct HistoryEntry {
-    #[serde(default)]
     pub meta: MessageMeta,
     #[serde(flatten)]
+    #[deref]
+    #[deref_mut]
     pub message: Message,
 }
 
@@ -22,6 +27,21 @@ pub struct MessageMeta {
     pub timing: ItemTiming,
     #[serde(default)]
     pub token_count: usize,
+}
+
+impl HistoryEntry {
+    pub fn new(message: Message) -> Self {
+        let mut result = Self {
+            meta: MessageMeta::default(),
+            message,
+        };
+        result.count_tokens();
+        result
+    }
+
+    pub fn count_tokens(&mut self) {
+        self.meta.token_count = count_message_tokens(&self.message);
+    }
 }
 
 // TODO maybe drop default, instead use new()
@@ -43,9 +63,52 @@ pub enum Message {
     Assistant(AssistantMessage),
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug, Delegate)]
+#[delegate(AsMessageText)]
+pub enum DeveloperMessage {
+    Compact(CompactMessage),
+    SubagentReport(SubagentReportMessage),
+    Misc(String),
+}
+
+#[ambassador::delegatable_trait]
+pub trait AsMessageText {
+    fn as_message_text(&self) -> String;
+}
+
+impl AsMessageText for String {
+    fn as_message_text(&self) -> String {
+        self.clone()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct DeveloperMessage {
+pub struct CompactMessage {
     pub text: String,
+    pub needs_another_turn: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SubagentReportMessage {
+    pub text: String,
+}
+
+impl AsMessageText for SubagentReportMessage {
+    fn as_message_text(&self) -> String {
+        self.text.clone()
+    }
+}
+
+impl AsMessageText for CompactMessage {
+    fn as_message_text(&self) -> String {
+        self.text.clone()
+    }
+}
+
+impl DeveloperMessage {
+    pub fn new(text: String) -> Self {
+        Self::Misc(text)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -65,7 +128,6 @@ pub enum AssistantMessageStatus {
     #[default]
     InProgress,
     Success,
-    AbortedByUser,
     Error(String),
 }
 
