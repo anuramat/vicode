@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use tiktoken_rs::CoreBPE;
 use tiktoken_rs::o200k_base;
 
@@ -8,9 +7,7 @@ use crate::llm::message::Message;
 use crate::llm::message::OutputContent;
 use crate::llm::message::ToolCallItem;
 
-lazy_static! {
-    static ref BPE: CoreBPE = o200k_base().unwrap();
-}
+static BPE: std::sync::LazyLock<CoreBPE> = std::sync::LazyLock::new(|| o200k_base().unwrap());
 
 pub fn count_text_tokens(text: &str) -> usize {
     BPE.encode_with_special_tokens(text).len()

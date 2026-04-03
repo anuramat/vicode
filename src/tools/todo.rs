@@ -1,6 +1,4 @@
 use anyhow::Result;
-use ratatui::prelude::*;
-use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 
@@ -69,14 +67,6 @@ impl Function<(), (), TodoResult> for TodoArguments {
     ) -> Result<(TodoResult, ())> {
         Ok((TodoResult {}, ()))
     }
-}
-
-lazy_static::lazy_static! {
-    static ref BLOCK: ratatui::widgets::Block<'static> = ratatui::widgets::Block::bordered().border_set(ratatui::symbols::border::PLAIN).title("");
-}
-
-lazy_static::lazy_static! {
-    static ref STYLE: Style = Style::default().italic();
 }
 
 impl From<&TodoCall> for Element {

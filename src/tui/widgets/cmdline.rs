@@ -9,10 +9,6 @@ use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::textarea::Input;
 
-lazy_static::lazy_static! {
-    static ref COMMANDS: Vec<String> = CommandName::iter().map(|c| c.to_string()).collect();
-}
-
 const MAX_COMPLETION_HEIGHT: u16 = 5;
 
 #[derive(Debug, Clone)]
@@ -22,7 +18,8 @@ pub struct Cmdline<'a> {
 
 impl Default for Cmdline<'_> {
     fn default() -> Self {
-        let mut input = Input::new("", COMMANDS.clone(), MAX_COMPLETION_HEIGHT);
+        let commands = CommandName::iter().map(|c| c.to_string()).collect();
+        let mut input = Input::new("", commands, MAX_COMPLETION_HEIGHT);
         input.clear_on_unfocus = true;
         Self { input }
     }
@@ -66,7 +63,7 @@ impl<'a> Cmdline<'a> {
 
         if let Ok(command) = text.parse::<Command>() {
             Ok(command)
-        } else if text.len() != 0 && self.input.completion.matches.len() == 1 {
+        } else if !text.is_empty() && self.input.completion.matches.len() == 1 {
             // TODO maybe tighten matches -- now we take the single fuzzy match, maybe we should only take if it's a prefix match
             let text = self.input.completion.matches[0].value.clone();
             Ok(Command {

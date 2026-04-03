@@ -3295,7 +3295,6 @@ dependencies = [
  "ignore",
  "indexmap",
  "inventory",
- "lazy_static",
  "libgit2-sys",
  "notify",
  "nucleo-matcher",

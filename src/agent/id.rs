@@ -14,9 +14,8 @@ use crate::project::layout::LayoutTrait;
 #[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AgentId(String);
 
-lazy_static::lazy_static! {
-    static ref GENERATOR: petname::Petnames<'static> = petname::Petnames::small();
-}
+static GENERATOR: std::sync::LazyLock<petname::Petnames<'static>> =
+    std::sync::LazyLock::new(petname::Petnames::small);
 
 const SEPARATOR: &str = "-";
 const WORDS: u8 = 3;

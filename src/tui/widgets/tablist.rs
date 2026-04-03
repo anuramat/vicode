@@ -7,9 +7,8 @@ use ratatui::widgets::*;
 use crate::agent::id::AgentId;
 use crate::tui::tab::TabEntry;
 
-lazy_static::lazy_static! {
-    static ref SELECTION_STYLE:
-        Style = Style::default().add_modifier(Modifier::REVERSED);
+fn style() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
 }
 
 #[derive(Clone, Default)]
@@ -33,7 +32,7 @@ impl<'a> TabList<'a> {
             .iter()
             .map(|(aid, tab)| ListItem::new(tab.label(aid)))
             .collect::<Vec<_>>();
-        self.widget = List::new(items).highlight_style(*SELECTION_STYLE).into();
+        self.widget = List::new(items).highlight_style(style()).into();
     }
 
     pub fn selected(&self) -> Option<usize> {

@@ -27,20 +27,19 @@ const INSTRUCTIONS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
 const SCHEMA_FILENAME: &str = "schema.json";
 
-// TODO drop lazy_static, centralize config reading and pass values explicitly
-// TODO let user override instructions filepath
+// TODO try to drop LazyLock, centralize config reading and pass values explicitly
 
-lazy_static::lazy_static! {
-    pub static ref CONFIG: Config = Config::new().unwrap();
-    pub static ref DIRS: BaseDirectories = BaseDirectories::with_prefix(XDG_DIRNAME);
-    pub static ref INSTRUCTIONS: String = {
-        let filepath = DIRS.place_config_file(INSTRUCTIONS_FILENAME).unwrap();
-        if !filepath.exists() {
-            std::fs::write(&filepath, DEFAULT_INSTRUCTIONS).unwrap();
-        }
-        std::fs::read_to_string(filepath).unwrap()
-    };
-}
+pub static CONFIG: std::sync::LazyLock<Config> =
+    std::sync::LazyLock::new(|| Config::new().unwrap());
+pub static DIRS: std::sync::LazyLock<BaseDirectories> =
+    std::sync::LazyLock::new(|| BaseDirectories::with_prefix(XDG_DIRNAME));
+pub static INSTRUCTIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let filepath = DIRS.place_config_file(INSTRUCTIONS_FILENAME).unwrap();
+    if !filepath.exists() {
+        std::fs::write(&filepath, DEFAULT_INSTRUCTIONS).unwrap();
+    }
+    std::fs::read_to_string(filepath).unwrap()
+});
 
 #[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 pub struct CompactConfig {

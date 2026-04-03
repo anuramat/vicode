@@ -1,8 +1,13 @@
 use ratatui::prelude::*;
 
-lazy_static::lazy_static! {
-    pub static ref LOGO_VARIANTS: Logo = Logo::new();
-    static ref STYLE: Style = Style::default().fg(Color::Red).bold();
+pub static LOGO_VARIANTS: std::sync::LazyLock<Logo> = std::sync::LazyLock::new(|| Logo::new());
+
+fn logo_style() -> Style {
+    Style::default().fg(Color::Red).bold()
+}
+
+fn bg_style() -> Style {
+    Style::default().dark_gray().not_bold()
 }
 
 pub struct LogoVariant {
@@ -22,7 +27,9 @@ impl Widget for &Logo {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        buf.set_style(buf.area, Style::default().dark_gray().not_bold());
+        buf.set_style(buf.area, bg_style());
+
+        let style = logo_style();
         let logo = self.get_logo(area);
         let x_start = (area.width - logo.width) / 2;
         let y_start = (area.height - logo.height) / 2;
@@ -37,7 +44,7 @@ impl Widget for &Logo {
                     break;
                 }
                 if !ch.is_whitespace() {
-                    buf[(x_abs, y_abs)].set_char(ch).set_style(*STYLE);
+                    buf[(x_abs, y_abs)].set_char(ch).set_style(style);
                 }
             }
         }
