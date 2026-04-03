@@ -1,11 +1,5 @@
-data_dir := env_var_or_default(
-  "XDG_DATA_HOME",
-  env_var("HOME") / ".local/share"
-) / "vicode"
-state_dir := env_var_or_default(
-  "XDG_STATE_HOME",
-  env_var("HOME") / ".local/state"
-) / "vicode"
+data_dir := env_var_or_default("XDG_DATA_HOME", env_var("HOME") / ".local/share") / "vicode"
+state_dir := env_var_or_default("XDG_STATE_HOME", env_var("HOME") / ".local/state") / "vicode"
 
 default: run
 
@@ -39,6 +33,12 @@ clean: clean_state clean_data clean_git
 
 profile:
     flamegraph -- ./target/release/vc
+
+nix-build:
+    nix build --option substitute false
+
+nix-run:
+    nix run --option substitute false
 
 build:
     RUSTFLAGS="-C debuginfo=1" cargo build --release
