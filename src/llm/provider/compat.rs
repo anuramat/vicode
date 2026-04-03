@@ -23,8 +23,8 @@ pub fn reasoning_to_output(
         item
     }
 
-    if let Some(msg) = msg.try_as_assistant_mut() {
-        msg.content.iter_mut().for_each(|(_, item)| {
+    if let Message::Assistant(AssistantMessage { content, .. }) = msg {
+        content.iter_mut().for_each(|(_, item)| {
             if let AssistantItem::Reasoning(reasoning_item) = item {
                 *item = AssistantItem::Output(transform_item(tag, reasoning_item));
             }

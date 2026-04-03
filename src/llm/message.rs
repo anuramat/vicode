@@ -8,7 +8,6 @@ use derive_more::Into;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
-use strum::EnumTryAs;
 
 use crate::agent::tool::traits::*;
 use crate::llm::tokens::count_message_tokens;
@@ -55,7 +54,7 @@ impl Default for MessageMeta {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, From, EnumTryAs)]
+#[derive(Clone, Serialize, Deserialize, Debug, From)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     Developer(DeveloperMessage),
@@ -123,7 +122,7 @@ pub struct AssistantMessage {
     pub content: IndexMap<String, AssistantItem>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default, EnumTryAs)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub enum AssistantMessageStatus {
     #[default]
     InProgress,
@@ -131,7 +130,7 @@ pub enum AssistantMessageStatus {
     Error(String),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, EnumTryAs, From)]
+#[derive(Clone, Serialize, Deserialize, Debug, From)]
 pub enum AssistantItem {
     Output(OutputItem),
     Reasoning(ReasoningItem),

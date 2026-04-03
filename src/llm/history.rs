@@ -207,7 +207,7 @@ impl Entries {
         if let Some(entry) = self.last() {
             match &entry.message {
                 Message::Assistant(msg) => msg.content.iter().any(|(_, content)| {
-                    content.try_as_tool_call_ref().is_some()
+                    matches!(content, AssistantItem::ToolCall(_))
                         && matches!(msg.finish_reason, AssistantMessageStatus::Success)
                 }),
                 Message::Developer(msg) => match msg {
@@ -748,7 +748,9 @@ mod tests {
         else {
             panic!("expected assistant message");
         };
-        let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
+        let AssistantItem::Output(item) = msg.content.get("out").unwrap() else {
+            panic!("expected output item");
+        };
         assert_eq!(meta.timing.last_modified_ms, item.timing.last_modified_ms);
         assert_eq!(history.total_tokens(), 10 + count_text_tokens("hello"));
     }
@@ -837,7 +839,9 @@ mod tests {
         else {
             panic!("expected assistant message");
         };
-        let item = msg.content.get("out").unwrap().try_as_output_ref().unwrap();
+        let AssistantItem::Output(item) = msg.content.get("out").unwrap() else {
+            panic!("expected output item");
+        };
         assert_eq!(item.timing.last_modified_ms, None);
         assert!(matches!(msg.finish_reason, AssistantMessageStatus::Success));
     }

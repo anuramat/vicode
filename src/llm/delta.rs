@@ -1,4 +1,5 @@
 use crate::llm::history::Entries;
+use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::Message;
 
@@ -21,7 +22,9 @@ impl AssistantMessage {
         id: String,
         delta: String,
     ) -> Option<u64> {
-        let item = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
+        let AssistantItem::Reasoning(item) = self.content.get_mut(&id)? else {
+            return None;
+        };
         let modified = item.timing.touch();
         item.summary.push(delta);
         Some(modified)
@@ -32,7 +35,9 @@ impl AssistantMessage {
         id: String,
         delta: String,
     ) -> Option<u64> {
-        let reasoning = self.content.get_mut(&id)?.try_as_reasoning_mut()?;
+        let AssistantItem::Reasoning(reasoning) = self.content.get_mut(&id)? else {
+            return None;
+        };
         if reasoning.content.is_none() {
             reasoning.content = Some(Vec::new());
         }
@@ -47,7 +52,9 @@ impl AssistantMessage {
         id: String,
         delta: String,
     ) -> Option<u64> {
-        let item = self.content.get_mut(&id)?.try_as_output_mut()?;
+        let AssistantItem::Output(item) = self.content.get_mut(&id)? else {
+            return None;
+        };
         item.content
             .push(crate::llm::message::OutputContent::Text(delta));
         Some(item.timing.touch())
