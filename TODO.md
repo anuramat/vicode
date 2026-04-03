@@ -15,10 +15,10 @@
 
 - file completion on @
 - mac support: no overlays, sandbox-exec instead of bwrap
-- reuse commands for config
 - :help
 - show bindings/usage for commands in cmpmenu
 - '!...' command -- run bash in current tab, and append a developer message equivalent to bash tool output, with equivalent rendering
+- markdown rendering in input field
 - subagents
   - two types
     - parallel -- each owns a workdir; same as "replica" in best-of-n
