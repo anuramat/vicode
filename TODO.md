@@ -23,10 +23,8 @@
   - two types
     - parallel -- each owns a workdir; same as "replica" in best-of-n
     - blocking -- one at a time, shares workdir with parent, probably gets git access
-- compact
-  - user command
-  - autocompact on `used > threshold * window`
-  - preserve full original history for future reference
+- autocompact on threshold
+- alternative argument schemas for user compact command
 - skills
 - retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
 - mcp
