@@ -147,3 +147,14 @@ impl Sandbox for BwrapConfig {
         runner
     }
 }
+
+impl BwrapConfig {
+    pub fn with_defaults(&mut self) {
+        let mut stages = Vec::new();
+
+        stages.extend(default_stages());
+        stages.extend(self.stages.clone());
+
+        self.stages = stages;
+    }
+}

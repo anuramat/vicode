@@ -216,14 +216,14 @@ impl std::fmt::Display for KeyChord {
     }
 }
 
-// TODO allow multiple chords per command
 // TODO allow multiple commands per chord
-// TODO allow sequences of chords?
 // TODO allow easily defining keymap for multiple modes at the same time
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Keymap {
+    /// if false, keymaps are merged with defaults
+    pub clear_defaults: bool,
     pub cmdline: HashMap<KeyChord, Command>,
     pub normal: HashMap<KeyChord, Command>,
     pub insert: HashMap<KeyChord, Command>,
@@ -286,6 +286,7 @@ impl Default for Keymap {
 
         let insert = [("enter", "input_submit"), ("esc", "input_exit")];
         Self {
+            clear_defaults: false,
             cmdline: parse(cmdline),
             normal: parse(normal),
             insert: parse(insert),
@@ -300,6 +301,18 @@ pub enum Mode {
 }
 
 impl Keymap {
+    pub fn maybe_with_defaults(self) -> Self {
+        if self.clear_defaults {
+            return self;
+        }
+
+        let mut keymap = Keymap::default();
+        keymap.cmdline.extend(self.cmdline);
+        keymap.normal.extend(self.normal);
+        keymap.insert.extend(self.insert);
+        keymap
+    }
+
     pub fn get(
         &self,
         mode: Mode,

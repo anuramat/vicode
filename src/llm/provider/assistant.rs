@@ -205,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn assistants_share_provider() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast", "deep"]
             shell_cmd = ["bash", "-c"]
@@ -250,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn subagents_round_robin_over_subset() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             subagent_assistant = ["deep", "fast"]
@@ -293,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn switch_assistant_steps_forward_through_full_order() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             shell_cmd = ["bash", "-c"]
@@ -345,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn switch_assistant_steps_backward_through_full_order() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             shell_cmd = ["bash", "-c"]

@@ -107,8 +107,6 @@ pub struct Config {
     /// if empty, inherits from its parent
     pub subagent_assistant: Vec<String>,
 
-    /// if false, keymaps are merged with defaults
-    pub clear_keymap: bool,
     pub keymap: Keymap,
 
     pub compact: CompactConfig,
@@ -138,19 +136,13 @@ impl Config {
         }
         let s = std::fs::read_to_string(&filepath)
             .with_context(|| format!("failed to read config file at {}", filepath.display()))?;
-        Self::parse(&s)
+        Self::parse_with_defaults(&s)
     }
 
-    pub fn parse(s: &str) -> Result<Self> {
+    pub fn parse_with_defaults(s: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(s)?;
-        // merge with default keymap
-        if !config.clear_keymap {
-            let mut keymap = Keymap::default();
-            keymap.cmdline.extend(config.keymap.cmdline.clone());
-            keymap.normal.extend(config.keymap.normal.clone());
-            keymap.insert.extend(config.keymap.insert.clone());
-            config.keymap = keymap;
-        }
+        config.keymap = config.keymap.maybe_with_defaults();
+        config.sandbox.maybe_with_defaults();
         config.validate()?;
         Ok(config)
     }
@@ -192,14 +184,13 @@ mod tests {
 
     #[test]
     fn parses_default_config() {
-        // TODO do properly, ie without unwraps
         let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         config.validate().unwrap();
     }
 
     #[test]
     fn parses_multi_provider_config() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast", "deep"]
             shell_cmd = ["bash", "-c"]
@@ -242,7 +233,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_assistant_reference() {
-        let err = Config::parse(
+        let err = Config::parse_with_defaults(
             r#"
             primary_assistant = ["missing"]
             shell_cmd = ["bash", "-c"]
@@ -272,7 +263,7 @@ mod tests {
 
     #[test]
     fn parses_keymap() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             shell_cmd = ["bash", "-c"]
@@ -328,7 +319,7 @@ mod tests {
 
     #[test]
     fn parses_shift_modifier_in_keymap() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             shell_cmd = ["bash", "-c"]
@@ -369,7 +360,7 @@ mod tests {
 
     #[test]
     fn parses_insert_keymap_scope() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
             primary_assistant = ["fast"]
             shell_cmd = ["bash", "-c"]
@@ -407,7 +398,7 @@ mod tests {
 
     #[test]
     fn requires_explicit_assistant_setup() {
-        let err = Config::parse(
+        let err = Config::parse_with_defaults(
             r#"
             shared = [".cache"]
             "#,
@@ -418,9 +409,8 @@ mod tests {
 
     #[test]
     fn clear_keymap_replaces_defaults() {
-        let config = Config::parse(
+        let config = Config::parse_with_defaults(
             r#"
-            clear_keymap = true
             primary_assistant = ["fast"]
 
             [sandbox]
@@ -429,6 +419,8 @@ mod tests {
             args = []
             stages = []
 
+            [keymap]
+            clear_defaults = true
             [keymap.normal]
             "q" = "quit"
 

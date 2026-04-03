@@ -153,7 +153,7 @@ mod tests {
 
     async fn assistant() -> Assistant {
         AssistantPool::from_config(
-            &Config::parse(
+            &Config::parse_with_defaults(
                 r#"
                 primary_assistant = ["test"]
                 shell_cmd = ["bash", "-c"]
@@ -201,7 +201,7 @@ mod tests {
         crate::llm::provider::assistant::ASSISTANT_POOL
             .get_or_init(|| async {
                 AssistantPool::from_config(
-                    &Config::parse(
+                    &Config::parse_with_defaults(
                         r#"
                         primary_assistant = ["test"]
                         shell_cmd = ["bash", "-c"]

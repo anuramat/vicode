@@ -17,10 +17,19 @@ use crate::sandbox::sbe::SbeConfig;
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct SandboxConfig {
+    clear_defaults: bool,
     bwrap: BwrapConfig,
     sbe: SbeConfig,
     /// path to a custom sandbox script
     custom: Option<String>,
+}
+
+impl SandboxConfig {
+    pub fn maybe_with_defaults(&mut self) {
+        if !self.clear_defaults {
+            self.bwrap.with_defaults();
+        }
+    }
 }
 
 pub trait Sandbox: std::fmt::Debug + DynClone + Send + Sync {
