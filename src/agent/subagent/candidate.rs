@@ -14,17 +14,18 @@ use similar::TextDiff;
 
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 
 pub async fn response(
+    project: &Project,
     parent: &AgentId,
     aid: &AgentId,
 ) -> Result<String> {
-    let serialized = tokio::fs::read_to_string(PROJECT.agent_state(aid)).await?;
+    let serialized = tokio::fs::read_to_string(project.agent_state(aid)).await?;
     let state: AgentState = serde_json::from_str(&serialized)?;
     let text = state.context.history.last_output()?;
-    let diff = diff(parent, aid)?;
+    let diff = diff(project, parent, aid)?;
     Ok(format!(
         "<implementation id={}>\n{}\n```diff\n{}```\n</implementation>",
         aid, text, diff
@@ -32,13 +33,14 @@ pub async fn response(
 }
 
 fn diff(
+    project: &Project,
     parent: &AgentId,
     aid: &AgentId,
 ) -> Result<String> {
-    let parent_upper = PROJECT.agent_changes_dir(parent);
-    let child_upper = PROJECT.agent_changes_dir(aid);
-    let parent_workdir = PROJECT.agent_workdir(parent);
-    let child_workdir = PROJECT.agent_workdir(aid);
+    let parent_upper = project.agent_changes_dir(parent);
+    let child_upper = project.agent_changes_dir(aid);
+    let parent_workdir = project.agent_workdir(parent);
+    let child_workdir = project.agent_workdir(aid);
     let ignore = gitignore(&child_workdir)?;
     let mut paths = BTreeSet::new();
     collect_paths(&parent_upper, &parent_upper, &mut paths)?;

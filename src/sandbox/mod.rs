@@ -75,8 +75,8 @@ impl SandboxRunner {
         let mut bash_cmd = CONFIG.shell_cmd.clone();
         bash_cmd.push(script);
 
-        let mut bwrap_bin = tokio::process::Command::new(&self.bin);
-        Ok(bwrap_bin
+        let mut cmd = tokio::process::Command::new(&self.bin);
+        Ok(cmd
             .current_dir(&self.cwd)
             .args(&self.args)
             .args(bash_cmd.into_iter())

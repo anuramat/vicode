@@ -2,7 +2,6 @@ pub mod backend;
 pub mod layout;
 
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 use ambassador::Delegate;
 use anyhow::Result;
@@ -19,9 +18,7 @@ use crate::project::backend::Copy;
 use crate::project::backend::Overlay;
 use crate::project::layout::*;
 
-pub static PROJECT: LazyLock<Project> = LazyLock::new(|| Project::new().unwrap());
-
-#[derive(Delegate)]
+#[derive(Clone, Delegate)]
 #[delegate(LayoutTrait, target = "layout")]
 pub struct Project {
     layout: Layout,

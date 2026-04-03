@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use ambassador::delegatable_trait;
@@ -16,11 +17,11 @@ const WORKTREE_NAME_PREFIX: &str = "vc-";
 #[async_trait::async_trait]
 #[delegatable_trait]
 pub trait LayoutTrait {
-    fn root(&self) -> PathBuf;
+    fn root(&self) -> &std::path::Path;
 
-    fn data(&self) -> PathBuf;
+    fn data(&self) -> &std::path::Path;
 
-    fn id(&self) -> String;
+    fn id(&self) -> &str;
 
     fn app_state(&self) -> PathBuf {
         self.data().join(APP_STATE_FILENAME)
@@ -73,15 +74,15 @@ pub trait LayoutTrait {
 
 #[async_trait::async_trait]
 impl LayoutTrait for Layout {
-    fn root(&self) -> PathBuf {
-        self.root.clone()
+    fn root(&self) -> &Path {
+        &self.root
     }
 
-    fn id(&self) -> String {
-        self.id.clone()
+    fn id(&self) -> &str {
+        &self.id
     }
 
-    fn data(&self) -> PathBuf {
-        self.data.clone()
+    fn data(&self) -> &Path {
+        &self.data
     }
 }

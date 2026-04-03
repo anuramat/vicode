@@ -188,7 +188,8 @@ impl Agent {
                 if multiplier <= 1 {
                     self.start_turn();
                 } else {
-                    let replicas = try_join_all((0..multiplier).map(|_| AgentId::new())).await?;
+                    let replicas =
+                        try_join_all((0..multiplier).map(|_| AgentId::new(&self.project))).await?;
                     self.state.topology.children.extend(replicas.clone());
                     self.save().await?;
                     self.start_replica_turns(replicas);
@@ -251,6 +252,7 @@ impl Agent {
         &mut self,
         replicas: Vec<AgentId>,
     ) {
+        let project = self.project.clone();
         let parent = self.id.clone();
         let context = self.state.context.clone();
         let assistant = self.state.assistant.clone();
@@ -258,7 +260,8 @@ impl Agent {
             self.tx.clone(),
             context.history.generation(),
             move |task| async move {
-                let result = replica::run_replicas(parent, context, assistant, replicas).await?;
+                let result =
+                    replica::run_replicas(project, parent, context, assistant, replicas).await?;
                 task.send(HistoryUpdate::DeveloperMessage(
                     DeveloperMessage::SubagentReport(SubagentReportMessage {
                         text: result.report,
@@ -315,7 +318,7 @@ mod tests {
     use crate::config::Config;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::PROJECT;
+    use crate::project::Project;
     use crate::project::layout::LayoutTrait;
 
     async fn assistant() -> Assistant {
@@ -350,14 +353,16 @@ mod tests {
 
     #[tokio::test]
     async fn abort_emits_turn_complete_and_marks_history_failed() {
+        let project = Project::new().unwrap();
         let aid = AgentId::from(format!("abort-test-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: Default::default(),
@@ -406,21 +411,23 @@ mod tests {
             })) if msg == ABORTED_BY_USER
         ));
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn retry_after_compact_failure_restarts_compaction() {
+        let project = Project::new().unwrap();
         let aid = AgentId::from(format!("compact-retry-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: Default::default(),
@@ -464,7 +471,7 @@ mod tests {
 
         assert!(agent.state.context.history.compact.is_some());
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }

@@ -17,7 +17,7 @@ use tokio::time::Instant;
 
 use crate::agent::id::AgentId;
 use crate::config::CONFIG;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;
 use crate::tui::widgets::cmdline::Cmdline;
@@ -37,6 +37,7 @@ pub struct Notification {
 }
 
 pub struct App<'a> {
+    pub project: Project,
     pub should_exit: bool,
 
     pub rx: Receiver<AppEvent>,
@@ -68,13 +69,14 @@ const CHANNEL_CAPACITY: usize = 100;
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl<'a> App<'a> {
-    async fn new() -> Result<Self> {
+    async fn new(project: Project) -> Result<Self> {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
 
-        let project_name = PROJECT.name();
+        let project_name = project.name();
 
         Ok(Self {
+            project,
             show_tabs: false,
             project_name,
             cmdline: Cmdline::default(),
@@ -110,13 +112,13 @@ impl<'a> App<'a> {
     pub async fn save_app_state(&self) -> Result<()> {
         let data = self.state();
         let serialized = serde_json::to_string_pretty(&data)?;
-        let path = PROJECT.app_state();
+        let path = self.project.app_state();
         tokio::fs::write(path, serialized).await?;
         Ok(())
     }
 
-    pub async fn load_app_state() -> Result<AppState> {
-        let path = PROJECT.app_state();
+    pub async fn load_app_state(&self) -> Result<AppState> {
+        let path = self.project.app_state();
         if !path.exists() {
             return Ok(AppState::default());
         }

@@ -8,7 +8,7 @@ use petname::Generator;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 
 #[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -22,10 +22,10 @@ const WORDS: u8 = 3;
 const PATIENCE: usize = 3;
 
 impl AgentId {
-    pub async fn new() -> Result<Self> {
+    pub async fn new(project: &Project) -> Result<Self> {
         for _ in 0..PATIENCE {
             let id: Self = GENERATOR.generate_one(WORDS, SEPARATOR).unwrap().into();
-            if !PROJECT.agent_id_exists(&id).await? {
+            if !project.agent_id_exists(&id).await? {
                 return Ok(id);
             }
         }

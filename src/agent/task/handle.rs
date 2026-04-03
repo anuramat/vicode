@@ -51,7 +51,7 @@ mod tests {
     use crate::llm::history::ResponseEvent;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::PROJECT;
+    use crate::project::Project;
     use crate::project::layout::LayoutTrait;
 
     async fn assistant() -> Assistant {
@@ -92,14 +92,16 @@ mod tests {
 
     #[tokio::test]
     async fn compact_failure_does_not_start_normal_turn() {
+        let project = Project::new().unwrap();
         let aid = AgentId::from(format!("compact-failed-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: Default::default(),
@@ -169,21 +171,23 @@ mod tests {
             "{event:?}"
         );
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn pre_stream_failure_keeps_error_status_until_turn_complete() {
+        let project = Project::new().unwrap();
         let aid = AgentId::from(format!("pre-stream-failed-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: crate::agent::AgentStatus::InProgress,
@@ -248,7 +252,7 @@ mod tests {
             "{events:?}"
         );
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }

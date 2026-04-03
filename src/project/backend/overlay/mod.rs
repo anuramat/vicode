@@ -115,7 +115,7 @@ impl Backend for Overlay {
         crate::git::copy_without_dot_git(&src, dst).await?;
         self.init_overlay(layout, &state.context.commit, aid, git)
             .await?;
-        state.save(aid).await
+        state.save(layout, aid).await
     }
 }
 

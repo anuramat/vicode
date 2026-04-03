@@ -22,7 +22,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::osc7::set_osc7;
@@ -67,10 +67,13 @@ impl<'a> TabEntry<'a> {
         format!("[{}]{}", prefix, aid)
     }
 
-    pub fn set_osc7(&self) {
+    pub fn set_osc7(
+        &self,
+        project: &Project,
+    ) {
         match self {
-            Self::Loading => set_osc7(&PROJECT.root()),
-            Self::Ready(tab) => tab.set_osc7(),
+            Self::Loading => set_osc7(project.root()),
+            Self::Ready(tab) => tab.set_osc7(project),
         }
     }
 

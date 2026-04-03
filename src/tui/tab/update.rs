@@ -7,15 +7,18 @@ use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 
 impl Tab<'_> {
-    pub fn set_osc7(&self) {
-        let path = PROJECT.agent_workdir(&self.aid);
+    pub fn set_osc7(
+        &self,
+        project: &Project,
+    ) {
+        let path = project.agent_workdir(&self.aid);
         set_osc7(&path);
     }
 

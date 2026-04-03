@@ -90,7 +90,7 @@ mod tests {
     use crate::llm::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::PROJECT;
+    use crate::project::Project;
     use crate::project::layout::LayoutTrait;
 
     async fn assistant() -> Assistant {
@@ -131,14 +131,16 @@ mod tests {
 
     #[tokio::test]
     async fn compact_turn_is_noop_when_nothing_is_dropped() {
+        let project = Project::new().unwrap();
         let aid = crate::agent::AgentId::from(format!("compact-noop-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: Default::default(),
@@ -168,21 +170,23 @@ mod tests {
         assert!(agent.tskmgr.idle());
         assert!(agent.state.context.history.compact.is_none());
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn append_compact_prompt_adds_prompt_once_per_compact() {
+        let project = Project::new().unwrap();
         let aid = crate::agent::AgentId::from(format!("compact-prompt-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(PROJECT.agent(&aid))
+        tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
         let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
+            project: project.clone(),
             id: aid.clone(),
             state: AgentState {
                 status: Default::default(),
@@ -231,7 +235,7 @@ mod tests {
             1
         );
 
-        tokio::fs::remove_dir_all(PROJECT.agent(&aid))
+        tokio::fs::remove_dir_all(project.agent(&aid))
             .await
             .unwrap();
     }

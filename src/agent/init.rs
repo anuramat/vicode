@@ -10,7 +10,7 @@ use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::*;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 
 const CHANNEL_CAPACITY: usize = 100;
@@ -46,36 +46,40 @@ pub fn channel_parent_sink(tx: Sender<ParentEvent>) -> ParentHandle {
 impl Agent {
     /// create new agent from scratch
     pub async fn new(
+        project: Project,
         parent: ParentHandle,
         id: AgentId,
         commit: String,
         instructions: String,
     ) -> Result<Self> {
-        let state = AgentState::new(id.clone(), commit, instructions).await?;
-        Self::from_state(parent, id, state).await
+        let state = AgentState::new(&project, id.clone(), commit, instructions).await?;
+        Self::from_state(project, parent, id, state).await
     }
 
     /// load agent by id from disk
     pub async fn load(
+        project: Project,
         parent: ParentHandle,
         id: AgentId,
     ) -> Result<Self> {
-        let path = PROJECT.agent_state(&id);
+        let path = project.agent_state(&id);
         let serialized = tokio::fs::read_to_string(path).await?;
         let mut state: AgentState = serde_json::from_str(&serialized)?;
         state.context.history.count_tokens();
 
-        Self::from_state(parent, id, state).await
+        Self::from_state(project, parent, id, state).await
     }
 
     /// shared logic
     async fn from_state(
+        project: Project,
         parent: ParentHandle,
         id: AgentId,
         state: AgentState,
     ) -> Result<Self> {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
         Ok(Self {
+            project,
             id,
             state,
             parent,
@@ -95,7 +99,7 @@ impl Agent {
     }
 
     pub async fn save(&self) -> Result<()> {
-        self.state.save(&self.id).await
+        self.state.save(&self.project, &self.id).await
     }
 
     /// clone agent to given id on manual request from UI
@@ -103,10 +107,10 @@ impl Agent {
         &self,
         aid: AgentId,
     ) -> Result<()> {
-        PROJECT
+        self.project
             .duplicate_agent(&self.id, &aid, &self.state, true)
             .await?;
-        Agent::load(self.parent.sibling(aid.clone()), aid)
+        Agent::load(self.project.clone(), self.parent.sibling(aid.clone()), aid)
             .await?
             .spawn();
         Ok(())
@@ -114,19 +118,20 @@ impl Agent {
 
     pub async fn delete_agent(&self) -> Result<()> {
         let aid = &self.id;
-        PROJECT.unmount_agent(aid).await?;
-        Ok(tokio::fs::remove_dir_all(PROJECT.agent(aid)).await?)
+        self.project.unmount_agent(aid).await?;
+        Ok(tokio::fs::remove_dir_all(self.project.agent(aid)).await?)
     }
 }
 
 impl AgentState {
     /// init a primary agent from scratch
     async fn new(
+        project: &Project,
         id: AgentId,
         commit: String,
         instructions: String,
     ) -> Result<Self> {
-        PROJECT.new_agent(&commit, &id, true).await?;
+        project.new_agent(&commit, &id, true).await?;
         let state = Self {
             status: AgentStatus::Idle,
             assistant: ASSISTANT_POOL
@@ -142,16 +147,17 @@ impl AgentState {
                 history: History::with_instructions(instructions),
             },
         };
-        state.save(&id).await?;
+        state.save(project, &id).await?;
         Ok(state)
     }
 
     pub async fn save(
         &self,
+        layout: &impl LayoutTrait,
         id: &AgentId,
     ) -> Result<()> {
         let serialized = serde_json::to_string_pretty(self)?;
-        let path = PROJECT.agent_state(id);
+        let path = layout.agent_state(id);
         tokio::fs::write(path, serialized).await?;
         Ok(())
     }

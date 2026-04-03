@@ -14,7 +14,7 @@ use tokio::time::sleep_until;
 use super::App;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::NotificationKind;
 use crate::tui::app::handle::AppEvent;
@@ -23,8 +23,8 @@ use crate::tui::osc7::set_osc7;
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
 impl<'a> App<'a> {
-    pub async fn launch() -> Result<()> {
-        let mut app = Self::new().await?;
+    pub async fn launch(project: Project) -> Result<()> {
+        let mut app = Self::new(project).await?;
         let term = app.setup_terminal()?;
         app.run(term).await?;
         Ok(())
@@ -36,7 +36,7 @@ impl<'a> App<'a> {
         tracing::debug!("first render done");
         self.spawn_crossterm_translator();
         execute!(std::io::stdout(), EnableBracketedPaste)?;
-        set_osc7(&PROJECT.root());
+        set_osc7(self.project.root());
         Ok(term)
     }
 
@@ -60,7 +60,7 @@ impl<'a> App<'a> {
         // clean up before starting
         self.cleanup().await?;
         // create shared lowerdir
-        PROJECT.init().await?;
+        self.project.init().await?;
         // load assistants
         ASSISTANT_POOL.get_or_try_init(AssistantPool::new).await?;
         // load tabs
@@ -111,7 +111,7 @@ impl<'a> App<'a> {
     /// clean up on start / before exit
     async fn cleanup(&self) -> Result<()> {
         // TODO delete unreachable agents, clear stale git worktrees/branches
-        PROJECT.unmount_all().await?;
+        self.project.unmount_all().await?;
         Ok(())
     }
 

@@ -7,14 +7,13 @@ use crate::agent::Agent;
 use crate::agent::AgentHandle;
 use crate::agent::AgentStatus;
 use crate::agent::handle::ParentEvent;
-use crate::project::PROJECT;
 
 impl Agent {
     pub async fn run(
         mut self,
         abort: AbortHandle,
     ) -> Result<()> {
-        PROJECT
+        self.project
             .mount_agent(&self.state.context.commit, &self.id)
             .await?;
         self.parent

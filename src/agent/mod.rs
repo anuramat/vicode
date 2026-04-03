@@ -26,6 +26,7 @@ use crate::llm::history::*;
 use crate::llm::message::AssistantMessageStatus;
 use crate::llm::message::Message;
 use crate::llm::provider::assistant::Assistant;
+use crate::project::Project;
 
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
@@ -45,6 +46,7 @@ impl AgentHandle {
 }
 
 pub struct Agent {
+    pub project: Project,
     pub id: AgentId,
     /// persistent and/or visible in UI
     pub state: AgentState,

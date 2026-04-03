@@ -7,6 +7,7 @@ use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::agent::subagent;
 use crate::llm::provider::assistant::Assistant;
+use crate::project::Project;
 
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.
 Please review them and provide a single, consolidated implementation that combines the best aspects
@@ -20,6 +21,7 @@ pub struct ReplicaResult {
 }
 
 pub async fn run_replicas(
+    project: Project,
     parent: AgentId,
     context: AgentContext,
     assistant: Assistant,
@@ -27,6 +29,7 @@ pub async fn run_replicas(
 ) -> Result<ReplicaResult> {
     let mut tasks = JoinSet::new();
     for aid in children {
+        let project = project.clone();
         let parent = parent.clone();
         let context = context.clone();
         let state = AgentState {
@@ -35,7 +38,7 @@ pub async fn run_replicas(
             topology: Default::default(),
             context,
         };
-        tasks.spawn(async move { subagent::run_child(&parent, &aid, &state, None).await });
+        tasks.spawn(async move { subagent::run_child(project, &parent, &aid, &state, None).await });
     }
     let mut results = Vec::new();
     while let Some(res) = tasks.join_next().await {

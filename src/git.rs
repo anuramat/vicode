@@ -30,9 +30,9 @@ pub async fn worktree(
         create_dir_all(parent).await?;
     }
     if checkout {
-        worktree_with_checkout(&layout.root(), &name, &worktree_path, commit).await
+        worktree_with_checkout(layout.root(), &name, &worktree_path, commit).await
     } else {
-        worktree_no_checkout(&layout.root(), &name, &worktree_path, commit).await
+        worktree_no_checkout(layout.root(), &name, &worktree_path, commit).await
     }
 }
 
@@ -165,7 +165,7 @@ pub async fn checkout(
     use std::process::Command;
     use std::process::Stdio;
 
-    let root = layout.root();
+    let root = layout.root().to_path_buf();
     tokio::fs::create_dir_all(&path).await?;
 
     let dest = path.clone();

@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 use tokio::process::Command;
 
 use crate::agent::id::AgentId;
-use crate::project::PROJECT;
+use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::HeightComputable;
@@ -17,11 +17,14 @@ pub struct InfoWidget {
 }
 
 impl InfoWidget {
-    pub async fn new(aid: &AgentId) -> Result<Self> {
+    pub async fn new(
+        project: &Project,
+        aid: &AgentId,
+    ) -> Result<Self> {
         // TODO move command to config
         let args = vec!["-c", "color.status=always", "status", "--short"];
         let output = Command::new("git")
-            .current_dir(PROJECT.agent_workdir(aid))
+            .current_dir(project.agent_workdir(aid))
             .args(args)
             .output()
             .await?;

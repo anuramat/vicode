@@ -4,7 +4,6 @@ use anyhow::Result;
 
 use crate::agent::tool::traits::*;
 use crate::config::CONFIG;
-use crate::project::PROJECT;
 use crate::project::layout::LayoutTrait;
 use crate::sandbox::Sandbox;
 use crate::tools::bash::BashArguments;
@@ -20,9 +19,10 @@ impl ToolContext<BashArguments> for BashContext {
         Self: Sized,
     {
         Ok(Self {
-            runner: CONFIG
-                .sandbox
-                .runner(PROJECT.agent_workdir(&agent.id), PROJECT.gitdir()?),
+            runner: CONFIG.sandbox.runner(
+                agent.project.agent_workdir(&agent.id),
+                agent.project.gitdir()?,
+            ),
         })
     }
 }

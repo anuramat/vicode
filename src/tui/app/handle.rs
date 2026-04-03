@@ -84,7 +84,7 @@ impl<'a> App<'a> {
             }
             StatusUpdate(status) => {
                 if self.tab_mut_by_aid(&aid)?.set_state(status).await? {
-                    self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&aid).await?;
+                    self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&self.project, &aid).await?;
                 }
             }
         }
@@ -99,7 +99,9 @@ mod tests {
 
     #[tokio::test]
     async fn parent_error_creates_notification() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new(crate::project::Project::new().unwrap())
+            .await
+            .unwrap();
 
         app.handle_parent_event(
             AgentId::from("a".to_string()),

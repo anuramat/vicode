@@ -16,9 +16,10 @@ use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
 use crate::agent::init::channel_parent_sink;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::PROJECT;
+use crate::project::Project;
 
 pub async fn run_child(
+    project: Project,
     parent: &AgentId,
     aid: &AgentId,
     state: &AgentState,
@@ -40,10 +41,10 @@ pub async fn run_child(
         },
         context: state.context.clone(),
     };
-    PROJECT.duplicate_agent(parent, aid, &state, false).await?;
+    project.duplicate_agent(parent, aid, &state, false).await?;
 
     let (parent_tx, mut parent_rx) = channel(100);
-    let agent = Agent::load(channel_parent_sink(parent_tx), aid.clone()).await?;
+    let agent = Agent::load(project.clone(), channel_parent_sink(parent_tx), aid.clone()).await?;
     let child_tx = agent.tx.clone();
     agent.spawn();
 
@@ -63,5 +64,5 @@ pub async fn run_child(
         }
     }
 
-    candidate::response(parent, aid).await
+    candidate::response(&project, parent, aid).await
 }

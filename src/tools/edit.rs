@@ -13,7 +13,6 @@ use similar::TextDiff;
 
 use crate::agent::tool::traits::*;
 use crate::declare_tool;
-use crate::project::PROJECT;
 use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
@@ -79,7 +78,7 @@ impl ToolContext<EditArguments> for EditContext {
         Self: Sized,
     {
         Ok(Self {
-            workdir: PROJECT.agent_workdir(&agent.id),
+            workdir: agent.project.agent_workdir(&agent.id),
         })
     }
 }

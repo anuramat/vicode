@@ -11,7 +11,6 @@ use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
-use crate::project::PROJECT;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -55,7 +54,7 @@ impl<'a> App<'a> {
     }
 
     pub async fn load_tabs(&mut self) -> Result<()> {
-        let state = Self::load_app_state().await?;
+        let state = self.load_app_state().await?;
         let mut tabs = IndexMap::new();
         for aid in &state.primary_agents {
             tabs.insert(aid.clone(), TabEntry::Loading);
@@ -71,7 +70,7 @@ impl<'a> App<'a> {
 
     /// create a new primary agent, and a corresponding tab
     pub async fn new_tab(&mut self) -> Result<()> {
-        let aid = AgentId::new().await?;
+        let aid = AgentId::new(&self.project).await?;
         self.insert_loading_tab(aid.clone());
         self.tx.send(AppEvent::NewAgent(aid)).await?;
         Ok(())
@@ -99,7 +98,7 @@ impl<'a> App<'a> {
             aid: aid.clone(),
             tx: self.tx.clone(),
         });
-        let agent = Agent::load(parent, aid).await?;
+        let agent = Agent::load(self.project.clone(), parent, aid).await?;
         agent.spawn();
         Ok(())
     }
@@ -113,10 +112,10 @@ impl<'a> App<'a> {
             tx: self.tx.clone(),
         });
 
-        let repo = Repository::discover(PROJECT.root())?;
+        let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
-        let instructions = PROJECT.instructions(&aid).await?;
-        let agent = Agent::new(parent, aid, commit, instructions).await?;
+        let instructions = self.project.instructions(&aid).await?;
+        let agent = Agent::new(self.project.clone(), parent, aid, commit, instructions).await?;
         agent.spawn();
         Ok(())
     }
@@ -136,7 +135,7 @@ impl<'a> App<'a> {
     pub async fn duplicate_tab(&mut self) -> Result<()> {
         let original = self.selected_tab()?.aid.clone();
 
-        let allocated = AgentId::new().await?;
+        let allocated = AgentId::new(&self.project).await?;
         self.insert_loading_tab(allocated.clone());
 
         self.tab_mut_by_aid(&original)?
@@ -244,11 +243,11 @@ impl<'a> App<'a> {
         idx = idx.and_then(|i| {
             let n_tabs = self.tabs.len();
             if n_tabs == 0 || i >= n_tabs {
-                set_osc7(&PROJECT.root());
+                set_osc7(self.project.root());
                 None
             } else {
                 if let Some((_, tab)) = self.tabs.get_index(i) {
-                    tab.set_osc7();
+                    tab.set_osc7(&self.project);
                 }
                 Some(i)
             }
@@ -269,7 +268,9 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new(crate::project::Project::new().unwrap())
+            .await
+            .unwrap();
 
         app.new_tab().await.unwrap();
 
@@ -281,7 +282,9 @@ mod tests {
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new(crate::project::Project::new().unwrap())
+            .await
+            .unwrap();
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))
