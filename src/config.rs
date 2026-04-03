@@ -1,8 +1,8 @@
+use std::collections::HashMap;
+
 use anyhow::Context;
 use anyhow::Result;
-use indexmap::IndexMap;
 use schemars::JsonSchema;
-use schemars::json_schema;
 use schemars::schema_for;
 use serde::Deserialize;
 use serde::Serialize;
@@ -98,8 +98,8 @@ pub struct Config {
     /// rendering options; can be toggled at runtime
     pub render: RenderContext,
 
-    pub providers: IndexMap<String, ProviderConfig>,
-    pub assistants: IndexMap<String, AssistantConfig>,
+    pub providers: HashMap<String, ProviderConfig>,
+    pub assistants: HashMap<String, AssistantConfig>,
 
     // TODO maybe collapse into a struct or something?
     /// list of assistants for new tabs (round robin)

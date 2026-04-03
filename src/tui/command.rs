@@ -1,10 +1,10 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
-use indexmap::IndexMap;
 use schemars::JsonSchema;
 use schemars::json_schema;
 use serde::Deserialize;
@@ -221,19 +221,17 @@ impl std::fmt::Display for KeyChord {
 // TODO allow sequences of chords?
 // TODO allow easily defining keymap for multiple modes at the same time
 
-// TODO why indexmap?
-
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Keymap {
-    pub cmdline: IndexMap<KeyChord, Command>,
-    pub normal: IndexMap<KeyChord, Command>,
-    pub insert: IndexMap<KeyChord, Command>,
+    pub cmdline: HashMap<KeyChord, Command>,
+    pub normal: HashMap<KeyChord, Command>,
+    pub insert: HashMap<KeyChord, Command>,
 }
 
 impl Default for Keymap {
     fn default() -> Self {
-        fn parse<'a, I>(x: I) -> IndexMap<KeyChord, Command>
+        fn parse<'a, I>(x: I) -> HashMap<KeyChord, Command>
         where I: IntoIterator<Item = (&'a str, &'a str)> {
             x.into_iter()
                 .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap()))
