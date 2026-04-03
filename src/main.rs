@@ -4,6 +4,7 @@
 #![feature(iterator_try_collect)]
 
 mod agent;
+mod cli;
 mod config;
 mod git;
 mod id;
@@ -14,11 +15,13 @@ mod tools;
 mod tui;
 
 use anyhow::Result;
+use clap::Parser;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tui::app::App;
 
+use crate::cli::Cli;
 use crate::project::PROJECT;
 use crate::project::layout::LayoutTrait;
 
@@ -35,7 +38,12 @@ fn init_tracing() -> Result<WorkerGuard> {
 async fn main() {
     tracing::debug!("starting main");
     let _guard = init_tracing().unwrap();
-    let result = App::launch().await;
-    App::reset_terminal();
-    result.unwrap();
+    match Cli::parse().command {
+        Some(command) => command.run(),
+        None => {
+            let result = App::launch().await;
+            App::reset_terminal();
+            result.unwrap();
+        }
+    }
 }

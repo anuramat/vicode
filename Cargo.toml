@@ -19,6 +19,7 @@ async-openai = { version = "0.33.0", features = [
 async-trait = "0.1"
 backon = "1.6.0"
 base64 = "0.22.1"
+clap = "4.6.0"
 colored-diff = "0.2.3"
 crossterm = { version = "0.28.0", features = ["event-stream"] }
 derive_more = { version = "2.0.1", features = ["full"] }

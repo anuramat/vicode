@@ -112,6 +112,19 @@ pub struct Config {
     pub compact: CompactConfig,
 }
 
+impl std::fmt::Display for Config {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            toml::to_string_pretty(self).map_err(|_| std::fmt::Error)?
+        )
+    }
+}
+
 impl Config {
     // TODO check if schema is up to date, rewrite if not
     fn put_schema() -> Result<()> {
