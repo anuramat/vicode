@@ -6,6 +6,7 @@ use std::process::Output;
 
 use anyhow::Result;
 use dyn_clone::DynClone;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -13,7 +14,7 @@ use crate::config::CONFIG;
 use crate::sandbox::bwrap::BwrapConfig;
 use crate::sandbox::sbe::SbeConfig;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(default)]
 pub struct SandboxConfig {
     bwrap: BwrapConfig,

@@ -10,6 +10,7 @@ use anyhow::Result;
 use governor::DefaultDirectRateLimiter;
 use governor::Quota;
 use governor::RateLimiter;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
@@ -27,7 +28,7 @@ pub struct Provider {
     pub semaphore: Arc<Semaphore>,
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize)]
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct ProviderConfig {
     pub api: ApiType,
@@ -55,7 +56,7 @@ pub struct ProviderConfig {
     pub backoff_ms: u64,
 }
 
-#[derive(Deserialize, Default, Debug, Clone, Serialize)]
+#[derive(Deserialize, Default, Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiType {
     #[default]
@@ -63,7 +64,7 @@ pub enum ApiType {
     ChatCompletions,
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize)]
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct ApiCompatConfig {
     /// name of the field with reasoning content (chat completions only)

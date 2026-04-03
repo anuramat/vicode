@@ -24,6 +24,7 @@ use crate::llm::message::*;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::api::StreamEvent;
+use crate::llm::provider::assistant::ReasoningEffort;
 
 #[derive(Debug)]
 pub struct ResponsesApi {
@@ -78,7 +79,7 @@ fn request(
         .model(&model.model)
         .parallel_tool_calls(true)
         .reasoning(responses::Reasoning {
-            effort: model.effort,
+            effort: model.effort.map(|x| x.into()),
             summary: Some(responses::ReasoningSummary::Detailed),
         })
         .include(vec![responses::IncludeEnum::ReasoningEncryptedContent])
@@ -216,5 +217,18 @@ impl TryFrom<responses::ResponseStreamEvent> for StreamEvent {
             }
             _ => StreamEvent::Ignore,
         })
+    }
+}
+
+impl From<ReasoningEffort> for responses::ReasoningEffort {
+    fn from(effort: ReasoningEffort) -> Self {
+        match effort {
+            ReasoningEffort::None => responses::ReasoningEffort::None,
+            ReasoningEffort::Minimal => responses::ReasoningEffort::Minimal,
+            ReasoningEffort::Low => responses::ReasoningEffort::Low,
+            ReasoningEffort::Medium => responses::ReasoningEffort::Medium,
+            ReasoningEffort::High => responses::ReasoningEffort::High,
+            ReasoningEffort::Xhigh => responses::ReasoningEffort::Xhigh,
+        }
     }
 }

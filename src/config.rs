@@ -1,6 +1,9 @@
 use anyhow::Context;
 use anyhow::Result;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
+use schemars::json_schema;
+use schemars::schema_for;
 use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
@@ -22,6 +25,7 @@ const DEFAULT_CONFIG: &str =
 const CONFIG_FILENAME: &str = "config.toml";
 const INSTRUCTIONS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
+const SCHEMA_FILENAME: &str = "schema.json";
 
 // TODO drop lazy_static, centralize config reading and pass values explicitly
 // TODO let user override instructions filepath
@@ -38,7 +42,7 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize)]
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 pub struct CompactConfig {
     /// context window percentage, at which we compact the context, threshold < 100
     #[default = 80]
@@ -69,7 +73,7 @@ where
     values.into_iter().map(|x| x.as_ref().to_string()).collect()
 }
 
-#[derive(Deserialize, Debug, SmartDefault, Serialize)]
+#[derive(Deserialize, Debug, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
     /// disable fuse-overlayfs/bindfs overlays and just copy stuff around; mac compatibility hack
@@ -111,7 +115,20 @@ pub struct Config {
 }
 
 impl Config {
+    // TODO check if schema is up to date, rewrite if not
+    fn put_schema() -> Result<()> {
+        let filepath = DIRS.place_config_file(SCHEMA_FILENAME)?;
+        if !filepath.exists() {
+            let schema = schema_for!(Config);
+            std::fs::write(&filepath, serde_json::to_string_pretty(&schema)?).with_context(
+                || format!("failed to write config schema to {}", filepath.display()),
+            )?;
+        }
+        Ok(())
+    }
+
     fn new() -> Result<Self> {
+        Self::put_schema()?;
         let filepath = DIRS.place_config_file(CONFIG_FILENAME)?;
         if !filepath.exists() {
             // TODO use tokio fs when we stop using lazy_static

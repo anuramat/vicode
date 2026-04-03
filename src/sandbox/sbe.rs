@@ -1,10 +1,11 @@
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
 
 use super::SandboxRunner;
 
-#[derive(Debug, Clone, SmartDefault, Serialize, Deserialize)]
+#[derive(Debug, Clone, SmartDefault, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SbeConfig {
     #[default("sandbox-exec")]

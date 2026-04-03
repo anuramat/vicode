@@ -7,6 +7,7 @@ use anyhow::Context;
 use anyhow::Result;
 use futures::future::try_join_all;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_plain::derive_deserialize_from_fromstr;
@@ -49,17 +50,29 @@ impl std::str::FromStr for Assistant {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, Serialize)]
+#[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]
 pub struct AssistantConfig {
     pub provider: String,
     #[serde(flatten)]
     pub model: ModelConfig,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Debug, Deserialize, PartialEq, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    #[default]
+    Medium,
+    High,
+    Xhigh,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ModelConfig {
     pub model: String,
-    pub effort: Option<async_openai::types::responses::ReasoningEffort>,
+    pub effort: Option<ReasoningEffort>,
     /// max context window
     pub window: Option<usize>,
 }

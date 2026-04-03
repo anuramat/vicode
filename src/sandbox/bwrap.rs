@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
@@ -42,7 +43,7 @@ fn default_stages() -> Vec<Stage> {
     }]
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, SmartDefault)]
+#[derive(Deserialize, Serialize, Debug, Clone, SmartDefault, JsonSchema)]
 #[serde(default)]
 pub struct BwrapConfig {
     #[default("bwrap")]
@@ -51,7 +52,7 @@ pub struct BwrapConfig {
     pub stages: Vec<Stage>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, JsonSchema)]
 #[serde(default)]
 pub struct Stage {
     pub ro: Vec<String>,

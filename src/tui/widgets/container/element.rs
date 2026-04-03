@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
@@ -40,7 +41,7 @@ pub struct Element {
     ctx: RenderContext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize, SmartDefault)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize, SmartDefault, JsonSchema)]
 #[serde(default)]
 pub struct RenderContext {
     #[default(true)]

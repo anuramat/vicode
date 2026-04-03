@@ -5,6 +5,8 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
+use schemars::json_schema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_plain::derive_deserialize_from_fromstr;
@@ -15,7 +17,7 @@ use strum::EnumIter;
 
 serde_plain::derive_display_from_serialize!(CommandName);
 serde_plain::derive_fromstr_from_deserialize!(CommandName);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumIter, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandName {
     AssistantNext,
@@ -63,7 +65,7 @@ pub enum CommandName {
 
 derive_deserialize_from_fromstr!(Command, "valid command");
 derive_serialize_from_display!(Command);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
 pub struct Command {
     pub name: CommandName,
     pub args: Option<String>,
@@ -109,6 +111,21 @@ derive_serialize_from_display!(KeyChord);
 pub struct KeyChord {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
+}
+
+impl JsonSchema for KeyChord {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        // Exclude the module path to make the name in generated schemas clearer.
+        "KeyChord".into()
+    }
+
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "description": "A key chord, consisting of a key code and optional modifiers (c- for control, s- for shift, a- for alt).",
+            "examples": ["c-a", "s-enter", "tab"],
+        })
+    }
 }
 
 impl From<KeyEvent> for KeyChord {
@@ -206,7 +223,7 @@ impl std::fmt::Display for KeyChord {
 
 // TODO why indexmap?
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Keymap {
     pub cmdline: IndexMap<KeyChord, Command>,
