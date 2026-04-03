@@ -1,6 +1,6 @@
 use ratatui::prelude::*;
 
-pub static LOGO_VARIANTS: std::sync::LazyLock<Logo> = std::sync::LazyLock::new(|| Logo::new());
+pub static LOGO_VARIANTS: std::sync::LazyLock<Logo> = std::sync::LazyLock::new(Logo::new);
 
 fn logo_style() -> Style {
     Style::default().fg(Color::Red).bold()

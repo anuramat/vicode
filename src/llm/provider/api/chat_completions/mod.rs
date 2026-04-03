@@ -1,4 +1,12 @@
-/// SLOP entire chat completions module is vibecoded
+// SLOP entire chat completions module is vibecoded
+#![allow(clippy::all, deprecated)]
+#[allow(clippy::all, deprecated)]
+mod convert;
+#[allow(clippy::all, deprecated)]
+mod request;
+#[allow(clippy::all, deprecated)]
+mod stream;
+
 use anyhow::Result;
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;
@@ -13,10 +21,6 @@ use crate::llm::message::Message;
 use crate::llm::message::now_ms;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
-
-mod convert;
-mod request;
-mod stream;
 
 #[derive(Debug)]
 pub struct ChatCompletionsApi {

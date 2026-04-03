@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use anyhow::Result;
 use async_openai::types::chat::ChatCompletionMessageToolCall;
 use async_openai::types::chat::ChatCompletionMessageToolCalls;

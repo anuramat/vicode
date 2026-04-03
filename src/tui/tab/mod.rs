@@ -48,6 +48,7 @@ pub struct Tab<'a> {
     pub multiplier: usize,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum TabEntry<'a> {
     Loading,
