@@ -36,6 +36,14 @@ pub struct Layout {
 }
 
 impl Project {
+    fn backend(config: &Config) -> BackendKind {
+        if config.disable_overlay {
+            BackendKind::Copy(Copy)
+        } else {
+            BackendKind::Overlay(Overlay)
+        }
+    }
+
     pub fn name(&self) -> String {
         self.layout
             .root
@@ -68,14 +76,9 @@ impl Project {
             .to_path_buf();
         let id = Self::id(root.clone());
         let data = DIRS.create_data_directory(&id)?;
-        let backend = if config.disable_overlay {
-            BackendKind::Copy(Copy)
-        } else {
-            BackendKind::Overlay(Overlay)
-        };
         Ok(Self {
             layout: Layout { root, id, data },
-            backend,
+            backend: Self::backend(&config),
             config,
         })
     }
@@ -86,7 +89,25 @@ impl Project {
 
     #[cfg(test)]
     pub fn new_test() -> Result<Self> {
-        Self::new(Config::test())
+        let config = Config::test();
+        let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root)?;
+        let repo = Repository::init(&root)?;
+        let tree_id = repo.index()?.write_tree()?;
+        let tree = repo.find_tree(tree_id)?;
+        let signature = git2::Signature::now("vicode", "vicode@example.com")?;
+        repo.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])?;
+        let data = root.join(".vicode");
+        std::fs::create_dir_all(&data)?;
+        Ok(Self {
+            layout: Layout {
+                id: Self::id(root.clone()),
+                root,
+                data,
+            },
+            backend: Self::backend(&config),
+            config,
+        })
     }
 
     pub async fn mount_agent(
