@@ -1,6 +1,7 @@
 mod agent;
 mod cli;
 mod config;
+mod deps;
 mod git;
 mod id;
 mod llm;

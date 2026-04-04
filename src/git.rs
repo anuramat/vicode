@@ -15,6 +15,7 @@ use libgit2_sys::{self as raw};
 use tokio::fs::create_dir_all;
 
 use crate::agent::AgentId;
+use crate::deps;
 use crate::project::Layout;
 use crate::project::layout::LayoutTrait;
 
@@ -172,12 +173,12 @@ pub async fn checkout(
     let commit = commit.to_string();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut archive = Command::new("git")
+        let mut archive = Command::new(deps::GIT)
             .current_dir(root)
             .args(["archive", &commit])
             .stdout(Stdio::piped())
             .spawn()?;
-        let tar = Command::new("tar")
+        let tar = Command::new(deps::TAR)
             .arg("-x")
             .arg("-C")
             .arg(&dest)

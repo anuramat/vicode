@@ -9,6 +9,7 @@ use serde::Serialize;
 use smart_default::SmartDefault;
 use xdg::BaseDirectories;
 
+use crate::deps;
 pub use crate::llm::provider::ApiCompatConfig;
 pub use crate::llm::provider::ApiType;
 pub use crate::llm::provider::ProviderConfig;
@@ -74,7 +75,7 @@ pub struct Config {
     /// disable fuse-overlayfs/bindfs overlays and just copy stuff around; mac compatibility hack
     pub disable_overlay: bool,
     pub sandbox: SandboxConfig,
-    #[default(vec(["bash", "-c"]))]
+    #[default(vec([deps::BASH, "-c"]))]
     pub shell_cmd: Vec<String>,
     /// Paths (relative to project root) to expose in the agent workdir through a special lowerdir shared by all agents.
     /// Usecase: compilation cache, .env files etc.

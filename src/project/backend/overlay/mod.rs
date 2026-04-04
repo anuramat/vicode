@@ -5,13 +5,13 @@ mod shared;
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 
 use super::Overlay;
 use crate::agent::id::AgentId;
 use crate::agent::*;
+use crate::deps;
 use crate::project::Layout;
 use crate::project::backend::Backend;
 use crate::project::layout::LayoutTrait;
@@ -79,7 +79,7 @@ impl Backend for Overlay {
             options,
             layout.agent_workdir(aid).to_string_lossy().to_string(),
         ];
-        let status = layout.bash("fuse-overlayfs", args).await?.status;
+        let status = layout.bash(deps::FUSE_OVERLAYFS, args).await?.status;
         anyhow::ensure!(status.success(), "fuse-overlayfs failed: {status}");
         Ok(())
     }
@@ -125,7 +125,7 @@ impl Overlay {
         path: &Path,
     ) -> Result<MountStatus> {
         let output = layout
-            .bash("mountpoint", [path.to_string_lossy().to_string()])
+            .bash(deps::MOUNTPOINT, [path.to_string_lossy().to_string()])
             .await?;
         let status = match output.status.code() {
             Some(0) => MountStatus::Mounted,
@@ -144,7 +144,7 @@ impl Overlay {
         path: &Path,
     ) -> Result<()> {
         let status = layout
-            .bash("umount", [path.to_string_lossy().to_string()])
+            .bash(deps::UMOUNT, [path.to_string_lossy().to_string()])
             .await?
             .status;
         anyhow::ensure!(status.success(), "umount failed: {status}");

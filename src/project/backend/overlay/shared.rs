@@ -5,6 +5,7 @@ use tokio::fs::create_dir_all;
 use tokio::fs::hard_link;
 
 use super::Overlay;
+use crate::deps;
 use crate::project::Layout;
 
 impl Overlay {
@@ -32,7 +33,7 @@ impl Overlay {
             dst.to_string_lossy().to_string(),
             "--no-allow-other".to_string(),
         ];
-        let status = layout.bash("bindfs", args).await?.status;
+        let status = layout.bash(deps::BINDFS, args).await?.status;
         anyhow::ensure!(status.success(), "bindfs failed with status: {status}");
         Ok(())
     }

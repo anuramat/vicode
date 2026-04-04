@@ -5,12 +5,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use smart_default::SmartDefault;
 
-// XXX add "clear_default" like with keymaps so that by default stages append instead of
-// overwriting
 use super::Sandbox;
 use super::SandboxRunner;
 use crate::config::expand_vec;
 use crate::config::vec;
+use crate::deps;
 
 fn default_stages() -> Vec<Stage> {
     let args = vec(["--die-with-parent", "--proc", "/proc", "--dev", "/dev"]);
@@ -46,7 +45,7 @@ fn default_stages() -> Vec<Stage> {
 #[derive(Deserialize, Serialize, Debug, Clone, SmartDefault, JsonSchema)]
 #[serde(default)]
 pub struct BwrapConfig {
-    #[default("bwrap")]
+    #[default(deps::BWRAP.to_string())]
     pub bin: String,
     #[default(default_stages())]
     pub stages: Vec<Stage>,

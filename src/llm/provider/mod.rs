@@ -16,6 +16,7 @@ use serde::Serialize;
 use smart_default::SmartDefault;
 use tokio::sync::Semaphore;
 
+use crate::deps;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
 use crate::llm::provider::api::responses::ResponsesApi;
@@ -119,7 +120,7 @@ impl Provider {
         let Some(command) = command else {
             return Ok(None);
         };
-        let output = tokio::process::Command::new("bash")
+        let output = tokio::process::Command::new(deps::BASH)
             .args(["-c", command])
             .output()
             .await

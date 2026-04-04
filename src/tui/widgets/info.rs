@@ -6,6 +6,7 @@ use ratatui::widgets::Paragraph;
 use tokio::process::Command;
 
 use crate::agent::id::AgentId;
+use crate::deps;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::composite::CompositeElement;
@@ -23,7 +24,7 @@ impl InfoWidget {
     ) -> Result<Self> {
         // TODO move command to config
         let args = vec!["-c", "color.status=always", "status", "--short"];
-        let output = Command::new("git")
+        let output = Command::new(deps::GIT)
             .current_dir(project.agent_workdir(aid))
             .args(args)
             .output()
