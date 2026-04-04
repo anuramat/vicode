@@ -99,7 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn parent_error_creates_notification() {
-        let mut app = App::new(crate::project::Project::new().unwrap())
+        let mut app = App::new(crate::project::Project::new_test().unwrap())
             .await
             .unwrap();
 

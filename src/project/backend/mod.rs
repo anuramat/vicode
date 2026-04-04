@@ -9,6 +9,7 @@ use anyhow::Result;
 
 use crate::agent::AgentId;
 use crate::agent::AgentState;
+use crate::config::Config;
 use crate::project::Layout;
 
 // TODO drop the enum and use some macro?
@@ -35,6 +36,7 @@ pub trait Backend {
     async fn init(
         &self,
         layout: &Layout,
+        config: &Config,
     ) -> Result<()>;
     async fn new_agent(
         &self,

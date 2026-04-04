@@ -36,9 +36,10 @@ impl Backend for Overlay {
     async fn init(
         &self,
         layout: &Layout,
+        config: &crate::config::Config,
     ) -> Result<()> {
         self.unmount_all(layout).await?;
-        self.init_shared(layout).await?;
+        self.init_shared(layout, &config.shared).await?;
         Ok(())
     }
 

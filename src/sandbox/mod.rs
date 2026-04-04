@@ -10,7 +10,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::config::CONFIG;
 use crate::sandbox::bwrap::BwrapConfig;
 use crate::sandbox::sbe::SbeConfig;
 
@@ -70,16 +69,15 @@ impl Sandbox for SandboxConfig {
 impl SandboxRunner {
     pub async fn exec(
         &self,
+        mut shell_cmd: Vec<String>,
         script: String,
     ) -> Result<Output> {
-        let mut bash_cmd = CONFIG.shell_cmd.clone();
-        bash_cmd.push(script);
-
+        shell_cmd.push(script);
         let mut cmd = tokio::process::Command::new(&self.bin);
         Ok(cmd
             .current_dir(&self.cwd)
             .args(&self.args)
-            .args(bash_cmd.into_iter())
+            .args(shell_cmd.into_iter())
             .output()
             .await?)
     }

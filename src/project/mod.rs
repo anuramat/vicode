@@ -9,7 +9,7 @@ use anyhow::anyhow;
 use git2::Repository;
 
 use crate::agent::*;
-use crate::config::CONFIG;
+use crate::config::Config;
 use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
 use crate::project::backend::Backend;
@@ -23,6 +23,7 @@ use crate::project::layout::*;
 pub struct Project {
     layout: Layout,
     backend: BackendKind,
+    config: Config,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +59,7 @@ impl Project {
         format!("{}{}", name_prefix, uuid)
     }
 
-    pub fn new() -> Result<Self> {
+    pub fn new(config: Config) -> Result<Self> {
         // TODO discover vs open? normalize across codebase
         let repo = Repository::discover(".")?;
         let root = repo
@@ -67,7 +68,7 @@ impl Project {
             .to_path_buf();
         let id = Self::id(root.clone());
         let data = DIRS.create_data_directory(&id)?;
-        let backend = if CONFIG.disable_overlay {
+        let backend = if config.disable_overlay {
             BackendKind::Copy(Copy)
         } else {
             BackendKind::Overlay(Overlay)
@@ -75,7 +76,17 @@ impl Project {
         Ok(Self {
             layout: Layout { root, id, data },
             backend,
+            config,
         })
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    #[cfg(test)]
+    pub fn new_test() -> Result<Self> {
+        Self::new(Config::test())
     }
 
     pub async fn mount_agent(
@@ -87,7 +98,7 @@ impl Project {
     }
 
     pub async fn init(&self) -> Result<()> {
-        self.backend.init(&self.layout).await
+        self.backend.init(&self.layout, self.config()).await
     }
 
     pub async fn unmount_all(&self) -> Result<()> {
@@ -108,7 +119,7 @@ impl Project {
         use std::io::ErrorKind;
         let mut collected = INSTRUCTIONS.clone();
         let root = self.agent(aid);
-        for name in &CONFIG.context_files {
+        for name in &self.config.context_files {
             match tokio::fs::read_to_string(root.join(name)).await {
                 Ok(text) => collected.push_str(&text),
                 Err(err) if err.kind() == ErrorKind::NotFound => continue,

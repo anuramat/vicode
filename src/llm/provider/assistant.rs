@@ -15,7 +15,6 @@ use serde_plain::derive_serialize_from_display;
 use tokio::sync::OnceCell;
 
 use super::Provider;
-use crate::config::CONFIG;
 use crate::config::Config;
 
 // TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
@@ -94,10 +93,6 @@ enum SubagentSelector {
 }
 
 impl AssistantPool {
-    pub async fn new() -> Result<Self> {
-        Self::from_config(&CONFIG).await
-    }
-
     pub async fn from_config(config: &Config) -> Result<Self> {
         let providers: HashMap<_, _> = {
             let futures = config.providers.iter().map(

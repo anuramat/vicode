@@ -26,6 +26,7 @@ pub struct BashArguments {
 #[derive(Clone, Debug)]
 pub struct BashContext {
     runner: SandboxRunner,
+    shell_cmd: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -27,10 +27,6 @@ const INSTRUCTIONS_FILENAME: &str = "AGENTS.md"; // in config dir
 const XDG_DIRNAME: &str = "vicode";
 const SCHEMA_FILENAME: &str = "schema.json";
 
-// TODO try to drop LazyLock, centralize config reading and pass values explicitly
-
-pub static CONFIG: std::sync::LazyLock<Config> =
-    std::sync::LazyLock::new(|| Config::new().unwrap());
 pub static DIRS: std::sync::LazyLock<BaseDirectories> =
     std::sync::LazyLock::new(|| BaseDirectories::with_prefix(XDG_DIRNAME));
 pub static INSTRUCTIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -72,7 +68,7 @@ where
     values.into_iter().map(|x| x.as_ref().to_string()).collect()
 }
 
-#[derive(Deserialize, Debug, SmartDefault, Serialize, JsonSchema)]
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
     /// disable fuse-overlayfs/bindfs overlays and just copy stuff around; mac compatibility hack
@@ -137,7 +133,7 @@ impl Config {
         Ok(())
     }
 
-    fn new() -> Result<Self> {
+    pub fn load() -> Result<Self> {
         Self::put_schema()?;
         let filepath = DIRS.place_config_file(CONFIG_FILENAME)?;
         if !filepath.exists() {
@@ -157,6 +153,11 @@ impl Config {
         config.sandbox.maybe_with_defaults();
         config.validate()?;
         Ok(config)
+    }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self::parse_with_defaults(DEFAULT_CONFIG).unwrap()
     }
 
     fn validate(&self) -> Result<()> {

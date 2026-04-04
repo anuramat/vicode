@@ -62,7 +62,9 @@ impl<'a> App<'a> {
         // create shared lowerdir
         self.project.init().await?;
         // load assistants
-        ASSISTANT_POOL.get_or_try_init(AssistantPool::new).await?;
+        ASSISTANT_POOL
+            .get_or_try_init(|| AssistantPool::from_config(self.project.config()))
+            .await?;
         // load tabs
         self.load_tabs().await?;
 

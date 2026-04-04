@@ -92,7 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_failure_does_not_start_normal_turn() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = AgentId::from(format!("compact-failed-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
@@ -178,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn pre_stream_failure_keeps_error_status_until_turn_complete() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = AgentId::from(format!("pre-stream-failed-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await

@@ -4,7 +4,6 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 
-use crate::config::CONFIG;
 use crate::tui::app::App;
 use crate::tui::app::NotificationKind;
 use crate::tui::command::Command;
@@ -44,19 +43,20 @@ impl<'a> App<'a> {
             return Ok(());
         }
         // TODO add failsafe, so that there's always a way to exit the app even if the keymap is messed up (e.g. spam ctrl-c to quit)
+        let keymap = &self.project.config().keymap;
         if self.cmdline.input.focus {
-            if let Some(command) = CONFIG.keymap.cmdline(event) {
+            if let Some(command) = keymap.cmdline(event) {
                 command.execute(self).await?;
             } else {
                 self.cmdline.input.handle(event);
             }
         } else if self.selected_tab().is_ok_and(|tab| tab.insert_mode) {
-            if let Some(command) = CONFIG.keymap.insert(event) {
+            if let Some(command) = keymap.insert(event) {
                 command.execute(self).await?;
             } else {
                 self.selected_tab_mut()?.key_insert(event).await?
             }
-        } else if let Some(command) = CONFIG.keymap.normal(event) {
+        } else if let Some(command) = keymap.normal(event) {
             command.execute(self).await?;
         }
         Ok(())

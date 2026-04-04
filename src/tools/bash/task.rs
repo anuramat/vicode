@@ -3,7 +3,6 @@ use std::os::unix::process::ExitStatusExt;
 use anyhow::Result;
 
 use crate::agent::tool::traits::*;
-use crate::config::CONFIG;
 use crate::project::layout::LayoutTrait;
 use crate::sandbox::Sandbox;
 use crate::tools::bash::BashArguments;
@@ -18,11 +17,13 @@ impl ToolContext<BashArguments> for BashContext {
     where
         Self: Sized,
     {
+        let config = agent.project.config();
         Ok(Self {
-            runner: CONFIG.sandbox.runner(
+            runner: config.sandbox.runner(
                 agent.project.agent_workdir(&agent.id),
                 agent.project.gitdir()?,
             ),
+            shell_cmd: config.shell_cmd.clone(),
         })
     }
 }
@@ -39,7 +40,7 @@ impl Function<BashContext, (), BashResult> for BashArguments {
             stdout,
             stderr,
             status,
-        } = runner.exec(self.command.clone()).await?;
+        } = runner.exec(ctx.shell_cmd, self.command.clone()).await?;
 
         let result = BashResult {
             stdout: String::from_utf8_lossy(&stdout).into(),

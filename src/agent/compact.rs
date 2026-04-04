@@ -5,7 +5,6 @@ use crate::agent::Agent;
 use crate::agent::AgentStatus;
 use crate::agent::task::sink::TurnType;
 use crate::agent::tool::registry::ToolSchemas;
-use crate::config::CONFIG;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
@@ -18,7 +17,7 @@ impl Agent {
         self.state
             .context
             .history
-            .compact_dropped(window, CONFIG.compact.target)
+            .compact_dropped(window, self.project.config().compact.target)
     }
 
     pub async fn init_compact(
@@ -131,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_turn_is_noop_when_nothing_is_dropped() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = crate::agent::AgentId::from(format!("compact-noop-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
@@ -177,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_compact_prompt_adds_prompt_once_per_compact() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = crate::agent::AgentId::from(format!("compact-prompt-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await

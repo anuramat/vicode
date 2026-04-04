@@ -353,7 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn abort_emits_turn_complete_and_marks_history_failed() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = AgentId::from(format!("abort-test-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
@@ -418,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn retry_after_compact_failure_restarts_compaction() {
-        let project = Project::new().unwrap();
+        let project = Project::new_test().unwrap();
         let aid = AgentId::from(format!("compact-retry-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(project.agent(&aid))
             .await

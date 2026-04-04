@@ -25,6 +25,7 @@ impl Backend for super::Copy {
     async fn init(
         &self,
         _layout: &Layout,
+        _config: &crate::config::Config,
     ) -> Result<()> {
         Ok(())
     }

@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::config::CONFIG;
+use crate::config::Config;
 
 #[derive(Parser)]
 pub struct Cli {
@@ -24,7 +24,7 @@ pub enum ConfigCommand {
 impl Command {
     pub fn run(&self) {
         match self {
-            Command::Config(ConfigCommand::Show) => println!("{}", *CONFIG),
+            Command::Config(ConfigCommand::Show) => println!("{}", Config::load().unwrap()),
         }
     }
 }

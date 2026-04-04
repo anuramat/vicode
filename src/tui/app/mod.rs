@@ -16,7 +16,6 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::agent::id::AgentId;
-use crate::config::CONFIG;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;
@@ -74,13 +73,14 @@ impl<'a> App<'a> {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
 
         let project_name = project.name();
+        let ctx = project.config().render;
 
         Ok(Self {
             project,
             show_tabs: false,
             project_name,
             cmdline: Cmdline::default(),
-            ctx: CONFIG.render,
+            ctx,
             dirty: true,
             tx,
             rx,

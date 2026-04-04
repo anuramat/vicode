@@ -22,6 +22,7 @@ use tracing_subscriber::fmt;
 use tui::app::App;
 
 use crate::cli::Cli;
+use crate::config::Config;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 
@@ -36,12 +37,13 @@ fn init_tracing(project: &Project) -> Result<WorkerGuard> {
 
 #[tokio::main]
 async fn main() {
-    tracing::debug!("starting main");
-    let project = Project::new().unwrap();
-    let _guard = init_tracing(&project).unwrap();
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    match cli.command {
         Some(command) => command.run(),
         None => {
+            let config = Config::load().unwrap();
+            let project = Project::new(config).unwrap();
+            let _guard = init_tracing(&project).unwrap();
             let result = App::launch(project).await;
             App::reset_terminal();
             result.unwrap();

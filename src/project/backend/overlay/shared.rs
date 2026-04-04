@@ -5,7 +5,6 @@ use tokio::fs::create_dir_all;
 use tokio::fs::hard_link;
 
 use super::Overlay;
-use crate::config::CONFIG;
 use crate::project::Layout;
 
 impl Overlay {
@@ -40,9 +39,10 @@ impl Overlay {
     pub async fn init_shared(
         &self,
         layout: &Layout,
+        shared: &[String],
     ) -> Result<()> {
         create_dir_all(self.shared(layout)).await?;
-        for path in &CONFIG.shared {
+        for path in shared {
             let path = Path::new(path);
             let src = layout.root.join(path);
             if !src.exists() {
