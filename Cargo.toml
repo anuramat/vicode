@@ -68,6 +68,9 @@ typetag = "0.2"
 uuid = { version = "1.18.1", features = ["serde", "v4", "v5"] }
 xdg = "3.0.0"
 
+[dev-dependencies]
+similar-asserts = { version = "1.7.0" }
+
 [lints.clippy]
 non_std_lazy_statics = "warn"
 redundant_clone = "warn"

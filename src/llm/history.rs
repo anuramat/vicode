@@ -571,6 +571,7 @@ impl History {
 #[cfg(test)]
 mod tests {
     use indexmap::indexmap;
+    use similar_asserts::assert_eq;
 
     use super::*;
     use crate::llm::message::CompactMessage;

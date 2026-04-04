@@ -264,6 +264,8 @@ impl<'a> App<'a> {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     #[tokio::test]

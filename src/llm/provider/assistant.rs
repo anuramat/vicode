@@ -187,6 +187,8 @@ impl RoundRobin {
 mod tests {
     use std::sync::Arc;
 
+    use similar_asserts::assert_eq;
+
     use super::*;
     use crate::config::Config;
 

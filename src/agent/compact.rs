@@ -77,6 +77,7 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
 
     use super::*;

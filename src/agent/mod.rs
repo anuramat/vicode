@@ -149,6 +149,8 @@ pub enum AgentKind {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
     use crate::config::Config;
     use crate::llm::provider::assistant::AssistantPool;

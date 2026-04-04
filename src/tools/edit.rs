@@ -178,6 +178,7 @@ mod tests {
     use std::time::UNIX_EPOCH;
 
     use serde_json::json;
+    use similar_asserts::assert_eq;
 
     use super::*;
 

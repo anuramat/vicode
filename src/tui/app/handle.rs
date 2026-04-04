@@ -94,6 +94,8 @@ impl<'a> App<'a> {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
     use crate::tui::app::NotificationKind;
 

@@ -226,8 +226,8 @@ impl StreamState {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
-    #![allow(deprecated)]
 
     use std::collections::VecDeque;
     use std::sync::Arc;

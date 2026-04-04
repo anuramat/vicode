@@ -49,6 +49,7 @@ fn count_tool_call_tokens(item: &ToolCallItem) -> usize {
 #[cfg(test)]
 mod tests {
     use indexmap::indexmap;
+    use similar_asserts::assert_eq;
 
     use super::*;
     use crate::llm::message::AssistantMessage;

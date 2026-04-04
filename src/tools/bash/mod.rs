@@ -43,6 +43,7 @@ pub struct BashResult {
 mod tests {
     use schemars::schema_for;
     use serde_json::json;
+    use similar_asserts::assert_eq;
 
     use super::*;
 

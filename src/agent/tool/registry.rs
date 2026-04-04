@@ -66,6 +66,7 @@ macro_rules! declare_tool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use similar_asserts::assert_eq;
 
     use super::*;
 

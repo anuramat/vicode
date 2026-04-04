@@ -71,6 +71,7 @@ impl TryFrom<responses::OutputItem> for AssistantItem {
 #[cfg(test)]
 mod tests {
     use async_openai::types::responses::FunctionToolCall;
+    use similar_asserts::assert_eq;
 
     use crate::llm::message::*;
     use crate::tools::bash::BashArguments;

@@ -223,6 +223,7 @@ mod tests {
     use async_openai::types::chat::ChatCompletionResponseMessage;
     use async_openai::types::chat::Role;
     use indexmap::indexmap;
+    use similar_asserts::assert_eq;
 
     use super::messages;
     use crate::llm::message::AssistantItem;
