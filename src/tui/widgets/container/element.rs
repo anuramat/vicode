@@ -163,7 +163,7 @@ impl Element {
 impl<T> From<T> for Element
 where T: HeightComputable + 'static
 {
-    default fn from(p: T) -> Self {
+    fn from(p: T) -> Self {
         Element::new(p)
     }
 }

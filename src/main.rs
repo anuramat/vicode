@@ -1,8 +1,3 @@
-#![feature(min_specialization)]
-#![feature(type_alias_impl_trait)]
-#![feature(exit_status_error)]
-#![feature(iterator_try_collect)]
-
 mod agent;
 mod cli;
 mod config;

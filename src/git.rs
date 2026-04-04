@@ -188,8 +188,12 @@ pub async fn checkout(
                     .ok_or_else(|| anyhow::anyhow!("missing git archive stdout"))?,
             )
             .status()?;
-        archive.wait()?.exit_ok()?;
-        tar.exit_ok()?;
+        let archive_status = archive.wait()?;
+        anyhow::ensure!(
+            archive_status.success(),
+            "git archive failed: {archive_status}"
+        );
+        anyhow::ensure!(tar.success(), "tar failed: {tar}");
         Ok(())
     })
     .await??;

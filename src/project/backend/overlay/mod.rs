@@ -5,6 +5,7 @@ mod shared;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 
@@ -78,11 +79,8 @@ impl Backend for Overlay {
             options,
             layout.agent_workdir(aid).to_string_lossy().to_string(),
         ];
-        layout
-            .bash("fuse-overlayfs", args)
-            .await?
-            .status
-            .exit_ok()?;
+        let status = layout.bash("fuse-overlayfs", args).await?.status;
+        anyhow::ensure!(status.success(), "fuse-overlayfs failed: {status}");
         Ok(())
     }
 
@@ -145,11 +143,11 @@ impl Overlay {
         layout: &Layout,
         path: &Path,
     ) -> Result<()> {
-        layout
+        let status = layout
             .bash("umount", [path.to_string_lossy().to_string()])
             .await?
-            .status
-            .exit_ok()?;
+            .status;
+        anyhow::ensure!(status.success(), "umount failed: {status}");
         Ok(())
     }
 }

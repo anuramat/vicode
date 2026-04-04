@@ -32,7 +32,8 @@ impl Overlay {
             dst.to_string_lossy().to_string(),
             "--no-allow-other".to_string(),
         ];
-        layout.bash("bindfs", args).await?.status.exit_ok()?;
+        let status = layout.bash("bindfs", args).await?.status;
+        anyhow::ensure!(status.success(), "bindfs failed with status: {status}");
         Ok(())
     }
 
