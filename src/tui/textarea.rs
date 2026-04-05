@@ -336,3 +336,104 @@ impl<'a> Input<'a> {
         self.handle_completion();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+    use tui_textarea::CursorMove;
+
+    use super::*;
+
+    #[test]
+    fn leading_word_only_matches_at_column_zero() {
+        let mut input = Input::new(
+            "compact foo",
+            vec![CompletionSource::leading_word(
+                "commands",
+                vec![CompletionItem::plain("compact".into())],
+            )],
+            5,
+        );
+        input.textarea.move_cursor(CursorMove::End);
+        input.handle_completion();
+        assert_eq!(input.completion_matches().len(), 0);
+    }
+
+    #[test]
+    fn prefixed_word_matches_without_prefix_in_entries() {
+        let mut input = Input::new(
+            "open @sr",
+            vec![CompletionSource::prefixed_word(
+                "files",
+                '@',
+                vec![CompletionItem {
+                    match_text: "src/main.rs".into(),
+                    insert_text: "@src/main.rs".into(),
+                    rendered: ListItem::new("src/main.rs"),
+                }],
+            )],
+            5,
+        );
+        input.textarea.move_cursor(CursorMove::End);
+        input.handle_completion();
+
+        assert_eq!(
+            input
+                .completion_matches()
+                .iter()
+                .map(|item| item.match_text.clone())
+                .collect::<Vec<_>>(),
+            vec!["src/main.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn cancel_restores_typed_prefix() {
+        let mut input = Input::new(
+            "open @sr",
+            vec![CompletionSource::prefixed_word(
+                "files",
+                '@',
+                vec![CompletionItem {
+                    match_text: "src/main.rs".into(),
+                    insert_text: "@src/main.rs".into(),
+                    rendered: ListItem::new("src/main.rs"),
+                }],
+            )],
+            5,
+        );
+        input.textarea.move_cursor(CursorMove::End);
+        input.handle_completion();
+        input.completion_next();
+        input.completion_cancel();
+
+        assert_eq!(input.textarea.lines(), ["open @sr"]);
+    }
+
+    #[test]
+    fn updating_source_items_refreshes_active_matches() {
+        let mut input = Input::new(
+            "open @sr",
+            vec![CompletionSource::prefixed_word("files", '@', vec![])],
+            5,
+        );
+        input.textarea.move_cursor(CursorMove::End);
+        input.set_completion_items(
+            "files",
+            vec![CompletionItem {
+                match_text: "src/main.rs".into(),
+                insert_text: "@src/main.rs".into(),
+                rendered: ListItem::new("src/main.rs"),
+            }],
+        );
+
+        assert_eq!(
+            input
+                .completion_matches()
+                .iter()
+                .map(|item| item.match_text.clone())
+                .collect::<Vec<_>>(),
+            vec!["src/main.rs".to_string()]
+        );
+    }
+}
