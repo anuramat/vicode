@@ -42,7 +42,11 @@ async fn main() {
             let _guard = init_tracing(&project).unwrap();
             let result = App::launch(project).await;
             App::reset_terminal();
-            result.unwrap();
+            if let Err(err) = result {
+                eprintln!("{err:?}");
+                eprintln!("{err:#?}");
+                std::process::exit(1);
+            }
         }
     }
 }

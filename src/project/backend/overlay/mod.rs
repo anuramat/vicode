@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use anyhow::bail;
+use thiserror::Error;
 
 use super::Overlay;
 use crate::agent::id::AgentId;
@@ -143,11 +144,9 @@ impl Overlay {
         layout: &Layout,
         path: &Path,
     ) -> Result<()> {
-        let status = layout
-            .bash(deps::UMOUNT, [path.to_string_lossy().to_string()])
-            .await?
-            .status;
-        anyhow::ensure!(status.success(), "umount failed: {status}");
+        layout
+            .try_bash(deps::UMOUNT, [path.to_string_lossy().to_string()])
+            .await?;
         Ok(())
     }
 }
@@ -170,4 +169,42 @@ impl Layout {
             .await?;
         Ok(output)
     }
+
+    async fn try_bash<I, S>(
+        &self,
+        program: &str,
+        args: I,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S> + Clone,
+        S: Into<String>,
+    {
+        use tokio::process::Command;
+        let output = Command::new(program)
+            .current_dir(self.root.clone())
+            .args(args.clone().into_iter().map(Into::into))
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(BashError {
+                program: program.to_string(),
+                args: args.into_iter().map(Into::into).collect(),
+                status: output.status,
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("command {program} with args {:?} failed with status {}", .args, .status)]
+struct BashError {
+    program: String,
+    args: Vec<String>,
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
 }
