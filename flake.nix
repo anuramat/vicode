@@ -5,6 +5,7 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     treefmt-nix.url = "github:numtide/treefmt-nix";
     git-hooks-nix.url = "github:cachix/git-hooks.nix";
+    bundlers.url = "github:NixOS/bundlers";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -12,14 +13,26 @@
   };
   outputs =
     inputs:
+    let
+      binName = "vc";
+      pname = "vicode";
+      meta = {
+        description = "coding agent";
+        homepage = "https://github.com/anuramat/vicode";
+        mainProgram = binName;
+        # TODO: longDescription = "";
+      };
+      targets = {
+        "x86_64-linux" = "x86_64-unknown-linux-musl";
+        "aarch64-darwin" = "aarch64-apple-darwin";
+      };
+    in
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.treefmt-nix.flakeModule
         inputs.git-hooks-nix.flakeModule
       ];
-      systems = [
-        "x86_64-linux"
-      ];
+      systems = builtins.attrNames targets;
       perSystem =
         {
           pkgs,
@@ -29,27 +42,45 @@
           ...
         }:
         let
+          target = targets.${system};
+          xcPkgs = import inputs.nixpkgs {
+            localSystem = system;
+            crossSystem.config = target;
+          };
           fenixPkgs = inputs.fenix.packages.${system};
-          fenix = fenixPkgs.stable;
-          craneLib = (inputs.crane.mkLib pkgs).overrideToolchain fenix.toolchain;
+
+          craneLib = (inputs.crane.mkLib xcPkgs).overrideToolchain (
+            _: # crane passes pkgs, which we don't need
+            fenixPkgs.combine [
+              fenixPkgs.stable.rustc
+              fenixPkgs.stable.cargo
+              fenixPkgs.targets.${target}.stable.rust-std
+            ]
+          );
+
           rustfmt = fenixPkgs.latest.rustfmt;
-          nativeBuildInputs = [
-            pkgs.perl # some dependency needs this
+
+          nativeBuildInputs = with pkgs; [
+            perl # some dependency needs this
           ];
-          runtimeBinDeps = with pkgs; [
-            bash
-            gnutar
-            git
-            fuse-overlayfs
-            bindfs
-            bubblewrap
-          ];
+
+          # TODO drop on darwin, ideally only the missing ones
+          binDeps =
+            p: with p; [
+              bash
+              gnutar
+              git
+              fuse-overlayfs
+              bindfs
+              bubblewrap
+            ];
+
           devTools = with pkgs; [
             just
-            fenix.cargo
-            fenix.clippy
-            fenix.rust-src
-            fenix.rustc
+            fenixPkgs.stable.cargo
+            fenixPkgs.stable.clippy
+            fenixPkgs.stable.rust-src
+            fenixPkgs.stable.rustc
             rustfmt
             cargo-udeps
             cargo-edit
@@ -64,7 +95,7 @@
             in
             pkgs.mkShell {
               inherit shellHook;
-              packages = devTools ++ nativeBuildInputs ++ runtimeBinDeps;
+              packages = devTools ++ nativeBuildInputs ++ (binDeps pkgs);
             };
           pre-commit.settings.hooks = {
             treefmt.enable = true;
@@ -81,33 +112,50 @@
           };
           packages =
             let
-              binName = "vc";
-              meta = {
-                description = "coding agent";
-                homepage = "https://github.com/anuramat/vicode";
-                mainProgram = binName;
-                # TODO: longDescription = "";
-              };
-              vicode-unwrapped = craneLib.buildPackage {
-                src = pkgs.lib.cleanSource ./.;
+              unwrapped = craneLib.buildPackage {
+                pname = "${pname}-unwrapped";
                 inherit meta nativeBuildInputs;
+                src = pkgs.lib.cleanSource ./.;
+                strictDeps = true;
+                # TEST if these work on darwin
+                CARGO_BUILD_TARGET = target;
+                CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
               };
-              vicode = pkgs.symlinkJoin {
-                name = binName;
-                paths = [ vicode-unwrapped ];
-                nativeBuildInputs = [ pkgs.makeWrapper ];
-                postBuild = ''
-                  wrapProgram $out/bin/${binName} --prefix PATH : ${lib.makeBinPath runtimeBinDeps}
-                '';
-                inherit meta;
+              wrapped = pkgs.symlinkJoin {
+                inherit pname meta;
+                inherit (unwrapped) version;
+                paths = [ unwrapped ];
+                nativeBuildInputs = [ xcPkgs.buildPackages.makeWrapper ];
+                postBuild =
+                  let
+                    # HACK we should be using `binDeps xcPkgs`, but then we're rebuilding universe with musl
+                    # NOTE essentially xcPkgs.buildPackages = pkgs, but this is clearer in intent (?)
+                    binPath = lib.makeBinPath (binDeps xcPkgs.buildPackages);
+                  in
+                  ''
+                    wrapProgram $out/bin/${binName} --prefix PATH : ${binPath}
+                  '';
               };
+              bundled =
+                let
+                  arxPname = "${pname}-arx";
+                  inherit (unwrapped) version;
+                in
+                (inputs.bundlers.bundlers.${system}.toArx wrapped).overrideAttrs {
+                  name = "${arxPname}-${version}";
+                  pname = arxPname;
+                };
+              packages =
+                map (x: lib.nameValuePair (x.pname) x) [
+                  bundled
+                  wrapped
+                  unwrapped
+                ]
+                |> lib.listToAttrs;
             in
-            {
-              inherit
-                vicode
-                vicode-unwrapped
-                ;
-              default = vicode;
+            packages
+            // {
+              default = wrapped;
             };
         };
     };
