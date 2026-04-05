@@ -21,7 +21,12 @@
         "x86_64-linux"
       ];
       perSystem =
-        { pkgs, system, ... }:
+        {
+          pkgs,
+          lib,
+          system,
+          ...
+        }:
         let
           fenixPkgs = inputs.fenix.packages.${system};
           fenix = fenixPkgs.stable;
@@ -37,7 +42,6 @@
             fuse-overlayfs
             bindfs
             bubblewrap
-            util-linux
           ];
           devTools = with pkgs; [
             just
@@ -68,21 +72,20 @@
               just.enable = true;
             };
           };
-          packages.default = craneLib.buildPackage {
-            src = pkgs.lib.cleanSource ./.;
-            meta.mainProgram = "vc";
-            inherit nativeBuildInputs;
-
-            RUSTFLAGS = "--cfg nix";
-
-            VICODE_BASH = "${pkgs.bash}/bin/bash";
-            VICODE_BINDFS = "${pkgs.bindfs}/bin/bindfs";
-            VICODE_BWRAP = "${pkgs.bubblewrap}/bin/bwrap";
-            VICODE_FUSE_OVERLAYFS = "${pkgs.fuse-overlayfs}/bin/fuse-overlayfs";
-            VICODE_GIT = "${pkgs.git}/bin/git";
-            VICODE_MOUNTPOINT = "${pkgs.util-linux}/bin/mountpoint";
-            VICODE_TAR = "${pkgs.gnutar}/bin/tar";
-          };
+          packages.default =
+            let
+              binName = "vc";
+            in
+            craneLib.buildPackage {
+              src = pkgs.lib.cleanSource ./.;
+              meta.mainProgram = binName;
+              nativeBuildInputs = nativeBuildInputs ++ [
+                pkgs.makeWrapper
+              ];
+              postFixup = ''
+                wrapProgram $out/bin/${binName} --prefix PATH : ${lib.makeBinPath runtimeBinDeps}
+              '';
+            };
         };
     };
 }

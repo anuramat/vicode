@@ -75,8 +75,5 @@ similar-asserts = { version = "1.7.0" }
 non_std_lazy_statics = "warn"
 redundant_clone = "warn"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(nix)"] }
-
 [patch.crates-io]
 async-openai = { git = "https://github.com/anuramat/async-openai" }
