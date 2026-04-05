@@ -7,7 +7,9 @@ use strum::IntoEnumIterator;
 
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
-use crate::tui::textarea::Input;
+use crate::tui::widgets::input::CompletionItem;
+use crate::tui::widgets::input::Input;
+use crate::tui::widgets::input::InputOpts;
 
 const MAX_COMPLETION_HEIGHT: u16 = 5;
 
@@ -16,16 +18,20 @@ pub struct Cmdline<'a> {
     pub input: Input<'a>,
 }
 
-impl Default for Cmdline<'_> {
-    fn default() -> Self {
-        let commands = CommandName::iter().map(|c| c.to_string()).collect();
-        let mut input = Input::new("", commands, MAX_COMPLETION_HEIGHT);
-        input.clear_on_unfocus = true;
+impl<'a> Cmdline<'a> {
+    pub fn new() -> Self {
+        let source = CommandName::iter()
+            .map(|c| CompletionItem::new(c.to_string()))
+            .collect();
+        let input = Input::new(InputOpts {
+            source,
+            height: MAX_COMPLETION_HEIGHT,
+            clear_on_unfocus: true,
+            only_leading: true,
+        });
         Self { input }
     }
-}
 
-impl<'a> Cmdline<'a> {
     pub fn render(
         &mut self,
         area: Rect,
@@ -63,11 +69,11 @@ impl<'a> Cmdline<'a> {
 
         if let Ok(command) = text.parse::<Command>() {
             Ok(command)
-        } else if !text.is_empty() && self.input.completion.matches.len() == 1 {
-            // TODO maybe tighten matches -- now we take the single fuzzy match, maybe we should only take if it's a prefix match
-            let text = self.input.completion.matches[0].value.clone();
+        } else if !text.is_empty()
+            && let Some(only) = self.input.only_match()
+        {
             Ok(Command {
-                name: text.parse().expect("match should be valid command"),
+                name: only.parse().expect("match should be valid command"),
                 args: None,
             })
         } else {

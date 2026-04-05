@@ -79,7 +79,7 @@ impl<'a> App<'a> {
             project,
             show_tabs: false,
             project_name,
-            cmdline: Cmdline::default(),
+            cmdline: Cmdline::new(),
             ctx,
             dirty: true,
             tx,

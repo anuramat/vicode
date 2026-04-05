@@ -23,7 +23,7 @@ pub async fn run_child(
     parent: &AgentId,
     aid: &AgentId,
     state: &AgentState,
-    text: Option<String>,
+    text: String,
 ) -> Result<String> {
     let state = AgentState {
         status: AgentStatus::Idle,

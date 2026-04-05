@@ -1,6 +1,7 @@
 pub mod cmdline;
 pub mod container;
 pub mod info;
+pub mod input;
 pub mod logo;
 pub mod markdown;
 pub mod message;

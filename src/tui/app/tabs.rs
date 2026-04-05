@@ -125,7 +125,7 @@ impl<'a> App<'a> {
         aid: AgentId,
         agent: AgentHandle,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), aid.clone(), agent).await?;
+        let tab = Tab::new(self.tx.clone(), aid.clone(), agent, &self.project).await?;
         self.tabs.insert(aid.clone(), TabEntry::Ready(tab));
         self.rebuild_tablist();
         Ok(())

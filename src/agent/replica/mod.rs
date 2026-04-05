@@ -38,7 +38,9 @@ pub async fn run_replicas(
             topology: Default::default(),
             context,
         };
-        tasks.spawn(async move { subagent::run_child(project, &parent, &aid, &state, None).await });
+        tasks.spawn(async move {
+            subagent::run_child(project, &parent, &aid, &state, "".to_string()).await
+        });
     }
     let mut results = Vec::new();
     while let Some(res) = tasks.join_next().await {

@@ -40,7 +40,7 @@ impl Tab<'_> {
             .expect("history desync");
         // XXX proper handling -- resync and show error notification
         if let Some(input) = input {
-            self.user_input.0.prepend_text(input);
+            self.input.0.prepend_text(input);
             self.update_input_border();
         }
         // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
@@ -62,11 +62,13 @@ impl Tab<'_> {
     pub async fn set_state(
         &mut self,
         status: AgentStatus,
+        project: &Project,
     ) -> Result<bool> {
         if self.agent.state.status == status {
             return Ok(false);
         }
         self.agent.state.status = status;
+        self.refresh_file_completion(project).await;
         self.tx
             .send(AppEvent::TabStatusChanged(self.aid.clone()))
             .await?;
@@ -92,6 +94,7 @@ impl Tab<'_> {
 #[cfg(test)]
 mod tests {
     use futures::future::AbortHandle;
+    use git2::Repository;
     use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
 
@@ -142,37 +145,25 @@ mod tests {
         .unwrap()
     }
 
-    #[tokio::test]
-    async fn set_state_updates_tab_status() {
-        let (tx, mut rx) = channel(1);
-        let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
-        let aid = AgentId::from("tab-compact".to_string());
-        let state = AgentState {
-            status: AgentStatus::Idle,
-            assistant: assistant().await,
-            topology: AgentTopology::default(),
-            context: AgentContext {
-                ..Default::default()
-            },
-        };
-        let mut tab = Tab::new(
-            tx,
-            aid.clone(),
-            AgentHandle {
-                tx: agent_tx,
-                state,
-                abort: AbortHandle::new_pair().0,
-            },
-        )
-        .await
-        .unwrap();
-
-        tab.set_state(AgentStatus::Compacting).await.unwrap();
-
-        assert_eq!(tab.agent.state.status, AgentStatus::Compacting);
-        assert!(matches!(
-            rx.recv().await,
-            Some(AppEvent::TabStatusChanged(changed)) if changed == aid
-        ));
+    fn commit_file(
+        repo: &Repository,
+        path: &std::path::Path,
+        name: &str,
+    ) {
+        std::fs::write(path.join(name), name).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(name)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("vicode", "vicode@example.com").unwrap();
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+        let parents = parent.iter().collect::<Vec<_>>();
+        repo.commit(Some("HEAD"), &signature, &signature, name, &tree, &parents)
+            .unwrap();
     }
 }

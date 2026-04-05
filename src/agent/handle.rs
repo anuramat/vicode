@@ -74,7 +74,7 @@ pub type ParentHandle = Box<dyn ParentSink>;
 
 #[derive(Debug)]
 pub struct UserPrompt {
-    pub text: Option<String>,
+    pub text: String,
     pub multiplier: usize,
     pub generation: HistoryGeneration,
 }
@@ -179,10 +179,8 @@ impl Agent {
             }) => {
                 // XXX verify generation logic
                 self.idle()?;
-                if let Some(text) = text {
-                    self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
-                        .await?;
-                }
+                self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
+                    .await?;
                 self.increment_generation().await?;
                 self.set_status(AgentStatus::InProgress).await?;
                 if multiplier <= 1 {

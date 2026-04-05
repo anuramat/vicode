@@ -5,6 +5,9 @@ pub mod update;
 use std::fmt::Debug;
 
 use anyhow::Result;
+use derive_more::Deref;
+use derive_more::DerefMut;
+use derive_more::From;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
@@ -26,13 +29,15 @@ use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::osc7::set_osc7;
-use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
+use crate::tui::widgets::input::Input;
+use crate::tui::widgets::input::InputOpts;
 
 const INPUT_AREA_HEIGHT: u16 = 5;
 const INFO_PANE_WIDTH: u16 = 32;
+const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
 
 #[derive(Debug)]
 pub struct Tab<'a> {
@@ -41,8 +46,7 @@ pub struct Tab<'a> {
     pub agent: AgentHandle,
 
     pub scroll: ScrollElements,
-    pub insert_mode: bool, // TODO use enum
-    pub user_input: UserInput<'a>,
+    pub input: MessageInput<'a>,
     pub info: InfoWidget,
 
     pub multiplier: usize,
@@ -95,17 +99,24 @@ impl<'a> Tab<'a> {
         tx: Sender<AppEvent>,
         aid: AgentId,
         agent: AgentHandle,
+        project: &Project,
     ) -> Result<Self> {
-        let tab = Self {
+        let mut tab = Self {
             tx,
             aid,
             agent,
             scroll: Default::default(),
-            insert_mode: false,
-            user_input: Default::default(),
+            input: Input::new(InputOpts {
+                source: Vec::new(),
+                height: FILE_COMPLETION_MAX_HEIGHT,
+                clear_on_unfocus: false,
+                only_leading: false,
+            })
+            .into(),
             info: Default::default(),
             multiplier: 1,
         };
+        tab.refresh_file_completion(project).await;
         Ok(tab)
     }
 
@@ -134,7 +145,7 @@ impl<'a> Tab<'a> {
         block.render_ref(body, buf);
         let body = block.inner(body);
 
-        let input_height = if self.user_input.visible(self.insert_mode) {
+        let input_height = if self.input.visible() {
             INPUT_AREA_HEIGHT
         } else {
             0
@@ -156,7 +167,7 @@ impl<'a> Tab<'a> {
             buf,
             ctx,
         );
-        self.user_input.0.render(input_area, buf);
+        self.input.0.render(input_area, buf);
     }
 
     pub fn label(&self) -> String {
@@ -183,25 +194,11 @@ fn render_loading(
     widget.render(area, buf);
 }
 
-#[derive(Debug, Clone)]
-pub struct UserInput<'a>(pub Input<'a>);
+#[derive(Debug, Clone, Deref, DerefMut, From)]
+pub struct MessageInput<'a>(pub Input<'a>);
 
-impl<'a> UserInput<'a> {
-    pub fn empty(&self) -> bool {
-        let lines = self.0.textarea.lines();
-        lines.len() == 1 && lines[0].is_empty()
-    }
-
-    pub fn visible(
-        &self,
-        insert_mode: bool,
-    ) -> bool {
-        insert_mode || !self.empty()
-    }
-}
-
-impl Default for UserInput<'_> {
-    fn default() -> Self {
-        Self(Input::new("", vec![], 0))
+impl<'a> MessageInput<'a> {
+    pub fn visible(&self) -> bool {
+        self.focused() || !self.empty()
     }
 }

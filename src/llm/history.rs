@@ -39,8 +39,8 @@ pub struct History {
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]
 pub struct Instructions {
-    #[deref]
-    #[deref_mut]
+    #[deref(forward)]
+    #[deref_mut(forward)]
     text: String,
     token_count: usize,
 }

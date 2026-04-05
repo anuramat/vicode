@@ -51,7 +51,7 @@ impl<'a> App<'a> {
                 frame.render_widget(&*LOGO_VARIANTS, frame.area());
             }
 
-            if self.cmdline.input.focus {
+            if self.cmdline.input.focused() {
                 self.cmdline.render(line_area, frame.buffer_mut());
             } else {
                 let stl = self.status_line(line_area.width);
