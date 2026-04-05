@@ -26,6 +26,7 @@ use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
 use crate::tui::osc7::set_osc7;
+use crate::tui::textarea::CompletionSource;
 use crate::tui::textarea::Input;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -33,6 +34,8 @@ use crate::tui::widgets::info::InfoWidget;
 
 const INPUT_AREA_HEIGHT: u16 = 5;
 const INFO_PANE_WIDTH: u16 = 32;
+const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
+pub const FILE_COMPLETION_SOURCE: &str = "files";
 
 #[derive(Debug)]
 pub struct Tab<'a> {
@@ -95,8 +98,9 @@ impl<'a> Tab<'a> {
         tx: Sender<AppEvent>,
         aid: AgentId,
         agent: AgentHandle,
+        project: &Project,
     ) -> Result<Self> {
-        let tab = Self {
+        let mut tab = Self {
             tx,
             aid,
             agent,
@@ -106,6 +110,7 @@ impl<'a> Tab<'a> {
             info: Default::default(),
             multiplier: 1,
         };
+        tab.refresh_file_completion(project).await;
         Ok(tab)
     }
 
@@ -202,6 +207,14 @@ impl<'a> UserInput<'a> {
 
 impl Default for UserInput<'_> {
     fn default() -> Self {
-        Self(Input::new("", vec![], 0))
+        Self(Input::new(
+            "",
+            vec![CompletionSource::prefixed_word(
+                FILE_COMPLETION_SOURCE,
+                '@',
+                vec![],
+            )],
+            FILE_COMPLETION_MAX_HEIGHT,
+        ))
     }
 }

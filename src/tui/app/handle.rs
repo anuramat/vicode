@@ -83,7 +83,12 @@ impl<'a> App<'a> {
                 self.notify(NotificationKind::Error, msg);
             }
             StatusUpdate(status) => {
-                if self.tab_mut_by_aid(&aid)?.set_state(status).await? {
+                let project = self.project.clone();
+                if self
+                    .tab_mut_by_aid(&aid)?
+                    .set_state(status, &project)
+                    .await?
+                {
                     self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&self.project, &aid).await?;
                 }
             }

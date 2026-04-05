@@ -158,9 +158,27 @@ impl Command {
                     .compact(self.args.as_deref())
                     .await?
             }
-            CommandName::CompletionCancel => app.cmdline.input.completion_cancel(),
-            CommandName::CompletionNext => app.cmdline.input.completion_next(),
-            CommandName::CompletionPrev => app.cmdline.input.completion_prev(),
+            CommandName::CompletionCancel => {
+                if app.cmdline.input.focus {
+                    app.cmdline.input.completion_cancel();
+                } else if app.selected_tab().is_ok_and(|tab| tab.insert_mode) {
+                    app.selected_tab_mut()?.completion_cancel();
+                }
+            }
+            CommandName::CompletionNext => {
+                if app.cmdline.input.focus {
+                    app.cmdline.input.completion_next();
+                } else if app.selected_tab().is_ok_and(|tab| tab.insert_mode) {
+                    app.selected_tab_mut()?.completion_next();
+                }
+            }
+            CommandName::CompletionPrev => {
+                if app.cmdline.input.focus {
+                    app.cmdline.input.completion_prev();
+                } else if app.selected_tab().is_ok_and(|tab| tab.insert_mode) {
+                    app.selected_tab_mut()?.completion_prev();
+                }
+            }
             CommandName::InputExit => app.exit_input()?,
             CommandName::InputSubmit => app.submit().await?,
             CommandName::InsertEnter => app.selected_tab_mut()?.insert_mode(true),
@@ -201,5 +219,129 @@ impl Command {
             CommandName::None => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::future::AbortHandle;
+    use similar_asserts::assert_eq;
+    use tokio::sync::mpsc::channel;
+    use tui_textarea::CursorMove;
+
+    use super::*;
+    use crate::agent::AgentContext;
+    use crate::agent::AgentHandle;
+    use crate::agent::AgentState;
+    use crate::agent::AgentStatus;
+    use crate::agent::AgentTopology;
+    use crate::agent::handle::AgentEvent;
+    use crate::agent::id::AgentId;
+    use crate::config::Config;
+    use crate::llm::provider::assistant::Assistant;
+    use crate::llm::provider::assistant::AssistantPool;
+    use crate::tui::tab::FILE_COMPLETION_SOURCE;
+    use crate::tui::tab::Tab;
+    use crate::tui::tab::TabEntry;
+    use crate::tui::textarea::CompletionItem;
+    use crate::tui::textarea::CompletionSource;
+    use crate::tui::textarea::Input;
+
+    async fn assistant() -> Assistant {
+        AssistantPool::from_config(
+            &Config::parse_with_defaults(
+                r#"
+                primary_assistant = ["test"]
+                shell_cmd = ["bash", "-c"]
+
+                [sandbox]
+                kind = "bwrap"
+                bin = "bwrap"
+                args = []
+                stages = []
+
+                [keymap.cmdline]
+
+                [keymap.normal]
+
+                [keymap.insert]
+
+                [providers.main]
+                base_url = "https://api.example.com/v1"
+
+                [assistants.test]
+                provider = "main"
+                model = "gpt-test"
+                "#,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap()
+        .assistant("test")
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn completion_commands_target_tab_in_insert_mode() {
+        let project = crate::project::Project::new_test().unwrap();
+        let mut app = App::new(project.clone()).await.unwrap();
+        let (tx, _rx) = channel(1);
+        let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
+        let aid = AgentId::from("tab".to_string());
+        let state = AgentState {
+            status: AgentStatus::Idle,
+            assistant: assistant().await,
+            topology: AgentTopology::default(),
+            context: AgentContext::default(),
+        };
+        let mut tab = Tab::new(
+            tx,
+            aid.clone(),
+            AgentHandle {
+                tx: agent_tx,
+                state,
+                abort: AbortHandle::new_pair().0,
+            },
+            &project,
+        )
+        .await
+        .unwrap();
+        tab.user_input.0 = Input::new(
+            "open @sr",
+            vec![CompletionSource::prefixed_word(
+                FILE_COMPLETION_SOURCE,
+                '@',
+                vec![],
+            )],
+            5,
+        );
+        tab.user_input.0.textarea.move_cursor(CursorMove::End);
+        tab.user_input.0.set_completion_items(
+            FILE_COMPLETION_SOURCE,
+            vec![CompletionItem {
+                match_text: "src/main.rs".into(),
+                insert_text: "@src/main.rs".into(),
+                rendered: ratatui::widgets::ListItem::new("src/main.rs"),
+            }],
+        );
+        tab.insert_mode(true);
+
+        app.tabs.insert(aid, TabEntry::Ready(tab));
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+
+        Command {
+            name: CommandName::CompletionNext,
+            args: None,
+        }
+        .execute(&mut app)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.selected_tab().unwrap().user_input.0.textarea.lines(),
+            ["open @src/main.rs"]
+        );
     }
 }
