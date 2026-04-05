@@ -72,19 +72,35 @@
               just.enable = true;
             };
           };
-          packages.default =
+          packages =
             let
               binName = "vc";
+              meta = {
+                description = "coding agent";
+                homepage = "https://github.com/anuramat/vicode";
+                mainProgram = binName;
+                # TODO: longDescription = "";
+              };
+              vicode-unwrapped = craneLib.buildPackage {
+                src = pkgs.lib.cleanSource ./.;
+                inherit meta nativeBuildInputs;
+              };
+              vicode = pkgs.symlinkJoin {
+                name = binName;
+                paths = [ vicode-unwrapped ];
+                nativeBuildInputs = [ pkgs.makeWrapper ];
+                postBuild = ''
+                  wrapProgram $out/bin/${binName} --prefix PATH : ${lib.makeBinPath runtimeBinDeps}
+                '';
+                inherit meta;
+              };
             in
-            craneLib.buildPackage {
-              src = pkgs.lib.cleanSource ./.;
-              meta.mainProgram = binName;
-              nativeBuildInputs = nativeBuildInputs ++ [
-                pkgs.makeWrapper
-              ];
-              postFixup = ''
-                wrapProgram $out/bin/${binName} --prefix PATH : ${lib.makeBinPath runtimeBinDeps}
-              '';
+            {
+              inherit
+                vicode
+                vicode-unwrapped
+                ;
+              default = vicode;
             };
         };
     };
