@@ -9,7 +9,6 @@ run:
 build:
     nix build --option substitute false
 
-
 # unmount agent fuse-overlayfs and bindfs mounts
 [group('clean')]
 umount:
