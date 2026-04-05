@@ -409,7 +409,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.keymap.insert.len(), 2);
+        assert_eq!(config.keymap.insert.len(), 5);
     }
 
     #[test]
