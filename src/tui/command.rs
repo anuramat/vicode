@@ -312,7 +312,13 @@ impl Default for Keymap {
             ("9", "set_multiplier 9"),
         ];
 
-        let insert = [("enter", "input_submit"), ("esc", "input_exit")];
+        let insert = [
+            ("enter", "input_submit"),
+            ("esc", "input_exit"),
+            ("c-n", "completion_next"),
+            ("c-p", "completion_prev"),
+            ("c-e", "completion_cancel"),
+        ];
         Self {
             clear_defaults: false,
             cmdline: parse(cmdline),
