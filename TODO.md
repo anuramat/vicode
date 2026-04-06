@@ -38,7 +38,7 @@
 # backlog
 
 - refactor: `if let Some(x) = ... { x } else { return }` into `let Some(x) = ...`
-- move ALL prompting into separate files with suffix like `.prompt.md`
+- build prompt recursively from modules
 - lua scripting/configs with mlua
 - yml configs with serde_yml
 - try reading token usage field in response instead of estimating with tiktoken?
