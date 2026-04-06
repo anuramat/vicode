@@ -4,6 +4,8 @@ use ratatui::text::Line;
 
 use crate::tui::app::App;
 use crate::tui::colors::DIM_TEXT_COLOR;
+use crate::tui::colors::NORMAL_TEXT_COLOR;
+use crate::tui::colors::PANE_BG_COLOR;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const TABLIST_WIDTH: u16 = 24;
@@ -37,6 +39,9 @@ impl<'a> App<'a> {
             else {
                 unreachable!();
             };
+            frame
+                .buffer_mut()
+                .set_style(tablist_area, Style::default().bg(PANE_BG_COLOR));
             frame.render_stateful_widget(
                 &self.tablist.widget,
                 tablist_area,
@@ -80,7 +85,10 @@ impl<'a> App<'a> {
             return line;
         };
         line.push_span(Span::styled("/", Style::new().fg(DIM_TEXT_COLOR)));
-        line.push_span(Span::raw(tab.aid.to_string()));
+        line.push_span(Span::styled(
+            tab.aid.to_string(),
+            Style::new().fg(NORMAL_TEXT_COLOR),
+        ));
 
         let remaining: usize = (width as usize).saturating_sub(line.width());
 

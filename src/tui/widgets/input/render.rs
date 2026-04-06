@@ -38,6 +38,10 @@ impl<'a> Input<'a> {
             .intersection(buf.area);
             // TODO make the color stand out, maybe lighter bg?
             Clear.render(completion_area, buf);
+            buf.set_style(
+                completion_area,
+                Style::new().bg(crate::tui::colors::COMPLETION_BG_COLOR),
+            );
             StatefulWidget::render(
                 List::new(matches.iter().map(|item| item.rendered().clone()))
                     .highlight_style(Style::new().reversed()),

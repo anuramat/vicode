@@ -16,14 +16,8 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::symbols::line::HORIZONTAL;
 use ratatui::symbols::line::THICK_HORIZONTAL;
-use ratatui::symbols::line::VERTICAL_LEFT;
-use ratatui::symbols::line::VERTICAL_RIGHT;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
-use ratatui::widgets::WidgetRef;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentHandle;
@@ -31,7 +25,8 @@ use crate::agent::id::AgentId;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
-use crate::tui::colors::BORDER_COLOR;
+use crate::tui::colors::INPUT_ACTIVE_COLOR;
+use crate::tui::colors::INPUT_INACTIVE_COLOR;
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -145,12 +140,16 @@ impl<'a> Tab<'a> {
         };
         self.info.render(info_area, buf);
 
-        let block = Block::new()
-            .borders(Borders::LEFT | Borders::RIGHT)
-            .style(Style::default().fg(BORDER_COLOR))
-            .border_type(BorderType::Plain);
-        block.render_ref(body, buf);
-        let body = block.inner(body);
+        // let block = Block::new()
+        //     .borders(Borders::LEFT | Borders::RIGHT)
+        //     .style(Style::default().fg(BORDER_COLOR))
+        //     .border_type(BorderType::Plain);
+        // block.render_ref(body, buf);
+        // let body = block.inner(body);
+        let body = body.inner(ratatui::layout::Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
 
         let input_height = if self.input.visible() {
             INPUT_AREA_HEIGHT + 1
@@ -220,23 +219,17 @@ impl<'a> MessageInput<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        if self.focused() {
-            buf.set_string(
-                area.x,
-                area.y,
-                THICK_HORIZONTAL.repeat(area.width.into()),
-                Style::default(),
-            );
+        let (symbol, color) = if self.focused() {
+            (THICK_HORIZONTAL, INPUT_ACTIVE_COLOR)
         } else {
-            buf.set_string(
-                area.x,
-                area.y,
-                HORIZONTAL.repeat(area.width.into()),
-                Style::default(),
-            );
-            buf.set_string(area.x - 1, area.y, VERTICAL_RIGHT, Style::default());
-            buf.set_string(area.x + area.width, area.y, VERTICAL_LEFT, Style::default());
+            (HORIZONTAL, INPUT_INACTIVE_COLOR)
         };
+        buf.set_string(
+            area.x,
+            area.y,
+            symbol.repeat(area.width.into()),
+            Style::default().fg(color),
+        );
         buf.set_string(area.x + 1, area.y, &self.title, Style::default());
         self.input.render(
             Rect {
