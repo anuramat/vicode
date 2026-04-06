@@ -64,18 +64,15 @@ impl<'a> Input<'a> {
         focus: bool,
     ) {
         self.focused = focus;
-        if !focus {
-            if self.clear_on_unfocus || self.text().chars().all(|c| c.is_whitespace()) {
-                self.textarea = new_textarea("");
-            }
-            self.clear_completion();
+        if (!focus && self.clear_on_unfocus) || self.text().chars().all(|c| c.is_whitespace()) {
+            self.textarea = new_textarea("");
         }
+        self.clear_completion();
     }
 
     pub fn take_area(&mut self) -> TextArea<'a> {
         let mut empty = new_textarea("");
         mem::swap(&mut self.textarea, &mut empty);
-        self.set_focus(false);
         empty
     }
 

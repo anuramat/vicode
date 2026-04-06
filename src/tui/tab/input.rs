@@ -2,7 +2,6 @@ use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use git2::Repository;
-use tracing::warn;
 
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
@@ -91,6 +90,7 @@ impl<'a> Tab<'a> {
 
     pub async fn submit(&mut self) -> Result<()> {
         let text = self.input.take_area().lines().join("\n").trim().to_string();
+        self.input.set_focus(false);
         if text.is_empty() {
             return Ok(());
         }

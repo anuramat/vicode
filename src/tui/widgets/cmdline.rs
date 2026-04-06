@@ -65,16 +65,21 @@ impl<'a> Cmdline<'a> {
 
     pub fn take_command(&mut self) -> Result<Command> {
         let area = self.input.take_area();
+        let only_match = self
+            .input
+            .only_match()
+            .map(|only| only.parse().expect("only match should be valid command"));
+        self.input.set_focus(false);
         let text = area.lines().join("\n");
         let text = text.trim();
 
         if let Ok(command) = text.parse::<Command>() {
             Ok(command)
         } else if !text.is_empty()
-            && let Some(only) = self.input.only_match()
+            && let Some(only) = only_match
         {
             Ok(Command {
-                name: only.parse().expect("match should be valid command"),
+                name: only,
                 args: None,
             })
         } else {
