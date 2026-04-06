@@ -201,11 +201,12 @@ impl<'a> Tab<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyModifiers;
     use futures::future::AbortHandle;
     use git2::Repository;
     use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
-    use tui_textarea::CursorMove;
 
     use super::*;
     use crate::agent::AgentContext;
@@ -218,7 +219,7 @@ mod tests {
     use crate::config::Config;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
-    use crate::tui::widgets::input::Input;
+    use crate::tui::widgets::input::InputOpts;
 
     async fn assistant() -> Assistant {
         AssistantPool::from_config(
@@ -255,33 +256,37 @@ mod tests {
         .unwrap()
     }
 
-    // async fn tab(text: &str) -> Tab<'static> {
-    //     let project = Project::new_test().unwrap();
-    //     let (tx, _rx) = channel(1);
-    //     let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
-    //     let aid = AgentId::from("tab-input".to_string());
-    //     let state = AgentState {
-    //         status: AgentStatus::Idle,
-    //         assistant: assistant().await,
-    //         topology: AgentTopology::default(),
-    //         context: AgentContext::default(),
-    //     };
-    //     let mut tab = Tab::new(
-    //         tx,
-    //         aid,
-    //         AgentHandle {
-    //             tx: agent_tx,
-    //             state,
-    //             abort: AbortHandle::new_pair().0,
-    //         },
-    //         &project,
-    //     )
-    //     .await
-    //     .unwrap();
-    //     tab.input.0 = Input::new(text, CompletionSource::prefixed_word('@', vec![]), 5);
-    //     tab.input.0.textarea.move_cursor(CursorMove::End);
-    //     tab
-    // }
+    async fn tab() -> Tab<'static> {
+        let project = Project::new_test().unwrap();
+        let (tx, _rx) = channel(1);
+        let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
+        let aid = AgentId::from("tab-input".to_string());
+        let state = AgentState {
+            status: AgentStatus::Idle,
+            assistant: assistant().await,
+            topology: AgentTopology::default(),
+            context: AgentContext::default(),
+        };
+        let mut tab = Tab::new(
+            tx,
+            aid,
+            AgentHandle {
+                tx: agent_tx,
+                state,
+                abort: AbortHandle::new_pair().0,
+            },
+            &project,
+        )
+        .await
+        .unwrap();
+        tab.input.0 = crate::tui::widgets::input::Input::new(InputOpts {
+            source: file_completion_items(vec!["@src/main.rs".into()]),
+            height: 5,
+            clear_on_unfocus: false,
+            only_leading: false,
+        });
+        tab
+    }
 
     fn commit_file(
         repo: &Repository,
@@ -305,17 +310,20 @@ mod tests {
             .unwrap();
     }
 
-    // #[tokio::test]
-    // async fn completion_accept_replaces_active_word_with_at_path() {
-    //     let mut tab = tab("open @sr").await;
-    //     tab.user_input
-    //         .0
-    //         .set_completion_items(file_completion_items(vec!["src/main.rs".into()]));
-    //
-    //     tab.completion_next();
-    //
-    //     assert_eq!(tab.user_input.0.textarea.lines(), ["open @src/main.rs"]);
-    // }
+    #[tokio::test]
+    async fn completion_accept_replaces_active_word_with_at_path() {
+        let mut tab = tab().await;
+        tab.insert_mode(true);
+        for ch in "open @sr".chars() {
+            tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                .await
+                .unwrap();
+        }
+
+        tab.input.0.completion_next();
+
+        assert_eq!(tab.input.0.textarea.lines(), ["open @src/main.rs"]);
+    }
 
     #[tokio::test]
     async fn refresh_reads_tracked_files() {

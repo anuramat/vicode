@@ -132,89 +132,50 @@ impl<'a> Input<'a> {
 
 #[cfg(test)]
 mod tests {
-    // use similar_asserts::assert_eq;
-    // use tui_textarea::CursorMove;
-    //
-    // use super::*;
+    use similar_asserts::assert_eq;
+    use tui_textarea::CursorMove;
 
-    // #[test]
-    // fn leading_word_only_matches_at_column_zero() {
-    //     let mut input = Input::new(
-    //         "compact foo",
-    //         CompletionSource::leading_word(vec![CompletionItem::plain("compact".into())]),
-    //         5,
-    //     );
-    //     input.textarea.move_cursor(CursorMove::End);
-    //     input.handle_completion();
-    //     assert_eq!(input.completion_matches().len(), 0);
-    // }
+    use super::*;
 
-    // #[test]
-    // fn prefixed_word_matches_without_prefix_in_entries() {
-    //     let mut input = Input::new(
-    //         "open @sr",
-    //         CompletionSource::prefixed_word(
-    //             '@',
-    //             vec![CompletionItem {
-    //                 match_text: "src/main.rs".into(),
-    //                 insert_text: "@src/main.rs".into(),
-    //                 rendered: ListItem::new("src/main.rs"),
-    //             }],
-    //         ),
-    //         5,
-    //     );
-    //     input.textarea.move_cursor(CursorMove::End);
-    //     input.handle_completion();
-    //
-    //     assert_eq!(
-    //         input
-    //             .completion_matches()
-    //             .iter()
-    //             .map(|item| item.match_text.clone())
-    //             .collect::<Vec<_>>(),
-    //         vec!["src/main.rs".to_string()]
-    //     );
-    // }
-    //
-    // #[test]
-    // fn cancel_restores_typed_prefix() {
-    //     let mut input = Input::new(
-    //         "open @sr",
-    //         CompletionSource::prefixed_word(
-    //             '@',
-    //             vec![CompletionItem {
-    //                 match_text: "src/main.rs".into(),
-    //                 insert_text: "@src/main.rs".into(),
-    //                 rendered: ListItem::new("src/main.rs"),
-    //             }],
-    //         ),
-    //         5,
-    //     );
-    //     input.textarea.move_cursor(CursorMove::End);
-    //     input.handle_completion();
-    //     input.completion_next();
-    //     input.completion_cancel();
-    //
-    //     assert_eq!(input.textarea.lines(), ["open @sr"]);
-    // }
-    //
-    // #[test]
-    // fn updating_source_items_refreshes_active_matches() {
-    //     let mut input = Input::new("open @sr", CompletionSource::prefixed_word('@', vec![]), 5);
-    //     input.textarea.move_cursor(CursorMove::End);
-    //     input.set_completion_items(vec![CompletionItem {
-    //         match_text: "src/main.rs".into(),
-    //         insert_text: "@src/main.rs".into(),
-    //         rendered: ListItem::new("src/main.rs"),
-    //     }]);
-    //
-    //     assert_eq!(
-    //         input
-    //             .completion_matches()
-    //             .iter()
-    //             .map(|item| item.match_text.clone())
-    //             .collect::<Vec<_>>(),
-    //         vec!["src/main.rs".to_string()]
-    //     );
-    // }
+    fn input(
+        text: &str,
+        source: Vec<CompletionItem<'static>>,
+        only_leading: bool,
+    ) -> Input<'static> {
+        let mut input = Input::new(InputOpts {
+            source,
+            height: 5,
+            clear_on_unfocus: false,
+            only_leading,
+        });
+        input.textarea.insert_str(text);
+        input.textarea.move_cursor(CursorMove::End);
+        input.completion_update();
+        input
+    }
+
+    #[test]
+    fn leading_word_only_matches_at_column_zero() {
+        let input = input(
+            "compact foo",
+            vec![CompletionItem::new("compact".into())],
+            true,
+        );
+
+        assert_eq!(input.completion.items().len(), 0);
+    }
+
+    #[test]
+    fn cancel_restores_typed_prefix() {
+        let mut input = input(
+            "open @sr",
+            vec![CompletionItem::new("@src/main.rs".into())],
+            false,
+        );
+
+        input.completion_next();
+        input.completion_cancel();
+
+        assert_eq!(input.textarea.lines(), ["open @sr"]);
+    }
 }

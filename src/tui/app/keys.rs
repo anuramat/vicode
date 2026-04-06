@@ -217,10 +217,11 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyModifiers;
     use futures::future::AbortHandle;
     use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
-    use tui_textarea::CursorMove;
 
     use super::*;
     use crate::agent::AgentContext;
@@ -236,7 +237,7 @@ mod tests {
     use crate::tui::tab::Tab;
     use crate::tui::tab::TabEntry;
     use crate::tui::widgets::input::CompletionItem;
-    use crate::tui::widgets::input::Input;
+    use crate::tui::widgets::input::InputOpts;
 
     async fn assistant() -> Assistant {
         AssistantPool::from_config(
@@ -273,55 +274,61 @@ mod tests {
         .unwrap()
     }
 
-    // #[tokio::test]
-    // async fn completion_commands_target_tab_in_insert_mode() {
-    //     let project = crate::project::Project::new_test().unwrap();
-    //     let mut app = App::new(project.clone()).await.unwrap();
-    //     let (tx, _rx) = channel(1);
-    //     let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
-    //     let aid = AgentId::from("tab".to_string());
-    //     let state = AgentState {
-    //         status: AgentStatus::Idle,
-    //         assistant: assistant().await,
-    //         topology: AgentTopology::default(),
-    //         context: AgentContext::default(),
-    //     };
-    //     let mut tab = Tab::new(
-    //         tx,
-    //         aid.clone(),
-    //         AgentHandle {
-    //             tx: agent_tx,
-    //             state,
-    //             abort: AbortHandle::new_pair().0,
-    //         },
-    //         &project,
-    //     )
-    //     .await
-    //     .unwrap();
-    //     tab.input.0 = Input::new("open @sr", CompletionSource::prefixed_word('@', vec![]), 5);
-    //     tab.input.0.textarea.move_cursor(CursorMove::End);
-    //     tab.input.0.set_completion_items(vec![CompletionItem {
-    //         match_text: "src/main.rs".into(),
-    //         insert_text: "@src/main.rs".into(),
-    //         rendered: ratatui::widgets::ListItem::new("src/main.rs"),
-    //     }]);
-    //     tab.insert_mode(true);
-    //
-    //     app.tabs.insert(aid, TabEntry::Ready(tab));
-    //     app.rebuild_tablist();
-    //     app.select_tab(Some(0));
-    //
-    //     Command {
-    //         name: CommandName::CompletionNext,
-    //         args: None,
-    //     }
-    //     .execute(&mut app)
-    //     .await
-    //     .unwrap();
-    //
-    //     assert_eq!(
-    //         app.selected_tab().unwrap().input.0.textarea.lines(),
-    //         ["open @src/main.rs"]
-    //     );
-    // }
+    #[tokio::test]
+    async fn completion_commands_target_tab_in_insert_mode() {
+        let project = crate::project::Project::new_test().unwrap();
+        let mut app = App::new(project.clone()).await.unwrap();
+        let (tx, _rx) = channel(1);
+        let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
+        let aid = AgentId::from("tab".to_string());
+        let state = AgentState {
+            status: AgentStatus::Idle,
+            assistant: assistant().await,
+            topology: AgentTopology::default(),
+            context: AgentContext::default(),
+        };
+        let mut tab = Tab::new(
+            tx,
+            aid.clone(),
+            AgentHandle {
+                tx: agent_tx,
+                state,
+                abort: AbortHandle::new_pair().0,
+            },
+            &project,
+        )
+        .await
+        .unwrap();
+        tab.input.0 = Input::new(InputOpts {
+            source: vec![CompletionItem::new("@src/main.rs".into())],
+            height: 5,
+            clear_on_unfocus: false,
+            only_leading: false,
+        });
+        tab.insert_mode(true);
+
+        app.tabs.insert(aid, TabEntry::Ready(tab));
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+        for ch in "open @sr".chars() {
+            app.selected_tab_mut()
+                .unwrap()
+                .key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                .await
+                .unwrap();
+        }
+
+        Command {
+            name: CommandName::CompletionNext,
+            args: None,
+        }
+        .execute(&mut app)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.selected_tab().unwrap().input.0.textarea.lines(),
+            ["open @src/main.rs"]
+        );
+    }
 }
