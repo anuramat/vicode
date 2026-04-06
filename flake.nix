@@ -87,6 +87,16 @@
             cargo-expand
             cargo-flamegraph
           ];
+
+          commonArgs = {
+            inherit nativeBuildInputs;
+            src = pkgs.lib.cleanSource ./.;
+            strictDeps = true;
+            # TEST if these work on darwin
+            CARGO_BUILD_TARGET = target;
+            CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+          };
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
         {
           devShells.default =
@@ -97,8 +107,26 @@
               inherit shellHook;
               packages = devTools ++ nativeBuildInputs ++ (binDeps pkgs);
             };
-          pre-commit.settings.hooks = {
-            treefmt.enable = true;
+          pre-commit = {
+            check.enable = false;
+            settings.hooks = {
+              treefmt.enable = true;
+              cargo-fix = {
+                enable = true;
+                entry =
+                  let
+                    cargo-fix = pkgs.writeShellApplication {
+                      name = "cargo-fix";
+                      text = ''
+                        cargo fix "$@" --allow-dirty --allow-staged
+                      '';
+                    };
+                  in
+                  lib.getExe cargo-fix;
+                pass_filenames = false;
+                files = "\\.rs$";
+              };
+            };
           };
           treefmt = {
             programs = {
@@ -112,19 +140,19 @@
           };
           packages =
             let
-              unwrapped = craneLib.buildPackage {
-                pname = "${pname}-unwrapped";
-                inherit meta nativeBuildInputs;
-                src = pkgs.lib.cleanSource ./.;
-                strictDeps = true;
-                # TEST if these work on darwin
-                CARGO_BUILD_TARGET = target;
-                CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
-              };
+              unwrapped = craneLib.buildPackage (
+                commonArgs
+                // {
+                  inherit cargoArtifacts;
+                  pname = "${pname}-unwrapped";
+                  inherit meta;
+                }
+              );
               wrapped = pkgs.symlinkJoin {
                 inherit pname meta;
                 inherit (unwrapped) version;
                 paths = [ unwrapped ];
+                strictDeps = true;
                 nativeBuildInputs = [ xcPkgs.buildPackages.makeWrapper ];
                 postBuild =
                   let
