@@ -237,6 +237,7 @@ mod tests {
     use crate::tui::tab::Tab;
     use crate::tui::tab::TabEntry;
     use crate::tui::widgets::input::CompletionItem;
+    use crate::tui::widgets::input::CompletionSource;
     use crate::tui::widgets::input::InputOpts;
 
     async fn assistant() -> Assistant {
@@ -300,10 +301,12 @@ mod tests {
         .await
         .unwrap();
         tab.input.input = Input::new(InputOpts {
-            source: vec![CompletionItem::new("@src/main.rs".into())],
+            source: CompletionSource::Freeform(vec![(
+                '@',
+                vec![CompletionItem::new("@src/main.rs".into())],
+            )]),
             height: 5,
             clear_on_unfocus: false,
-            only_leading: false,
         });
         tab.insert_mode(true);
 

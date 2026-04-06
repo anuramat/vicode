@@ -35,6 +35,7 @@ use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
+use crate::tui::widgets::input::CompletionSource;
 use crate::tui::widgets::input::Input;
 use crate::tui::widgets::input::InputOpts;
 
@@ -112,10 +113,9 @@ impl<'a> Tab<'a> {
             input: MessageInput {
                 title: Default::default(),
                 input: Input::new(InputOpts {
-                    source: Vec::new(),
+                    source: CompletionSource::Freeform(vec![('@', Vec::new())]),
                     height: FILE_COMPLETION_MAX_HEIGHT,
                     clear_on_unfocus: false,
-                    only_leading: false,
                 }),
             },
             info: Default::default(),

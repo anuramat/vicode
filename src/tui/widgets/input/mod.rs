@@ -20,7 +20,7 @@ pub struct Input<'a> {
     focused: bool,
     clear_on_unfocus: bool,
     pub textarea: TextArea<'a>, // TODO make private
-    pub completion: Completion<'a>,
+    pub completion: Completion,
 }
 
 fn new_textarea(content: &str) -> TextArea<'static> {
@@ -29,11 +29,10 @@ fn new_textarea(content: &str) -> TextArea<'static> {
     area
 }
 
-pub struct InputOpts<'a> {
-    pub source: Vec<CompletionItem<'a>>,
+pub struct InputOpts {
+    pub source: CompletionSource,
     pub height: u16,
     pub clear_on_unfocus: bool,
-    pub only_leading: bool,
 }
 
 impl<'a> Input<'a> {
@@ -42,12 +41,11 @@ impl<'a> Input<'a> {
             source,
             height,
             clear_on_unfocus,
-            only_leading,
-        }: InputOpts<'a>
+        }: InputOpts
     ) -> Self {
         Self {
             clear_on_unfocus,
-            completion: Completion::new(height, source, only_leading),
+            completion: Completion::new(height, source),
             textarea: new_textarea(""),
             focused: false,
         }
@@ -139,14 +137,12 @@ mod tests {
 
     fn input(
         text: &str,
-        source: Vec<CompletionItem<'static>>,
-        only_leading: bool,
+        source: CompletionSource,
     ) -> Input<'static> {
         let mut input = Input::new(InputOpts {
             source,
             height: 5,
             clear_on_unfocus: false,
-            only_leading,
         });
         input.textarea.insert_str(text);
         input.textarea.move_cursor(CursorMove::End);
@@ -158,8 +154,7 @@ mod tests {
     fn leading_word_only_matches_at_column_zero() {
         let input = input(
             "compact foo",
-            vec![CompletionItem::new("compact".into())],
-            true,
+            CompletionSource::Command(vec![CompletionItem::new("compact".into())]),
         );
 
         assert_eq!(input.completion.items().len(), 0);
@@ -169,13 +164,28 @@ mod tests {
     fn cancel_restores_typed_prefix() {
         let mut input = input(
             "open @sr",
-            vec![CompletionItem::new("@src/main.rs".into())],
-            false,
+            CompletionSource::Freeform(vec![(
+                '@',
+                vec![CompletionItem::new("@src/main.rs".into())],
+            )]),
         );
 
         input.completion_next();
         input.completion_cancel();
 
         assert_eq!(input.textarea.lines(), ["open @sr"]);
+    }
+
+    #[test]
+    fn freeform_requires_prefix() {
+        let input = input(
+            "open sr",
+            CompletionSource::Freeform(vec![(
+                '@',
+                vec![CompletionItem::new("@src/main.rs".into())],
+            )]),
+        );
+
+        assert_eq!(input.completion.items(), &Vec::<CompletionItem>::new());
     }
 }

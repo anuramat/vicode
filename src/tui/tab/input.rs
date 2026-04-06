@@ -14,8 +14,11 @@ use crate::tui::tab::MessageInput;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
 
-fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem<'static>> {
-    paths.into_iter().map(CompletionItem::new).collect()
+fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem> {
+    paths
+        .into_iter()
+        .map(|x| CompletionItem::new(format!("@{}", x)))
+        .collect()
 }
 
 fn tracked_files(
@@ -61,14 +64,13 @@ impl<'a> Tab<'a> {
     pub async fn refresh_file_completion(
         &mut self,
         project: &Project,
-    ) {
-        match tracked_files(project, &self.aid) {
-            Ok(paths) => self
-                .input
-                .completion
-                .set_source(file_completion_items(paths)),
-            Err(err) => warn!(aid = %self.aid, ?err, "couldn't refresh file completion"),
-        }
+    ) -> Result<()> {
+        let paths = tracked_files(project, &self.aid)?;
+        self.input
+            .completion
+            .source_mut()
+            .set_items('@', file_completion_items(paths))?;
+        Ok(())
     }
 
     // TODO update on completions, ideally make a mut getter or something
@@ -258,10 +260,12 @@ mod tests {
         .await
         .unwrap();
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
-            source: file_completion_items(vec!["@src/main.rs".into()]),
+            source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
+                '@',
+                file_completion_items(vec!["src/main.rs".into()]),
+            )]),
             height: 5,
             clear_on_unfocus: false,
-            only_leading: false,
         });
         tab
     }

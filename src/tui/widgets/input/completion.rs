@@ -1,3 +1,4 @@
+use anyhow::bail;
 use derive_getters::Getters;
 use derive_more::AsRef;
 use derive_more::Deref;
@@ -9,14 +10,11 @@ use nucleo_matcher::pattern::Normalization;
 use super::*;
 
 #[derive(Debug, Clone, Getters)]
-pub struct Completion<'a> {
+pub struct Completion {
     /// possible matches
-    source: Vec<CompletionItem<'a>>,
+    source: CompletionSource,
     /// matches for  the current entry
-    items: Vec<CompletionItem<'a>>,
-
-    /// only complete if we're at the start of the line (as in cmdline)
-    only_leading: bool,
+    items: Vec<CompletionItem>,
 
     matcher: Matcher,
     pub(super) state: ListState,
@@ -24,49 +22,15 @@ pub struct Completion<'a> {
     max_height: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Getters)]
-pub struct CompletionRequest {
-    /// column index of the start of the typed part
-    start: usize,
-    /// the query; if we cancel completion, we reset to this
-    typed: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionSource {
+    /// items always the same, triggered only on the leading word
+    Command(Vec<CompletionItem>),
+    /// matches based on a leading char
+    Freeform(Vec<(char, Vec<CompletionItem>)>),
 }
 
-#[derive(Debug, Clone, Deref, AsRef, Getters)]
-pub struct CompletionItem<'a> {
-    /// value to insert
-    #[deref(forward)]
-    #[as_ref(forward)]
-    value: String,
-    rendered: ListItem<'a>,
-}
-
-impl CompletionItem<'_> {
-    pub fn new(value: String) -> Self {
-        Self {
-            rendered: ListItem::new(value.clone()),
-            value,
-        }
-    }
-}
-
-impl<'a> Completion<'a> {
-    pub fn new(
-        max_height: u16,
-        source: Vec<CompletionItem<'a>>,
-        only_leading: bool,
-    ) -> Self {
-        Self {
-            matcher: Matcher::default(),
-            max_height,
-            items: Vec::new(),
-            active: None,
-            source,
-            state: ListState::default(),
-            only_leading,
-        }
-    }
-
+impl CompletionSource {
     fn request(
         &self,
         line: &str,
@@ -77,36 +41,120 @@ impl<'a> Completion<'a> {
                 .unwrap_or((0, line))
         }
         let (start, typed) = last_word(line);
-        if self.only_leading && start != 0 {
-            return None;
+        match self {
+            Self::Command(_) if start == 0 => Some(CompletionRequest {
+                start,
+                typed: typed.to_string(),
+            }),
+            Self::Freeform(items) => items
+                .iter()
+                .any(|(prefix, _)| typed.starts_with(*prefix))
+                .then(|| CompletionRequest {
+                    start,
+                    typed: typed.to_string(),
+                }),
+            _ => None,
         }
-        CompletionRequest {
-            start,
-            typed: typed.to_string(),
+    }
+
+    fn items(
+        &self,
+        typed: &str,
+    ) -> Vec<CompletionItem> {
+        match self {
+            Self::Command(items) => items.clone(),
+            Self::Freeform(groups) => typed
+                .chars()
+                .next()
+                .and_then(|prefix| groups.iter().find(|(x, _)| *x == prefix))
+                .map(|(_, items)| items.clone())
+                .unwrap_or_default(),
         }
-        .into()
+    }
+
+    pub fn set_items(
+        &mut self,
+        prefix: char,
+        items: Vec<CompletionItem>,
+    ) -> Result<()> {
+        match self {
+            Self::Freeform(groups) => {
+                if let Some((_, current)) = groups.iter_mut().find(|(x, _)| *x == prefix) {
+                    *current = items;
+                } else {
+                    groups.push((prefix, items));
+                }
+            }
+            _ => {
+                bail!("can only set items for freeform completion sources");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Getters)]
+pub struct CompletionRequest {
+    /// column index of the start of the typed part
+    start: usize,
+    /// the query; if we cancel completion, we reset to this
+    typed: String,
+}
+
+#[derive(Debug, Clone, Deref, AsRef, Getters, PartialEq, Eq)]
+pub struct CompletionItem {
+    /// value to insert
+    #[deref(forward)]
+    #[as_ref(forward)]
+    value: String,
+    rendered: ListItem<'static>,
+}
+
+impl CompletionItem {
+    pub fn new(value: String) -> Self {
+        Self {
+            rendered: ListItem::new(value.clone()),
+            value,
+        }
+    }
+}
+
+impl Completion {
+    pub fn new(
+        max_height: u16,
+        source: CompletionSource,
+    ) -> Self {
+        Self {
+            matcher: Matcher::default(),
+            max_height,
+            items: Vec::new(),
+            active: None,
+            source,
+            state: ListState::default(),
+        }
+    }
+
+    pub fn source_mut(&mut self) -> &mut CompletionSource {
+        &mut self.source
     }
 
     fn init(&mut self) {
-        if self.active.as_ref().is_some_and(|x| x.typed.is_empty()) && self.items.is_empty() {
-            self.items = self.source.clone();
+        if self.items.is_empty() {
+            self.items = self.source.items(
+                self.active
+                    .as_ref()
+                    .map(|active| active.typed.as_str())
+                    .unwrap_or_default(),
+            );
             self.state.select(None);
         }
-    }
-
-    pub fn set_source(
-        &mut self,
-        source: Vec<CompletionItem<'a>>,
-    ) {
-        self.source = source;
-        self.active = None;
     }
 
     // PERF use nucleo crate instead, .match_list is explicitly slow
     fn match_items(
         &mut self,
         query: &str,
-    ) -> Vec<CompletionItem<'a>> {
+    ) -> Vec<CompletionItem> {
         Atom::new(
             query,
             CaseMatching::Smart,
@@ -114,7 +162,7 @@ impl<'a> Completion<'a> {
             AtomKind::Fuzzy,
             false,
         )
-        .match_list(&self.source, &mut self.matcher)
+        .match_list(&self.source.items(query), &mut self.matcher)
         .into_iter()
         .map(|(item, _)| item.clone())
         .collect()
@@ -139,7 +187,7 @@ impl<'a> Completion<'a> {
 impl<'a> Input<'a> {
     pub(super) fn completion_update(&mut self) {
         let line = self.line_until_cursor();
-        let request = self.completion.request(&line);
+        let request = self.completion.source.request(&line);
         self.completion.handle(request);
     }
 

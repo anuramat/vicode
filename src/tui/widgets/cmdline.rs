@@ -8,6 +8,7 @@ use strum::IntoEnumIterator;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::widgets::input::CompletionItem;
+use crate::tui::widgets::input::CompletionSource;
 use crate::tui::widgets::input::Input;
 use crate::tui::widgets::input::InputOpts;
 
@@ -20,14 +21,14 @@ pub struct Cmdline<'a> {
 
 impl<'a> Cmdline<'a> {
     pub fn new() -> Self {
-        let source = CommandName::iter()
-            .map(|c| CompletionItem::new(c.to_string()))
-            .collect();
         let input = Input::new(InputOpts {
-            source,
+            source: CompletionSource::Command(
+                CommandName::iter()
+                    .map(|c| CompletionItem::new(c.to_string()))
+                    .collect(),
+            ),
             height: MAX_COMPLETION_HEIGHT,
             clear_on_unfocus: true,
-            only_leading: true,
         });
         Self { input }
     }

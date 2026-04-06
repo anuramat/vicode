@@ -7,6 +7,7 @@ use ratatui::widgets::Wrap;
 use crate::tui::widgets::container::element::*;
 use crate::tui::widgets::syntax::HIGHLIGHTER;
 
+// TODO try to make markdown static
 self_cell::self_cell!(
     pub struct MarkdownWidgetCell {
         owner: String,
