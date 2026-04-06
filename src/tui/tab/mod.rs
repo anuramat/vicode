@@ -31,6 +31,7 @@ use crate::agent::id::AgentId;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::handle::AppEvent;
+use crate::tui::colors::BORDER_COLOR;
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -146,6 +147,7 @@ impl<'a> Tab<'a> {
 
         let block = Block::new()
             .borders(Borders::LEFT | Borders::RIGHT)
+            .style(Style::default().fg(BORDER_COLOR))
             .border_type(BorderType::Plain);
         block.render_ref(body, buf);
         let body = block.inner(body);
