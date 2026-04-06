@@ -140,16 +140,12 @@ impl<'a> Tab<'a> {
         };
         self.info.render(info_area, buf);
 
-        // let block = Block::new()
-        //     .borders(Borders::LEFT | Borders::RIGHT)
-        //     .style(Style::default().fg(BORDER_COLOR))
-        //     .border_type(BorderType::Plain);
-        // block.render_ref(body, buf);
-        // let body = block.inner(body);
-        let body = body.inner(ratatui::layout::Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
+        let body = Rect {
+            x: body.x + 1,
+            height: body.height.saturating_sub(1),
+            width: body.width.saturating_sub(2),
+            ..body
+        };
 
         let input_height = if self.input.visible() {
             INPUT_AREA_HEIGHT + 1
@@ -219,6 +215,9 @@ impl<'a> MessageInput<'a> {
         area: Rect,
         buf: &mut Buffer,
     ) {
+        if !self.visible() {
+            return;
+        }
         let (symbol, color) = if self.focused() {
             (THICK_HORIZONTAL, INPUT_ACTIVE_COLOR)
         } else {

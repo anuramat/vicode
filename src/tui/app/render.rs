@@ -1,11 +1,16 @@
 use anyhow::Result;
 use ratatui::prelude::*;
 use ratatui::text::Line;
+use ratatui::widgets::Clear;
 
 use crate::tui::app::App;
-use crate::tui::colors::DIM_TEXT_COLOR;
-use crate::tui::colors::NORMAL_TEXT_COLOR;
+use crate::tui::app::NotificationKind::Error;
+use crate::tui::app::NotificationKind::Info;
 use crate::tui::colors::PANE_BG_COLOR;
+use crate::tui::colors::STL_BG;
+use crate::tui::colors::STL_DIM_FG;
+use crate::tui::colors::STL_ERROR_BG;
+use crate::tui::colors::STL_FG;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const TABLIST_WIDTH: u16 = 24;
@@ -60,6 +65,7 @@ impl<'a> App<'a> {
             if self.cmdline.input.focused() {
                 self.cmdline.render(line_area, frame.buffer_mut());
             } else {
+                frame.render_widget(&Clear, line_area);
                 let stl = self.status_line(line_area.width);
                 frame.render_widget(&stl, line_area);
             }
@@ -72,48 +78,54 @@ impl<'a> App<'a> {
         &'a self,
         width: u16,
     ) -> Line<'a> {
-        if let Some(msg) = self.notification.as_ref() {
-            return Line::raw(&msg.msg);
-        }
-
         let mut line = Line::raw("");
-        line.push_span(Span::styled(
-            &self.project_name,
-            Style::new().fg(DIM_TEXT_COLOR),
-        ));
-        let Ok(tab) = self.selected_tab() else {
-            return line;
-        };
-        line.push_span(Span::styled("/", Style::new().fg(DIM_TEXT_COLOR)));
-        line.push_span(Span::styled(
-            tab.aid.to_string(),
-            Style::new().fg(NORMAL_TEXT_COLOR),
-        ));
+        let mut bg = STL_BG;
 
-        let remaining: usize = (width as usize).saturating_sub(line.width());
-
-        let tokens = {
-            let window = if let Some(window) = tab.agent.state.assistant.config.window {
-                format!(" / {:.1}", window as f64 / 1000.0)
-            } else {
-                "".to_string()
+        if let Some(msg) = self.notification.as_ref() {
+            bg = match msg.kind {
+                Info => STL_BG,
+                Error => STL_ERROR_BG,
             };
-            format!(
-                "{:.1}{} kT",
-                tab.agent.state.context.history.total_tokens() as f64 / 1000.0,
-                window
-            )
-        };
-        // TODO prettier status
-        let right_part = format!(
-            "{} | {:?} | {}",
-            tokens, tab.agent.state.status, tab.agent.state.assistant.id
-        );
-        if right_part.len() + 3 < remaining {
-            let spacing: usize = remaining - right_part.len();
-            line.push_span(" ".repeat(spacing));
-            line.push_span(right_part);
+            line.push_span(Span::styled(&msg.msg, Style::new().fg(STL_FG)));
+        } else {
+            if let Ok(tab) = self.selected_tab() {
+                line.push_span(Span::styled(
+                    format!("{}/", &self.project_name),
+                    Style::new().fg(STL_DIM_FG),
+                ));
+                line.push_span(Span::styled(tab.aid.to_string(), Style::new().fg(STL_FG)));
+            } else {
+                line.push_span(Span::styled(&self.project_name, Style::new().fg(STL_FG)));
+            }
         }
-        line
+
+        if let Ok(tab) = self.selected_tab() {
+            let remaining_width: usize = (width as usize).saturating_sub(line.width());
+
+            let tokens = {
+                let window = if let Some(window) = tab.agent.state.assistant.config.window {
+                    format!(" / {:.1}", window as f64 / 1000.0)
+                } else {
+                    "".to_string()
+                };
+                format!(
+                    "{:.1}{} kT",
+                    tab.agent.state.context.history.total_tokens() as f64 / 1000.0,
+                    window
+                )
+            };
+
+            let right_part = format!(
+                "{} | {} | {}",
+                tokens, tab.agent.state.status, tab.agent.state.assistant.id
+            );
+            // TODO +3 move to a const
+            if right_part.len() + 3 < remaining_width {
+                let spacing: usize = remaining_width - right_part.len();
+                line.push_span(" ".repeat(spacing));
+                line.push_span(Span::styled(right_part, Style::new().fg(STL_FG)));
+            }
+        }
+        line.bg(bg)
     }
 }

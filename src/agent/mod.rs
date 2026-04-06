@@ -10,6 +10,7 @@ pub mod tool;
 pub mod turn;
 
 use anyhow::Result;
+use derive_more::Display;
 use futures::future::AbortHandle;
 pub use id::*;
 use serde::Deserialize;
@@ -69,13 +70,17 @@ pub struct AgentState {
     pub context: AgentContext,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq, Display)]
 pub enum AgentStatus {
-    Compacting,
-    InProgress,
     #[default]
-    Idle, // TODO maybe rename this, since Error is also idle
+    #[display("idle")]
+    Idle,
+    #[display("in progress")]
+    InProgress,
+    #[display("error: {_0}")]
     Error(String),
+    #[display("compacting")]
+    Compacting,
 }
 
 impl AgentStatus {
