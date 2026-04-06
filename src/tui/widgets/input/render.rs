@@ -34,7 +34,8 @@ impl<'a> Input<'a> {
                 y: area.y.saturating_sub(height) + row as u16,
                 width,
                 height,
-            };
+            }
+            .intersection(buf.area);
             // TODO make the color stand out, maybe lighter bg?
             Clear.render(completion_area, buf);
             StatefulWidget::render(

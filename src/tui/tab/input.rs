@@ -2,10 +2,6 @@ use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use git2::Repository;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Padding;
 use tracing::warn;
 
 use crate::agent::handle::ExternalEvent;
@@ -14,25 +10,9 @@ use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
+use crate::tui::tab::MessageInput;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
-
-fn block() -> Block<'static> {
-    Block::new().borders(Borders::TOP).padding(Padding {
-        left: 1,
-        right: 1,
-        top: 0,
-        bottom: 0,
-    })
-}
-
-fn thick() -> Block<'static> {
-    block().border_type(BorderType::Thick)
-}
-
-fn thin() -> Block<'static> {
-    block().border_type(BorderType::Plain)
-}
 
 fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem<'static>> {
     paths.into_iter().map(CompletionItem::new).collect()
@@ -75,7 +55,7 @@ impl<'a> Tab<'a> {
         active: bool,
     ) {
         self.input.set_focus(active);
-        self.update_input_border();
+        self.update_input_title();
     }
 
     pub async fn refresh_file_completion(
@@ -92,21 +72,19 @@ impl<'a> Tab<'a> {
     }
 
     // TODO update on completions, ideally make a mut getter or something
-    pub fn update_input_border(&mut self) {
-        let block = if self.input.focused() {
-            thick()
-        } else {
-            thin()
+    pub fn update_input_title(&mut self) {
+        let title = {
+            let tokens = self.input.count_tokens();
+            if self.multiplier > 1 {
+                format!(" x{} | {} T ", self.multiplier, tokens)
+            } else {
+                format!(" {} T ", tokens)
+            }
         };
-        let tokens = self.input.count_tokens();
-
-        let title = if self.multiplier > 1 {
-            format!(" x{} | {} T ", self.multiplier, tokens)
-        } else {
-            format!(" {} T ", tokens)
-        };
-
-        self.input.0.textarea.set_block(block.title(title));
+        self.input = MessageInput {
+            title,
+            ..self.input.clone()
+        }
     }
 
     pub async fn submit(&mut self) -> Result<()> {
@@ -184,8 +162,8 @@ impl<'a> Tab<'a> {
         &mut self,
         input: KeyEvent,
     ) -> Result<()> {
-        self.input.0.handle(input);
-        self.update_input_border();
+        self.input.handle(input);
+        self.update_input_title();
         Ok(())
     }
 
@@ -194,8 +172,8 @@ impl<'a> Tab<'a> {
         content: &str,
     ) {
         // TODO instead of putting it in the input area, show "pasted: <contents>" block above input area or something
-        self.input.0.textarea.insert_str(content);
-        self.update_input_border();
+        self.input.textarea.insert_str(content);
+        self.update_input_title();
     }
 }
 
@@ -279,7 +257,7 @@ mod tests {
         )
         .await
         .unwrap();
-        tab.input.0 = crate::tui::widgets::input::Input::new(InputOpts {
+        tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: file_completion_items(vec!["@src/main.rs".into()]),
             height: 5,
             clear_on_unfocus: false,
@@ -320,9 +298,9 @@ mod tests {
                 .unwrap();
         }
 
-        tab.input.0.completion_next();
+        tab.input.completion_next();
 
-        assert_eq!(tab.input.0.textarea.lines(), ["open @src/main.rs"]);
+        assert_eq!(tab.input.textarea.lines(), ["open @src/main.rs"]);
     }
 
     #[tokio::test]

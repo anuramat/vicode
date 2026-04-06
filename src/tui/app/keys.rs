@@ -29,7 +29,7 @@ impl<'a> Tab<'a> {
             .unwrap_or(1);
         anyhow::ensure!(value > 0, "multiplier must be positive");
         self.multiplier = value as usize;
-        self.update_input_border();
+        self.update_input_title();
         Ok(())
     }
 }
@@ -143,7 +143,7 @@ impl<'a> App<'a> {
         if self.cmdline.input.get_mut().is_ok() {
             self.cmdline.input.get_mut()
         } else {
-            self.selected_tab_mut()?.input.0.get_mut()
+            self.selected_tab_mut()?.input.get_mut()
         }
     }
 }
@@ -299,7 +299,7 @@ mod tests {
         )
         .await
         .unwrap();
-        tab.input.0 = Input::new(InputOpts {
+        tab.input.input = Input::new(InputOpts {
             source: vec![CompletionItem::new("@src/main.rs".into())],
             height: 5,
             clear_on_unfocus: false,
@@ -327,7 +327,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            app.selected_tab().unwrap().input.0.textarea.lines(),
+            app.selected_tab().unwrap().input.textarea.lines(),
             ["open @src/main.rs"]
         );
     }

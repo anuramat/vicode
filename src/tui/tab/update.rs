@@ -40,8 +40,8 @@ impl Tab<'_> {
             .expect("history desync");
         // XXX proper handling -- resync and show error notification
         if let Some(input) = input {
-            self.input.0.prepend_text(input);
-            self.update_input_border();
+            self.input.prepend_text(input);
+            self.update_input_title();
         }
         // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
         self.scroll
@@ -93,19 +93,9 @@ impl Tab<'_> {
 
 #[cfg(test)]
 mod tests {
-    use futures::future::AbortHandle;
     use git2::Repository;
     use similar_asserts::assert_eq;
-    use tokio::sync::mpsc::channel;
 
-    use super::*;
-    use crate::agent::AgentContext;
-    use crate::agent::AgentHandle;
-    use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::agent::AgentTopology;
-    use crate::agent::handle::AgentEvent;
-    use crate::agent::id::AgentId;
     use crate::config::Config;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;

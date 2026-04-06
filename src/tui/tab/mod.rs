@@ -7,7 +7,6 @@ use std::fmt::Debug;
 use anyhow::Result;
 use derive_more::Deref;
 use derive_more::DerefMut;
-use derive_more::From;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
@@ -15,6 +14,10 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
+use ratatui::symbols::line::HORIZONTAL;
+use ratatui::symbols::line::THICK_HORIZONTAL;
+use ratatui::symbols::line::VERTICAL_LEFT;
+use ratatui::symbols::line::VERTICAL_RIGHT;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Borders;
@@ -106,13 +109,15 @@ impl<'a> Tab<'a> {
             aid,
             agent,
             scroll: Default::default(),
-            input: Input::new(InputOpts {
-                source: Vec::new(),
-                height: FILE_COMPLETION_MAX_HEIGHT,
-                clear_on_unfocus: false,
-                only_leading: false,
-            })
-            .into(),
+            input: MessageInput {
+                title: Default::default(),
+                input: Input::new(InputOpts {
+                    source: Vec::new(),
+                    height: FILE_COMPLETION_MAX_HEIGHT,
+                    clear_on_unfocus: false,
+                    only_leading: false,
+                }),
+            },
             info: Default::default(),
             multiplier: 1,
         };
@@ -146,7 +151,7 @@ impl<'a> Tab<'a> {
         let body = block.inner(body);
 
         let input_height = if self.input.visible() {
-            INPUT_AREA_HEIGHT
+            INPUT_AREA_HEIGHT + 1
         } else {
             0
         };
@@ -167,7 +172,7 @@ impl<'a> Tab<'a> {
             buf,
             ctx,
         );
-        self.input.0.render(input_area, buf);
+        self.input.render(input_area, buf);
     }
 
     pub fn label(&self) -> String {
@@ -194,11 +199,50 @@ fn render_loading(
     widget.render(area, buf);
 }
 
-#[derive(Debug, Clone, Deref, DerefMut, From)]
-pub struct MessageInput<'a>(pub Input<'a>);
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct MessageInput<'a> {
+    #[deref]
+    #[deref_mut]
+    pub input: Input<'a>,
+    // border between input and messages
+    pub title: String,
+}
 
 impl<'a> MessageInput<'a> {
     pub fn visible(&self) -> bool {
         self.focused() || !self.empty()
+    }
+
+    pub fn render(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+    ) {
+        if self.focused() {
+            buf.set_string(
+                area.x,
+                area.y,
+                THICK_HORIZONTAL.repeat(area.width.into()),
+                Style::default(),
+            );
+        } else {
+            buf.set_string(
+                area.x,
+                area.y,
+                HORIZONTAL.repeat(area.width.into()),
+                Style::default(),
+            );
+            buf.set_string(area.x - 1, area.y, VERTICAL_RIGHT, Style::default());
+            buf.set_string(area.x + area.width, area.y, VERTICAL_LEFT, Style::default());
+        };
+        buf.set_string(area.x + 1, area.y, &self.title, Style::default());
+        self.input.render(
+            Rect {
+                y: area.y + 1,
+                height: area.height.saturating_sub(1),
+                ..area
+            },
+            buf,
+        );
     }
 }
