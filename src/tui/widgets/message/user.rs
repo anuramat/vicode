@@ -3,10 +3,11 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 
 use crate::llm::message::UserMessage;
+use crate::tui::colors::USER_MESSAGE_COLOR;
 use crate::tui::widgets::container::element::*;
 
 fn style() -> Style {
-    Style::default().fg(Color::Red)
+    Style::default().fg(USER_MESSAGE_COLOR)
 }
 
 impl From<&UserMessage> for Element {

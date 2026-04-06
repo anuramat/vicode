@@ -1,13 +1,16 @@
 use ratatui::prelude::*;
 
+use crate::tui::colors::LOGO_COLOR;
+use crate::tui::colors::LOGO_FILL_COLOR;
+
 pub static LOGO_VARIANTS: std::sync::LazyLock<Logo> = std::sync::LazyLock::new(Logo::new);
 
 fn logo_style() -> Style {
-    Style::default().fg(Color::Red).bold()
+    Style::default().fg(LOGO_COLOR).bold()
 }
 
 fn bg_style() -> Style {
-    Style::default().dark_gray().not_bold()
+    Style::default().fg(LOGO_FILL_COLOR).not_bold()
 }
 
 pub struct LogoVariant {

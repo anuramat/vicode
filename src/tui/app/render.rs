@@ -3,6 +3,7 @@ use ratatui::prelude::*;
 use ratatui::text::Line;
 
 use crate::tui::app::App;
+use crate::tui::colors::DIM_TEXT_COLOR;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const TABLIST_WIDTH: u16 = 24;
@@ -71,11 +72,14 @@ impl<'a> App<'a> {
         }
 
         let mut line = Line::raw("");
-        line.push_span(Span::styled(&self.project_name, Style::new().dark_gray()));
+        line.push_span(Span::styled(
+            &self.project_name,
+            Style::new().fg(DIM_TEXT_COLOR),
+        ));
         let Ok(tab) = self.selected_tab() else {
             return line;
         };
-        line.push_span(Span::styled("/", Style::new().dark_gray()));
+        line.push_span(Span::styled("/", Style::new().fg(DIM_TEXT_COLOR)));
         line.push_span(Span::raw(tab.aid.to_string()));
 
         let remaining: usize = (width as usize).saturating_sub(line.width());

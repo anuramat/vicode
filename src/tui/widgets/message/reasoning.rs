@@ -5,10 +5,11 @@ use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
 use crate::llm::message::ReasoningItem;
+use crate::tui::colors::REASONING_COLOR;
 use crate::tui::widgets::container::element::*;
 
 fn style() -> Style {
-    Style::default().fg(Color::LightBlue)
+    Style::default().fg(REASONING_COLOR)
 }
 
 #[derive(Debug, Clone)]

@@ -7,10 +7,11 @@ use ratatui::widgets::Wrap;
 
 use crate::llm::message::AsMessageText;
 use crate::llm::message::DeveloperMessage;
+use crate::tui::colors::DEVELOPER_MESSAGE_COLOR;
 use crate::tui::widgets::container::element::*;
 
 fn style() -> Style {
-    Style::default().fg(Color::Green)
+    Style::default().fg(DEVELOPER_MESSAGE_COLOR)
 }
 
 #[derive(From, Debug, Clone)]

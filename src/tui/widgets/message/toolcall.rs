@@ -4,10 +4,11 @@ use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 
 use crate::llm::message::ToolCallItem;
+use crate::tui::colors::TOOLCALL_COLOR;
 use crate::tui::widgets::container::element::*;
 
 pub fn style() -> Style {
-    Style::default().fg(Color::LightBlue)
+    Style::default().fg(TOOLCALL_COLOR)
 }
 
 #[derive(From, Debug, Clone)]

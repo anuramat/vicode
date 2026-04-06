@@ -5,6 +5,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::Clear;
 use strum::IntoEnumIterator;
 
+use crate::tui::colors::DIM_TEXT_COLOR;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
 use crate::tui::widgets::input::CompletionItem;
@@ -50,7 +51,7 @@ impl<'a> Cmdline<'a> {
             area.x,
             area.y,
             ":",
-            ratatui::style::Style::default().dark_gray(),
+            ratatui::style::Style::default().fg(DIM_TEXT_COLOR),
         );
         self.input.render(
             Rect {
