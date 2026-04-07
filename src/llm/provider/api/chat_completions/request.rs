@@ -219,7 +219,6 @@ fn tool_call_messages(item: &ToolCallItem) -> Vec<ChatCompletionRequestMessage> 
 
 #[cfg(test)]
 mod tests {
-    use async_openai::types::chat::ChatCompletionRequestMessage;
     use async_openai::types::chat::ChatCompletionResponseMessage;
     use async_openai::types::chat::Role;
     use indexmap::indexmap;
@@ -267,14 +266,29 @@ mod tests {
         });
 
         let messages = messages([message]);
-        assert!(matches!(
-            &messages[0],
-            ChatCompletionRequestMessage::Assistant(_)
-        ));
-        assert!(matches!(
-            &messages[1],
-            ChatCompletionRequestMessage::Tool(_)
-        ));
+        let value = serde_json::to_value(&messages).unwrap();
+        insta::assert_json_snapshot!(value, @r#"
+        [
+          {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"command\":\"echo hello\"}",
+                  "name": "bash"
+                },
+                "id": "call_1",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "content": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "role": "tool",
+            "tool_call_id": "call_1"
+          }
+        ]
+        "#);
     }
 
     #[test]

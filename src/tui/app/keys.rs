@@ -220,6 +220,7 @@ mod tests {
     use crossterm::event::KeyCode;
     use crossterm::event::KeyModifiers;
     use futures::future::AbortHandle;
+    use git2::Repository;
     use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
 
@@ -234,6 +235,7 @@ mod tests {
     use crate::config::Config;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
+    use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::tab::TabEntry;
     use crate::tui::widgets::input::CompletionItem;
@@ -282,6 +284,7 @@ mod tests {
         let (tx, _rx) = channel(1);
         let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
         let aid = AgentId::from("tab".to_string());
+        Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::Idle,
             assistant: assistant().await,

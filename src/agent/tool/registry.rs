@@ -65,9 +65,6 @@ macro_rules! declare_tool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-    use similar_asserts::assert_eq;
-
     use super::*;
 
     #[test]
@@ -81,26 +78,26 @@ mod tests {
             .expect("bash tool not found");
 
         let serialized = serde_json::to_value(bash_schema).unwrap();
-        let expected = json!({
-            "name": "bash",
-            "description": "Execute a bash command in a sandboxed environment.",
-            "parameters": {
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "additionalProperties": false,
-                "properties": {
-                    "command": {
-                        "description": "The bash command to execute.",
-                        "type": "string"
-                    }
-                },
-                "required": [
-                    "command"
-                ],
-                "title": "BashArguments",
-                "type": "object"
+        insta::assert_json_snapshot!(serialized, @r#"
+        {
+          "description": "Execute a bash command in a sandboxed environment.",
+          "name": "bash",
+          "parameters": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "description": "The bash command to execute.",
+                "type": "string"
+              }
             },
-        });
-
-        assert_eq!(serialized, expected);
+            "required": [
+              "command"
+            ],
+            "title": "BashArguments",
+            "type": "object"
+          }
+        }
+        "#);
     }
 }

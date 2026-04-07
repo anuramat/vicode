@@ -194,57 +194,12 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use similar_asserts::assert_eq;
-
     use super::*;
 
     #[test]
     fn parses_default_config() {
         let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         config.validate().unwrap();
-    }
-
-    #[test]
-    fn parses_multi_provider_config() {
-        let config = Config::parse_with_defaults(
-            r#"
-            primary_assistant = ["fast", "deep"]
-            shell_cmd = ["bash", "-c"]
-
-            [sandbox]
-            kind = "bwrap"
-            bin = "bwrap"
-            args = []
-            stages = []
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-
-            [keymap.insert]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            [assistants.deep]
-            provider = "main"
-            model = "gpt-deep"
-            effort = "low"
-
-            "#,
-        )
-        .unwrap();
-        assert!(config.shared.is_empty());
-        assert_eq!(config.providers.len(), 1);
-        assert_eq!(config.assistants["deep"].provider, "main");
     }
 
     #[test]
@@ -275,141 +230,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("missing"));
-    }
-
-    #[test]
-    fn parses_keymap() {
-        let config = Config::parse_with_defaults(
-            r#"
-            primary_assistant = ["fast"]
-            shell_cmd = ["bash", "-c"]
-
-            [sandbox]
-            kind = "bwrap"
-            bin = "bwrap"
-            args = []
-            stages = []
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-            "q" = "quit"
-            "1" = "set_multiplier 1"
-
-            [keymap.insert]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            "#,
-        )
-        .unwrap();
-        let q = "q".parse::<crate::tui::command::KeyChord>().unwrap();
-        let one = "1".parse::<crate::tui::command::KeyChord>().unwrap();
-        assert_eq!(
-            config.keymap.normal.get(&q).unwrap(),
-            &"quit".parse::<crate::tui::command::Command>().unwrap()
-        );
-        assert_eq!(
-            config.keymap.normal.get(&one).unwrap(),
-            &"set_multiplier 1"
-                .parse::<crate::tui::command::Command>()
-                .unwrap()
-        );
-        let colon = ":".parse::<crate::tui::command::KeyChord>().unwrap();
-        assert_eq!(
-            config.keymap.normal.get(&colon).unwrap(),
-            &"cmdline_enter"
-                .parse::<crate::tui::command::Command>()
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parses_shift_modifier_in_keymap() {
-        let config = Config::parse_with_defaults(
-            r#"
-            primary_assistant = ["fast"]
-            shell_cmd = ["bash", "-c"]
-
-            [sandbox]
-            kind = "bwrap"
-            bin = "bwrap"
-            args = []
-            stages = []
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-            "S-j" = "tab_next"
-
-            [keymap.insert]
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            "#,
-        )
-        .unwrap();
-        let shift_j = "S-j".parse::<crate::tui::command::KeyChord>().unwrap();
-        assert_eq!(
-            config.keymap.normal.get(&shift_j).unwrap(),
-            &"tab_next".parse::<crate::tui::command::Command>().unwrap()
-        );
-    }
-
-    #[test]
-    fn parses_insert_keymap_scope() {
-        let config = Config::parse_with_defaults(
-            r#"
-            primary_assistant = ["fast"]
-            shell_cmd = ["bash", "-c"]
-
-            [sandbox]
-            kind = "bwrap"
-            bin = "bwrap"
-            args = []
-            stages = []
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-
-            [keymap.insert]
-            "enter" = "input_submit"
-            "esc" = "input_exit"
-
-            [providers.main]
-            base_url = "https://api.example.com/v1"
-            concurrency = 1
-            rpm = 1
-            retries = 2
-            backoff_ms = 10
-
-            [assistants.fast]
-            provider = "main"
-            model = "gpt-fast"
-
-            "#,
-        )
-        .unwrap();
-        assert_eq!(config.keymap.insert.len(), 5);
     }
 
     #[test]

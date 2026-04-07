@@ -42,29 +42,28 @@ pub struct BashResult {
 #[cfg(test)]
 mod tests {
     use schemars::schema_for;
-    use serde_json::json;
-    use similar_asserts::assert_eq;
 
     use super::*;
 
     #[test]
     fn test_bash_arguments_schema() {
-        let expected_schema = json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "BashArguments",
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The bash command to execute."
-                }
-            },
-            "required": ["command"]
-        });
-
         let generated_schema = schema_for!(BashArguments).to_value();
-
-        assert_eq!(generated_schema, expected_schema);
+        insta::assert_json_snapshot!(generated_schema, @r#"
+        {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "description": "The bash command to execute.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "title": "BashArguments",
+          "type": "object"
+        }
+        "#);
     }
 }

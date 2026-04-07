@@ -241,6 +241,7 @@ mod tests {
         let (tx, _rx) = channel(1);
         let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
         let aid = AgentId::from("tab-input".to_string());
+        Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::Idle,
             assistant: assistant().await,

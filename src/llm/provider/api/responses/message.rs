@@ -107,17 +107,22 @@ mod tests {
 
         let api_call: Vec<async_openai::types::responses::InputItem> = (&call).into();
         let value = serde_json::to_value(&api_call).unwrap();
-
-        let arguments = r#"{"command":"echo hello"}"#;
-        let output = r#"{"stdout":"hello\n","stderr":"","exit_status":null,"signal":null}"#;
-        let expected = serde_json::json!(
-            [
-                {"type":"function_call","id":"id_1","call_id":"call_id_2","name":"bash","arguments":arguments},
-                {"type":"function_call_output","call_id":"call_id_2","output":output}
-            ]
-        );
-
-        assert_eq!(value, expected);
+        insta::assert_json_snapshot!(value, @r#"
+        [
+          {
+            "arguments": "{\"command\":\"echo hello\"}",
+            "call_id": "call_id_2",
+            "id": "id_1",
+            "name": "bash",
+            "type": "function_call"
+          },
+          {
+            "call_id": "call_id_2",
+            "output": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "type": "function_call_output"
+          }
+        ]
+        "#);
     }
 
     #[test]
@@ -144,17 +149,22 @@ mod tests {
 
         let api_call: Vec<async_openai::types::responses::InputItem> = (&call).into();
         let value = serde_json::to_value(&api_call).unwrap();
-
-        let arguments = r#"{"command":"echo hello"}"#;
-        let output = r#"{"error":"oops"}"#;
-        let expected = serde_json::json!(
-            [
-                {"type":"function_call","id":"id_1","call_id":"call_id_2","name":"bash","arguments":arguments},
-                {"type":"function_call_output","call_id":"call_id_2","output":output}
-            ]
-        );
-
-        assert_eq!(value, expected);
+        insta::assert_json_snapshot!(value, @r#"
+        [
+          {
+            "arguments": "{\"command\":\"echo hello\"}",
+            "call_id": "call_id_2",
+            "id": "id_1",
+            "name": "bash",
+            "type": "function_call"
+          },
+          {
+            "call_id": "call_id_2",
+            "output": "{\"error\":\"oops\"}",
+            "type": "function_call_output"
+          }
+        ]
+        "#);
     }
 
     #[test]

@@ -86,6 +86,7 @@
             cargo-edit
             cargo-expand
             cargo-flamegraph
+            cargo-insta
           ];
 
           commonArgs = {
