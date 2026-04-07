@@ -130,6 +130,14 @@
             };
           };
           treefmt = {
+            settings.formatter.tombi = {
+              command = lib.getExe pkgs.tombi;
+              options = [
+                "format"
+                "--"
+              ];
+              includes = [ "*.toml" ];
+            };
             programs = {
               nixfmt.enable = true;
               rustfmt = {
