@@ -42,6 +42,9 @@ clean_git:
 [group('clean')]
 clean: clean_state clean_data clean_git
 
+count-lints:
+    cargo clippy --message-format=json 2>/dev/null | jq -r 'select(.reason=="compiler-message") | .message.code.code // empty' | sed -n 's/^clippy:://p' | sort | uniq -c | sort -rn
+
 test:
     cargo test
 
