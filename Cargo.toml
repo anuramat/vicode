@@ -14,7 +14,7 @@ anyhow = "1.0.100"
 async-openai = { version = "0.33.0", features = [
   "byot",
   "chat-completion",
-  "responses"
+  "responses",
 ] }
 async-trait = "0.1"
 backon = "1.6.0"
@@ -42,7 +42,7 @@ pulldown-cmark = "0.13.0"
 ratatui = { version = "0.29.0", features = [
   "all-widgets",
   "unstable-rendered-line-info",
-  "unstable-widget-ref"
+  "unstable-widget-ref",
 ] }
 reqwest-eventsource = "0.6.0"
 schemars = "1.1.0"
@@ -70,7 +70,7 @@ uuid = { version = "1.18.1", features = ["serde", "v4", "v5"] }
 xdg = "3.0.0"
 
 [dev-dependencies]
-insta = { version = "1.47.1", features = ["yaml", "json"] }
+insta = { version = "1.47.1", features = ["json", "yaml"] }
 similar-asserts = { version = "1.7.0" }
 
 [lints.clippy]
