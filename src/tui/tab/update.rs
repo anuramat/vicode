@@ -68,7 +68,7 @@ impl Tab<'_> {
             return Ok(false);
         }
         self.agent.state.status = status;
-        self.refresh_file_completion(project).await;
+        self.refresh_file_completion(project).await?;
         self.tx
             .send(AppEvent::TabStatusChanged(self.aid.clone()))
             .await?;

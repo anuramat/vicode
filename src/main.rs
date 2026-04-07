@@ -35,20 +35,18 @@ fn init_tracing(project: &Project) -> Result<WorkerGuard> {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    match cli.command {
-        Some(command) => command.run(),
-        None => {
-            let config = Config::load().unwrap();
-            let project = Project::new(config).unwrap();
-            let _guard = init_tracing(&project).unwrap();
-            let result = App::launch(project).await;
-            App::reset_terminal();
-            if let Err(err) = result {
-                eprintln!("{err:?}");
-                eprintln!("{err:#?}");
-                std::process::exit(1);
-            }
-        }
+    if let Some(command) = Cli::parse().command {
+        return command.run();
+    }
+
+    let config = Config::load().unwrap();
+    let project = Project::new(config).unwrap();
+    let _guard = init_tracing(&project).unwrap();
+    let result = App::launch(project).await;
+    App::reset_terminal();
+    if let Err(err) = result {
+        eprintln!("{err:?}");
+        eprintln!("{err:#?}");
+        std::process::exit(1);
     }
 }
