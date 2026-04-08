@@ -1,26 +1,13 @@
 use anyhow::Result;
-use crossterm::event::KeyEvent;
 use tracing::debug;
 use tracing::instrument;
 
 use super::App;
-use crate::agent::handle::ParentEvent as AgentParentEvent;
+use super::AppEvent;
+use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
 use crate::tui::app::NotificationKind;
 use crate::tui::widgets::info::InfoWidget;
-
-#[derive(Debug)]
-pub enum AppEvent {
-    Key(KeyEvent),
-    Paste(String),
-
-    LoadAgent(AgentId),
-    NewAgent(AgentId),
-    ParentEvent(AgentId, AgentParentEvent),
-    TabStatusChanged(AgentId),
-
-    Redraw,
-}
 
 impl App<'_> {
     #[instrument(skip(self))]
@@ -66,10 +53,10 @@ impl App<'_> {
     async fn handle_parent_event(
         &mut self,
         aid: AgentId,
-        event: AgentParentEvent,
+        event: ParentEvent,
     ) -> Result<()> {
         #[allow(clippy::enum_glob_use)]
-        use AgentParentEvent::*;
+        use ParentEvent::*;
 
         match event {
             Started(agent) => {
@@ -109,11 +96,11 @@ mod tests {
 
     #[tokio::test]
     async fn parent_error_creates_notification() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap());
 
         app.handle_parent_event(
             AgentId::from("a".to_string()),
-            AgentParentEvent::Error("oops".into()),
+            ParentEvent::Error("oops".into()),
         )
         .await
         .unwrap();

@@ -1,3 +1,5 @@
+#![allow(clippy::pub_use)]
+
 use std::collections::HashMap;
 
 use anyhow::Context;

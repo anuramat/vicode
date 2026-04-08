@@ -16,15 +16,15 @@ use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
+use crate::tui::app::AppEvent;
 use crate::tui::app::NotificationKind;
-use crate::tui::app::handle::AppEvent;
 use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
 impl App<'_> {
     pub async fn launch(project: Project) -> Result<()> {
-        let mut app = Self::new(project)?;
+        let mut app = Self::new(project);
         let term = app.setup_terminal()?;
         app.run(term).await?;
         Ok(())
@@ -118,7 +118,7 @@ impl App<'_> {
     }
 
     // TODO split into a future with a loop and a function that spawns the task with the future
-    fn spawn_crossterm_translator(&mut self) {
+    fn spawn_crossterm_translator(&self) {
         use tokio_stream::StreamExt;
         let tx = self.tx.clone();
         tokio::spawn(async move {

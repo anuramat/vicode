@@ -1,11 +1,12 @@
 pub mod backend;
 pub mod layout;
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use ambassador::Delegate;
+use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use git2::Repository;
 
 use crate::agent::AgentId;
@@ -55,12 +56,11 @@ impl Project {
             .to_string()
     }
 
-    fn id(root: PathBuf) -> String {
-        let name_prefix = if let Some(name) = root.file_name() {
-            format!("{}_", name.to_string_lossy())
-        } else {
-            String::new()
-        };
+    fn id(root: &Path) -> String {
+        let name_prefix = root
+            .file_name()
+            .map(|name| format!("{}_", name.to_string_lossy()))
+            .unwrap_or_default();
         let uuid = uuid::Uuid::new_v5(
             &uuid::Uuid::NAMESPACE_URL,
             root.to_string_lossy().as_bytes(),
@@ -74,9 +74,9 @@ impl Project {
         let repo = Repository::discover(".")?;
         let root = repo
             .workdir()
-            .ok_or(anyhow!("cannot run inside a bare repository"))?
+            .context("cannot run inside a bare repository")?
             .to_path_buf();
-        let id = Self::id(root.clone());
+        let id = Self::id(&root);
         let data = DIRS.create_data_directory(&id)?;
         Ok(Self {
             layout: Layout { root, id, data },
@@ -103,7 +103,7 @@ impl Project {
         std::fs::create_dir_all(&data)?;
         Ok(Self {
             layout: Layout {
-                id: Self::id(root.clone()),
+                id: Self::id(&root),
                 root,
                 data,
             },

@@ -5,7 +5,7 @@ pub mod run;
 pub mod tabs;
 
 use anyhow::Result;
-pub use handle::AppEvent;
+use crossterm::event::KeyEvent;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
@@ -15,6 +15,7 @@ use tokio::sync::mpsc::channel;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
+use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
@@ -27,6 +28,19 @@ use crate::tui::widgets::tablist::TabList;
 pub enum NotificationKind {
     Info,
     Error,
+}
+
+#[derive(Debug)]
+pub enum AppEvent {
+    Key(KeyEvent),
+    Paste(String),
+
+    LoadAgent(AgentId),
+    NewAgent(AgentId),
+    ParentEvent(AgentId, ParentEvent),
+    TabStatusChanged(AgentId),
+
+    Redraw,
 }
 
 pub struct Notification {
@@ -68,14 +82,14 @@ const CHANNEL_CAPACITY: usize = 100;
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl App<'_> {
-    fn new(project: Project) -> Result<Self> {
+    fn new(project: Project) -> Self {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
 
         let project_name = project.name();
         let ctx = project.config().render;
 
-        Ok(Self {
+        Self {
             project,
             show_tabs: false,
             project_name,
@@ -88,7 +102,7 @@ impl App<'_> {
             tablist: TabList::default(),
             tabs: IndexMap::new(),
             notification: None,
-        })
+        }
     }
 
     pub fn state(&self) -> AppState {

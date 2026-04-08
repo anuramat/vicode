@@ -279,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
         let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone()).unwrap();
+        let mut app = App::new(project.clone());
         let (tx, _rx) = channel(1);
         let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
         let aid = AgentId::from("tab".to_string());

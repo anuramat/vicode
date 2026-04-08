@@ -24,7 +24,7 @@ use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
-use crate::tui::app::handle::AppEvent;
+use crate::tui::app::AppEvent;
 use crate::tui::colors::INPUT_ACTIVE_COLOR;
 use crate::tui::colors::INPUT_INACTIVE_COLOR;
 use crate::tui::osc7::set_osc7;

@@ -40,12 +40,12 @@ impl Api for ChatCompletionsApi {
     async fn stream(
         &self,
         permit: OwnedSemaphorePermit,
-        config: ModelConfig,
+        model: ModelConfig,
         instructions: String,
-        history: Vec<Message>,
+        messages: Vec<Message>,
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream> {
-        let request = request::request(config, instructions, history, tools, true, &self.compat)?;
+        let request = request::request(model, instructions, messages, tools, true, &self.compat)?;
         tracing::debug!(request = %request);
         let started_at_ms = now_ms();
         let inner = self.client.chat().create_stream_byot(request).await?;

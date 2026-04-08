@@ -19,10 +19,10 @@ pub enum DeltaContent {
 impl AssistantMessage {
     fn push_reasoning_summary(
         &mut self,
-        id: String,
+        id: &str,
         delta: String,
     ) -> Option<u64> {
-        let AssistantItem::Reasoning(item) = self.content.get_mut(&id)? else {
+        let AssistantItem::Reasoning(item) = self.content.get_mut(id)? else {
             return None;
         };
         let modified = item.timing.touch();
@@ -32,10 +32,10 @@ impl AssistantMessage {
 
     fn push_reasoning(
         &mut self,
-        id: String,
+        id: &str,
         delta: String,
     ) -> Option<u64> {
-        let AssistantItem::Reasoning(reasoning) = self.content.get_mut(&id)? else {
+        let AssistantItem::Reasoning(reasoning) = self.content.get_mut(id)? else {
             return None;
         };
         if reasoning.content.is_none() {
@@ -49,10 +49,10 @@ impl AssistantMessage {
 
     fn push_output(
         &mut self,
-        id: String,
+        id: &str,
         delta: String,
     ) -> Option<u64> {
-        let AssistantItem::Output(item) = self.content.get_mut(&id)? else {
+        let AssistantItem::Output(item) = self.content.get_mut(id)? else {
             return None;
         };
         item.content
@@ -71,10 +71,10 @@ impl Entries {
             && let Message::Assistant(msg) = &mut entry.message
         {
             match item_delta.delta {
-                DeltaContent::Output(delta) => msg.push_output(item_delta.id, delta),
-                DeltaContent::Reasoning(delta) => msg.push_reasoning(item_delta.id, delta),
+                DeltaContent::Output(delta) => msg.push_output(&item_delta.id, delta),
+                DeltaContent::Reasoning(delta) => msg.push_reasoning(&item_delta.id, delta),
                 DeltaContent::ReasoningSummary(delta) => {
-                    msg.push_reasoning_summary(item_delta.id, delta)
+                    msg.push_reasoning_summary(&item_delta.id, delta)
                 }
             }
         } else {

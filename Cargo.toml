@@ -86,6 +86,11 @@ suspicious = { level = "warn", priority = -1 }
 restriction = { level = "allow", priority = -1 }
 future_not_send = "allow"
 unused_self = "allow"  # TODO maybe disallow later
+renamed_function_params = "warn"
+# pub_use = "warn"
+
+[lints.rust]
+unused_must_use = "forbid"
 
 [patch.crates-io]
 async-openai = { git = "https://github.com/anuramat/async-openai" }

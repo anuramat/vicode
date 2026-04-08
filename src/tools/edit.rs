@@ -135,9 +135,9 @@ fn apply_edits(
 
     for (i, edit) in edits.iter().enumerate() {
         if edit.pattern.is_empty() {
-            result = edit.replacement.clone();
+            result.clone_from(&edit.replacement);
         } else {
-            result = replace(result, &edit.pattern, &edit.replacement, edit.replace_all)
+            result = replace(&result, &edit.pattern, &edit.replacement, edit.replace_all)
                 .with_context(|| format!("failed to apply edit {}/{}", i + 1, edits.len()))?;
         }
     }
@@ -155,7 +155,7 @@ fn read(path: &Path) -> Result<String> {
 }
 
 fn replace(
-    text: String,
+    text: &str,
     pattern: &str,
     replacement: &str,
     replace_all: bool,
@@ -205,10 +205,7 @@ mod tests {
 
     #[test]
     fn replace_all_matches_replaces_every_match() {
-        assert_eq!(
-            replace(String::from("a b a"), "a", "x", true).unwrap(),
-            "x b x"
-        );
+        assert_eq!(replace(&"a b a", "a", "x", true).unwrap(), "x b x");
     }
 
     #[test]

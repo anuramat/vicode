@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::llm::message::AssistantItem;
 use crate::llm::message::AssistantMessage;
 use crate::llm::message::Message;
@@ -19,8 +21,10 @@ pub fn reasoning_to_output(
         };
         if let Some(reasoning_content) = &reasoning_item.content {
             let mut text: String = format!("<{tag}>");
-            reasoning_content.iter().for_each(|x| text.push_str(x));
-            text.push_str(&format!("</{tag}>"));
+            for x in reasoning_content {
+                text.push_str(x);
+            }
+            write!(text, "</{tag}>").expect("failed to write closing tag");
             item.content
                 .push(crate::llm::message::OutputContent::Text(text));
         }

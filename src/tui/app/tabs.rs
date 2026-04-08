@@ -81,9 +81,7 @@ impl<'a> App<'a> {
         &mut self,
         aid: AgentId,
     ) {
-        let idx = self
-            .selected_tab_idx()
-            .map_or(self.tabs.len(), |x| x + 1);
+        let idx = self.selected_tab_idx().map_or(self.tabs.len(), |x| x + 1);
         self.tabs.shift_insert(idx, aid, TabEntry::Loading);
         self.select_tab(Some(idx));
         self.rebuild_tablist();
@@ -269,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap());
 
         app.new_tab().await.unwrap();
 
@@ -281,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap());
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))
