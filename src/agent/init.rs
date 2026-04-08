@@ -53,7 +53,7 @@ impl Agent {
         instructions: String,
     ) -> Result<Self> {
         let state = AgentState::new(&project, id.clone(), commit, instructions).await?;
-        Self::from_state(project, parent, id, state).await
+        Self::from_state(project, parent, id, state)
     }
 
     /// load agent by id from disk
@@ -67,11 +67,11 @@ impl Agent {
         let mut state: AgentState = serde_json::from_str(&serialized)?;
         state.context.history.count_tokens();
 
-        Self::from_state(project, parent, id, state).await
+        Self::from_state(project, parent, id, state)
     }
 
     /// shared logic
-    async fn from_state(
+    fn from_state(
         project: Project,
         parent: ParentHandle,
         id: AgentId,

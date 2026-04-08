@@ -117,7 +117,7 @@ impl<'a> Tab<'a> {
             info: Default::default(),
             multiplier: 1,
         };
-        tab.refresh_file_completion(project).await?;
+        tab.refresh_file_completion(project)?;
         Ok(tab)
     }
 

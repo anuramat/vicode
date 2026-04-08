@@ -36,7 +36,7 @@ impl<'a> App<'a> {
                 self.key(key_event).await?;
             }
             Paste(content) => {
-                self.selected_tab_mut()?.paste(&content).await;
+                self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
             LoadAgent(agent_id) => {
@@ -77,7 +77,7 @@ impl<'a> App<'a> {
                 self.tab_mut_by_aid(&aid)?.replace_history(history);
             }
             HistoryUpdate(loc, event) => {
-                self.tab_mut_by_aid(&aid)?.update(loc, event).await?;
+                self.tab_mut_by_aid(&aid)?.update(loc, event)?;
             }
             Error(msg) => {
                 self.notify(NotificationKind::Error, msg);
@@ -106,9 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn parent_error_creates_notification() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap())
-            .await
-            .unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
 
         app.handle_parent_event(
             AgentId::from("a".to_string()),

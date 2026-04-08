@@ -24,7 +24,7 @@ const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
 impl<'a> App<'a> {
     pub async fn launch(project: Project) -> Result<()> {
-        let mut app = Self::new(project).await?;
+        let mut app = Self::new(project)?;
         let term = app.setup_terminal()?;
         app.run(term).await?;
         Ok(())

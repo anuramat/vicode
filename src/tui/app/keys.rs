@@ -55,7 +55,7 @@ impl<'a> App<'a> {
             if let Some(command) = keymap.insert(event) {
                 command.execute(self).await?;
             } else {
-                self.selected_tab_mut()?.key_insert(event).await?;
+                self.selected_tab_mut()?.key_insert(event)?;
             }
         } else if let Some(command) = keymap.normal(event) {
             command.execute(self).await?;
@@ -177,8 +177,7 @@ impl Command {
             CommandName::InsertEnter => app.selected_tab_mut()?.insert_mode(true),
             CommandName::InsertPaste => {
                 app.selected_tab_mut()?
-                    .paste(&self.args.unwrap_or_default())
-                    .await;
+                    .paste(&self.args.unwrap_or_default());
             }
             CommandName::MsgUndo => app.selected_tab_mut()?.undo(1).await?,
             CommandName::MsgUndoUser => app.selected_tab_mut()?.undo_user().await?,
@@ -280,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
         let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone()).await.unwrap();
+        let mut app = App::new(project.clone()).unwrap();
         let (tx, _rx) = channel(1);
         let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
         let aid = AgentId::from("tab".to_string());
@@ -320,7 +319,6 @@ mod tests {
             app.selected_tab_mut()
                 .unwrap()
                 .key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
-                .await
                 .unwrap();
         }
 

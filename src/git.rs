@@ -31,14 +31,14 @@ pub async fn worktree(
         create_dir_all(parent).await?;
     }
     if checkout {
-        worktree_with_checkout(layout.root(), &name, &worktree_path, commit).await
+        worktree_with_checkout(layout.root(), &name, &worktree_path, commit)
     } else {
-        worktree_no_checkout(layout.root(), &name, &worktree_path, commit).await
+        worktree_no_checkout(layout.root(), &name, &worktree_path, commit)
     }
 }
 
 /// `git worktree add --no-checkout`, but with given worktree name
-async fn worktree_no_checkout(
+fn worktree_no_checkout(
     root: &Path,
     name: &str,
     worktree_path: &Path,
@@ -99,7 +99,7 @@ async fn worktree_no_checkout(
     Ok(())
 }
 
-async fn worktree_with_checkout(
+fn worktree_with_checkout(
     root: &Path,
     name: &str,
     worktree_path: &Path,

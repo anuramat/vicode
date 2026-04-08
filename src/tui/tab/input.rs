@@ -60,7 +60,7 @@ impl<'a> Tab<'a> {
         self.update_input_title();
     }
 
-    pub async fn refresh_file_completion(
+    pub fn refresh_file_completion(
         &mut self,
         project: &Project,
     ) -> Result<()> {
@@ -160,7 +160,7 @@ impl<'a> Tab<'a> {
         self.cycle_assistant(-1).await
     }
 
-    pub async fn key_insert(
+    pub fn key_insert(
         &mut self,
         input: KeyEvent,
     ) -> Result<()> {
@@ -169,7 +169,7 @@ impl<'a> Tab<'a> {
         Ok(())
     }
 
-    pub async fn paste(
+    pub fn paste(
         &mut self,
         content: &str,
     ) {
@@ -299,7 +299,6 @@ mod tests {
         tab.insert_mode(true);
         for ch in "open @sr".chars() {
             tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
-                .await
                 .unwrap();
         }
 

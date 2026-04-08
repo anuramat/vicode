@@ -12,7 +12,7 @@ use crate::llm::message::UserMessage;
 const COMPACT_PROMPT: &str = "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only.";
 
 impl Agent {
-    pub async fn dropped(&self) -> usize {
+    pub fn dropped(&self) -> usize {
         let window = self.state.assistant.config.window.unwrap_or_default();
         self.state
             .context

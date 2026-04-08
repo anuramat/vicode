@@ -231,7 +231,7 @@ impl Agent {
         match event {
             HistoryUpdate::GenerationIncremented => return Ok(()),
             HistoryUpdate::TurnResponse(ResponseEvent::Item(ref item)) => {
-                self.execute_tool_calls(item).await?;
+                self.execute_tool_calls(item)?;
             }
             HistoryUpdate::TurnResponse(ResponseEvent::Failed(msg))
             | HistoryUpdate::CompactResponse(ResponseEvent::Failed(msg)) => {
@@ -278,7 +278,7 @@ impl Agent {
         self.save().await
     }
 
-    pub async fn execute_tool_calls(
+    pub fn execute_tool_calls(
         &mut self,
         item: &AssistantItem,
     ) -> Result<()> {

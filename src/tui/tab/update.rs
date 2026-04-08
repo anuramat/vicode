@@ -22,7 +22,7 @@ impl Tab<'_> {
         set_osc7(&path);
     }
 
-    pub async fn update(
+    pub fn update(
         &mut self,
         generation: HistoryGeneration,
         event: HistoryUpdate,
@@ -68,7 +68,7 @@ impl Tab<'_> {
             return Ok(false);
         }
         self.agent.state.status = status;
-        self.refresh_file_completion(project).await?;
+        self.refresh_file_completion(project)?;
         self.tx
             .send(AppEvent::TabStatusChanged(self.aid.clone()))
             .await?;

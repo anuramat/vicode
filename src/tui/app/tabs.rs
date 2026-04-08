@@ -270,9 +270,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap())
-            .await
-            .unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
 
         app.new_tab().await.unwrap();
 
@@ -284,9 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap())
-            .await
-            .unwrap();
+        let mut app = App::new(crate::project::Project::new_test().unwrap()).unwrap();
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))
