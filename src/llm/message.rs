@@ -34,11 +34,11 @@ impl HistoryEntry {
             meta: MessageMeta::default(),
             message,
         };
-        result.count_tokens();
+        result.recount_tokens();
         result
     }
 
-    pub fn count_tokens(&mut self) {
+    pub fn recount_tokens(&mut self) {
         self.meta.token_count = count_message_tokens(&self.message);
     }
 }

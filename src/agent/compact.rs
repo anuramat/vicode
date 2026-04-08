@@ -160,9 +160,8 @@ mod tests {
             .state
             .context
             .history
-            .push_message(Message::User(UserMessage {
-                text: "short".into(),
-            }));
+            .handle(0, HistoryUpdate::UserMessage("short".into()))
+            .unwrap();
 
         agent.init_compact(0).await.unwrap();
         agent.compact_turn().await.err().unwrap();

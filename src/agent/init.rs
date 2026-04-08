@@ -72,7 +72,7 @@ impl Agent {
         let path = project.agent_state(&id);
         let serialized = tokio::fs::read_to_string(path).await?;
         let mut state: AgentState = serde_json::from_str(&serialized)?;
-        state.context.history.count_tokens();
+        state.context.history.recount_tokens();
 
         Ok(Self::from_state(project, parent, id, state))
     }

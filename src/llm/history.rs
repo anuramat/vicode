@@ -22,7 +22,6 @@ use crate::llm::message::ItemTiming;
 use crate::llm::message::Message;
 use crate::llm::message::MessageMeta;
 use crate::llm::message::UserMessage;
-use crate::llm::tokens::count_message_tokens;
 use crate::llm::tokens::count_text_tokens;
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]
@@ -47,7 +46,7 @@ pub struct Instructions {
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Deref, DerefMut, AsRef, AsMut)]
 pub struct HistoryState {
-    token_count: usize, // cached sum of entries.token_count
+    token_count: usize,
     #[deref]
     #[deref_mut]
     entries: Entries,
@@ -135,15 +134,12 @@ impl<'a> FromIterator<&'a HistoryEntry> for Vec<Message> {
 }
 
 impl HistoryState {
-    const fn apply_delta(
-        &mut self,
-        delta: isize,
-    ) {
-        self.token_count = self.token_count.saturating_add_signed(delta);
+    fn recount_tokens(&mut self) {
+        self.entries.recount_tokens();
+        self.sync_token_count();
     }
 
-    fn recount(&mut self) {
-        self.entries.count_tokens();
+    fn sync_token_count(&mut self) {
         self.token_count = self.entries.total_tokens();
     }
 
@@ -165,9 +161,9 @@ impl HistoryState {
 }
 
 impl Entries {
-    pub fn count_tokens(&mut self) {
+    pub fn recount_tokens(&mut self) {
         self.iter_mut().for_each(|entry| {
-            entry.count_tokens();
+            entry.recount_tokens();
         });
     }
 
@@ -220,58 +216,45 @@ impl Entries {
     pub fn handle_response(
         &mut self,
         event: ResponseEvent,
-    ) -> isize {
+    ) {
         match event {
-            ResponseEvent::Started(started_at_ms) => {
-                self.start_response(started_at_ms);
-                self.recount_last_message()
-            }
+            ResponseEvent::Started(started_at_ms) => self.start_response(started_at_ms),
             ResponseEvent::Delta(item_delta) => {
                 self.push_delta(item_delta);
-                self.recount_last_message()
             }
             ResponseEvent::Item(item) => {
                 self.push_item(*item);
-                self.recount_last_message()
             }
             ResponseEvent::Completed(items) => {
                 self.complete_response(items);
-                self.recount_last_message()
             }
             ResponseEvent::Failed(msg) => {
                 self.fail_response(msg);
-                self.recount_last_message()
             }
+        }
+        if let Some(entry) = self.last_mut() {
+            entry.recount_tokens();
         }
     }
 
     pub fn push_message(
         &mut self,
         message: Message,
-    ) -> isize {
-        let delta = count_message_tokens(&message) as isize;
-        self.push(HistoryEntry {
-            meta: MessageMeta::default(),
-            message,
-        });
-        self.recount_last_message();
-        delta
+    ) {
+        self.push(HistoryEntry::new(message));
     }
 
     pub fn pop(
         &mut self,
         n: usize,
-    ) -> Result<isize> {
+    ) -> Result<()> {
         let len = self.len();
         anyhow::ensure!(
             n <= len,
             "Cannot pop {n} messages from history of length {len}"
         );
-        let popped = self.split_off(len - n);
-        Ok(-popped
-            .iter()
-            .map(|entry| entry.meta.token_count as isize)
-            .sum::<isize>())
+        self.truncate(len - n);
+        Ok(())
     }
 
     pub fn push_item(
@@ -379,16 +362,6 @@ impl Entries {
             })
             .collect()
     }
-
-    // XXX rename
-    pub fn recount_last_message(&mut self) -> isize {
-        let Some(entry) = self.last_mut() else {
-            return 0;
-        };
-        let old = entry.meta.token_count;
-        entry.count_tokens();
-        entry.meta.token_count as isize - old as isize
-    }
 }
 
 impl History {
@@ -418,11 +391,11 @@ impl History {
         self.instructions.token_count + self.state.token_count
     }
 
-    pub fn count_tokens(&mut self) {
+    pub fn recount_tokens(&mut self) {
         self.instructions.token_count = count_text_tokens(&self.instructions.text);
-        self.state.recount();
+        self.state.recount_tokens();
         if let Some(compact) = &mut self.compact {
-            compact.entries.count_tokens();
+            compact.entries.recount_tokens();
         }
     }
 
@@ -455,7 +428,7 @@ impl History {
         &mut self,
         generation: HistoryGeneration,
         event: HistoryUpdate,
-    ) -> Result<isize> {
+    ) -> Result<()> {
         anyhow::ensure!(
             generation == self.generation,
             "history event generation {} does not match current generation {} in {:?}",
@@ -463,15 +436,13 @@ impl History {
             self.generation,
             self.entries
         );
-        let delta = match event {
+        match event {
             HistoryUpdate::GenerationIncremented => {
                 self.increment();
-                0
             }
             HistoryUpdate::TurnResponse(event) => {
-                let delta = self.entries.handle_response(event);
-                self.state.apply_delta(delta);
-                delta
+                self.entries.handle_response(event);
+                self.state.sync_token_count();
             }
             HistoryUpdate::CompactResponse(event) => {
                 self.compact
@@ -479,9 +450,8 @@ impl History {
                     .context("no compact in progress")?
                     .entries
                     .handle_response(event.clone());
-                match event {
-                    ResponseEvent::Completed(_) => self.apply_compact()?,
-                    _ => 0,
+                if let ResponseEvent::Completed(_) = event {
+                    self.apply_compact()?;
                 }
             }
             HistoryUpdate::CompactStart {
@@ -489,30 +459,25 @@ impl History {
                 needs_another_turn,
             } => {
                 self.state.init_compact(dropped, needs_another_turn);
-                0
             }
             HistoryUpdate::DeveloperMessage(message) => {
-                let delta = self.entries.push_message(Message::Developer(message));
-                self.state.apply_delta(delta);
-                delta
+                self.entries.push_message(Message::Developer(message));
+                self.state.sync_token_count();
             }
             HistoryUpdate::UserMessage(text) => {
-                let delta = self
-                    .entries
+                self.entries
                     .push_message(Message::User(UserMessage { text }));
-                self.state.apply_delta(delta);
-                delta
+                self.state.sync_token_count();
             }
             HistoryUpdate::Pop(n) => {
-                let delta = self.entries.pop(n)?;
-                self.state.apply_delta(delta);
-                delta
+                self.entries.pop(n)?;
+                self.state.sync_token_count();
             }
-        };
-        Ok(delta)
+        }
+        Ok(())
     }
 
-    pub fn apply_compact(&mut self) -> Result<isize> {
+    pub fn apply_compact(&mut self) -> Result<()> {
         let CompactState {
             entries,
             dropped,
@@ -528,7 +493,6 @@ impl History {
             self.entries.len()
         );
 
-        let old_total = self.total_tokens() as isize;
         let old_state = mem::take(&mut self.state);
 
         let new_state = {
@@ -554,9 +518,7 @@ impl History {
         });
 
         self.generation += 1;
-
-        let new_total = self.total_tokens() as isize;
-        Ok(new_total - old_total)
+        Ok(())
     }
 }
 
@@ -971,6 +933,7 @@ mod tests {
         history.entries.push_message(Message::User(UserMessage {
             text: "last".into(),
         }));
+        history.recount_tokens();
         let generation = history.generation();
 
         history
@@ -1029,6 +992,7 @@ mod tests {
             text: "first".into(),
         }));
         history.entries.push_message(compact_summary("reply"));
+        history.recount_tokens();
         let generation = history.generation();
         let total_tokens = history.total_tokens();
 
@@ -1071,6 +1035,7 @@ mod tests {
             text: "first".into(),
         }));
         history.entries.push_message(compact_summary("reply"));
+        history.recount_tokens();
         let generation = history.generation();
 
         history
@@ -1144,6 +1109,7 @@ mod tests {
             text: "first".into(),
         }));
         history.entries.push_message(compact_summary("reply"));
+        history.recount_tokens();
         let generation = history.generation();
         let total_tokens = history.total_tokens();
 
