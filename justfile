@@ -45,6 +45,9 @@ clean: clean_state clean_data clean_git
 count-lints:
     cargo clippy --message-format=json 2>/dev/null | jq -r 'select(.reason=="compiler-message") | .message.code.code // empty' | sed -n 's/^clippy:://p' | sort | uniq -c | sort -rn
 
+fix lint:
+    cargo clippy --fix -- -A clippy::cargo -A clippy::complexity -A clippy::correctness -A clippy::nursery -A clippy::pedantic -A clippy::perf -A clippy::restriction -A clippy::style -A clippy::suspicious -D clippy::{{ lint }}
+
 test:
     cargo test
 
