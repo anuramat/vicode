@@ -55,7 +55,7 @@ impl<'a> App<'a> {
             if let Some(command) = keymap.insert(event) {
                 command.execute(self).await?;
             } else {
-                self.selected_tab_mut()?.key_insert(event)?;
+                self.selected_tab_mut()?.key_insert(event);
             }
         } else if let Some(command) = keymap.normal(event) {
             command.execute(self).await?;
@@ -317,8 +317,7 @@ mod tests {
         for ch in "open @sr".chars() {
             app.selected_tab_mut()
                 .unwrap()
-                .key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
-                .unwrap();
+                .key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
         }
 
         Command {

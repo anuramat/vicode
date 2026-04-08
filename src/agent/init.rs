@@ -10,6 +10,7 @@ use crate::agent::AgentKind;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
 use crate::agent::AgentTopology;
+use crate::agent::ToolSchemas;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
@@ -59,7 +60,7 @@ impl Agent {
         instructions: String,
     ) -> Result<Self> {
         let state = AgentState::new(&project, id.clone(), commit, instructions).await?;
-        Self::from_state(project, parent, id, state)
+        Ok(Self::from_state(project, parent, id, state))
     }
 
     /// load agent by id from disk
@@ -73,7 +74,7 @@ impl Agent {
         let mut state: AgentState = serde_json::from_str(&serialized)?;
         state.context.history.count_tokens();
 
-        Self::from_state(project, parent, id, state)
+        Ok(Self::from_state(project, parent, id, state))
     }
 
     /// shared logic
@@ -82,9 +83,9 @@ impl Agent {
         parent: ParentHandle,
         id: AgentId,
         state: AgentState,
-    ) -> Result<Self> {
+    ) -> Self {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        Ok(Self {
+        Self {
             project,
             id,
             state,
@@ -92,8 +93,8 @@ impl Agent {
             rx,
             tskmgr: AgentTaskManager::new(),
             tx,
-            tools: Default::default(),
-        })
+            tools: ToolSchemas::default(),
+        }
     }
 
     pub fn spawn(self) {

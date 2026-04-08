@@ -151,13 +151,12 @@ impl HistoryState {
         &mut self,
         dropped: usize,
         needs_another_turn: bool,
-    ) -> Result<()> {
+    ) {
         self.compact = Some(CompactState {
             entries: self.iter().take(dropped).cloned().collect(),
             dropped,
             needs_another_turn,
         });
-        Ok(())
     }
 
     pub const fn compacting(&self) -> bool {
@@ -490,7 +489,7 @@ impl History {
                 dropped,
                 needs_another_turn,
             } => {
-                self.state.init_compact(dropped, needs_another_turn)?;
+                self.state.init_compact(dropped, needs_another_turn);
                 0
             }
             HistoryUpdate::DeveloperMessage(message) => {

@@ -28,7 +28,7 @@ impl AgentTaskManager {
         Self {
             tasks: JoinSet::new(),
             pending: HashMap::new(),
-            lock: Default::default(),
+            lock: RwLock::default(),
         }
     }
 

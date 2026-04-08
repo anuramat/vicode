@@ -107,14 +107,14 @@ impl Tab<'_> {
             agent,
             scroll: ScrollElements::default(),
             input: MessageInput {
-                title: Default::default(),
+                title: String::new(),
                 input: Input::new(InputOpts {
                     source: CompletionSource::Freeform(vec![('@', Vec::new())]),
                     height: FILE_COMPLETION_MAX_HEIGHT,
                     clear_on_unfocus: false,
                 }),
             },
-            info: Default::default(),
+            info: InfoWidget::default(),
             multiplier: 1,
         };
         tab.refresh_file_completion(project)?;

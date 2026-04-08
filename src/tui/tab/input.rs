@@ -104,13 +104,13 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub async fn retry(&mut self) -> Result<()> {
+    pub async fn retry(&self) -> Result<()> {
         self.agent.send(ExternalEvent::Retry).await?;
         Ok(())
     }
 
     pub async fn compact(
-        &mut self,
+        &self,
         n: Option<&str>,
     ) -> Result<()> {
         let n = if let Some(n) = n {
@@ -123,13 +123,13 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub async fn abort(&mut self) -> Result<()> {
+    pub async fn abort(&self) -> Result<()> {
         self.agent.send(ExternalEvent::Abort).await?;
         Ok(())
     }
 
     pub async fn undo(
-        &mut self,
+        &self,
         n: usize,
     ) -> Result<()> {
         if n > self.agent.state.context.history.len() {
@@ -139,7 +139,7 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub async fn undo_user(&mut self) -> Result<()> {
+    pub async fn undo_user(&self) -> Result<()> {
         let messages = &self.agent.state.context.history;
         let Some(loc) = messages
             .iter()
@@ -163,10 +163,9 @@ impl Tab<'_> {
     pub fn key_insert(
         &mut self,
         input: KeyEvent,
-    ) -> Result<()> {
+    ) {
         self.input.handle(input);
         self.update_input_title();
-        Ok(())
     }
 
     pub fn paste(
@@ -297,8 +296,7 @@ mod tests {
         let mut tab = tab().await;
         tab.insert_mode(true);
         for ch in "open @sr".chars() {
-            tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
-                .unwrap();
+            tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
         }
 
         tab.input.completion_next();

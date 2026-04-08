@@ -60,7 +60,7 @@ impl App<'_> {
 
         match event {
             Started(agent) => {
-                self.handle_started(aid, *agent).await?;
+                self.handle_started(aid, *agent)?;
             }
             HistoryReset(history) => {
                 self.tab_mut_by_aid(&aid)?.replace_history(history);

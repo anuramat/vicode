@@ -88,7 +88,7 @@ impl<'a> App<'a> {
     }
 
     pub async fn load_agent(
-        &mut self,
+        &self,
         aid: AgentId,
     ) -> Result<()> {
         let parent = Box::new(AppParentSink {
@@ -101,7 +101,7 @@ impl<'a> App<'a> {
     }
 
     pub async fn new_agent(
-        &mut self,
+        &self,
         aid: AgentId,
     ) -> Result<()> {
         let parent = Box::new(AppParentSink {
@@ -117,7 +117,7 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub async fn handle_started(
+    pub fn handle_started(
         &mut self,
         aid: AgentId,
         agent: AgentHandle,

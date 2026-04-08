@@ -1,6 +1,7 @@
 use super::Mode;
 use super::ScrollElements;
 use crate::tui::widgets::container::element::IntoElement;
+use crate::tui::widgets::container::scroll::StartLocation;
 
 impl ScrollElements {
     /// put the next message at the top
@@ -58,7 +59,7 @@ impl ScrollElements {
 
     pub fn bottom(&mut self) {
         tracing::debug!("scrolling to bottom");
-        self.start = Default::default();
+        self.start = StartLocation::default();
         self.mode = Mode::Tail;
     }
 

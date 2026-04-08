@@ -11,6 +11,7 @@ use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::RenderContext;
 
 #[derive(Debug, Default)]
 pub struct InfoWidget {
@@ -40,6 +41,6 @@ impl InfoWidget {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        self.elements.render(area, buf, Default::default());
+        self.elements.render(area, buf, RenderContext::default());
     }
 }

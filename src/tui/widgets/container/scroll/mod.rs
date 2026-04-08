@@ -62,7 +62,7 @@ impl ScrollElements {
         self.dirty.resize(len, true);
         self.elements.resize_with(len, Default::default);
         if len == 0 || self.start.idx >= len {
-            self.start = Default::default();
+            self.start = StartLocation::default();
             self.mode = Mode::Tail;
         }
     }

@@ -8,6 +8,7 @@ use anyhow::Result;
 pub use completion::*;
 use derive_getters::Getters;
 use nucleo_matcher::Matcher;
+use ratatui::style::Style;
 use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use tui_textarea::CursorMove;
@@ -25,7 +26,7 @@ pub struct Input<'a> {
 
 fn new_textarea(content: &str) -> TextArea<'static> {
     let mut area = TextArea::new(content.split('\n').map(String::from).collect());
-    area.set_cursor_line_style(Default::default());
+    area.set_cursor_line_style(Style::default());
     area
 }
 

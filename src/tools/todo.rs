@@ -3,7 +3,6 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 
 use crate::agent::tool::traits::Function;
-use crate::agent::tool::traits::ToolCall;
 use crate::declare_tool;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
