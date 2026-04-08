@@ -1,10 +1,5 @@
-// SLOP entire chat completions module is vibecoded
-#![allow(clippy::all, deprecated)]
-#[allow(clippy::all, deprecated)]
 mod convert;
-#[allow(clippy::all, deprecated)]
 mod request;
-#[allow(clippy::all, deprecated)]
 mod stream;
 
 use anyhow::Result;

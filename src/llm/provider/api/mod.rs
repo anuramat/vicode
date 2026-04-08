@@ -11,6 +11,8 @@ use crate::llm::delta::Delta;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::Message;
 
+/// SLOP chat completion module is vibecoded
+#[allow(deprecated, clippy::pedantic, clippy::nursery)]
 pub mod chat_completions;
 pub mod responses;
 
