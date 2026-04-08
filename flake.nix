@@ -22,17 +22,16 @@
         mainProgram = binName;
         # TODO: longDescription = "";
       };
-      targets = {
-        "x86_64-linux" = "x86_64-unknown-linux-musl";
-        "aarch64-darwin" = "aarch64-apple-darwin";
-      };
     in
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.treefmt-nix.flakeModule
         inputs.git-hooks-nix.flakeModule
       ];
-      systems = builtins.attrNames targets;
+      systems = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
       perSystem =
         {
           pkgs,
@@ -42,38 +41,12 @@
           ...
         }:
         let
-          target = targets.${system};
-          xcPkgs = import inputs.nixpkgs {
-            localSystem = system;
-            crossSystem.config = target;
-          };
           fenixPkgs = inputs.fenix.packages.${system};
-
-          craneLib = (inputs.crane.mkLib xcPkgs).overrideToolchain (
-            _: # crane passes pkgs, which we don't need
-            fenixPkgs.combine [
-              fenixPkgs.stable.rustc
-              fenixPkgs.stable.cargo
-              fenixPkgs.targets.${target}.stable.rust-std
-            ]
-          );
-
           rustfmt = fenixPkgs.latest.rustfmt;
 
           nativeBuildInputs = with pkgs; [
             perl # some dependency needs this
           ];
-
-          # TODO drop on darwin, ideally only the missing ones
-          binDeps =
-            p: with p; [
-              bash
-              gnutar
-              git
-              fuse-overlayfs
-              bindfs
-              bubblewrap
-            ];
 
           devTools = with pkgs; [
             just
@@ -89,15 +62,125 @@
             cargo-insta
           ];
 
-          commonArgs = {
-            inherit nativeBuildInputs;
-            src = pkgs.lib.cleanSource ./.;
-            strictDeps = true;
-            # TEST if these work on darwin
-            CARGO_BUILD_TARGET = target;
-            CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+          mkCraneLib =
+            {
+              buildPkgs,
+              rustStds ? [ ],
+            }:
+            (inputs.crane.mkLib buildPkgs).overrideToolchain (
+              _: # crane passes pkgs, which we don't need
+              fenixPkgs.combine (
+                [
+                  fenixPkgs.stable.rustc
+                  fenixPkgs.stable.cargo
+                ]
+                ++ rustStds
+              )
+            );
+
+          mkBuild =
+            { craneLib, binDeps }:
+            let
+              commonArgs = {
+                inherit nativeBuildInputs;
+                src = pkgs.lib.cleanSource ./.;
+                strictDeps = true;
+              };
+              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              unwrapped = craneLib.buildPackage (
+                commonArgs
+                // {
+                  inherit cargoArtifacts;
+                  pname = "${pname}-unwrapped";
+                  inherit meta;
+                }
+              );
+              wrapped = pkgs.symlinkJoin {
+                inherit pname meta;
+                inherit (unwrapped) version;
+                paths = [ unwrapped ];
+                strictDeps = true;
+                nativeBuildInputs = [ pkgs.makeWrapper ];
+                postBuild =
+                  let
+                    binPath = lib.makeBinPath binDeps;
+                  in
+                  ''
+                    wrapProgram $out/bin/${binName} --prefix PATH : ${binPath}
+                  '';
+              };
+            in
+            {
+              inherit unwrapped wrapped;
+            };
+
+          linux =
+            let
+              muslTarget = "x86_64-unknown-linux-musl";
+              binDeps = with pkgs; [
+                bash
+                gnutar
+                git
+                fuse-overlayfs
+                bindfs
+                bubblewrap
+              ];
+              build = mkBuild {
+                craneLib = mkCraneLib {
+                  buildPkgs = import inputs.nixpkgs {
+                    localSystem = system;
+                    crossSystem.config = muslTarget;
+                  };
+                  rustStds = [ fenixPkgs.targets.${muslTarget}.stable.rust-std ];
+                };
+                inherit binDeps;
+              };
+              bundled =
+                let
+                  arxPname = "${pname}-arx";
+                  inherit (build.unwrapped) version;
+                in
+                (inputs.bundlers.bundlers.${system}.toArx build.wrapped).overrideAttrs {
+                  name = "${arxPname}-${version}";
+                  pname = arxPname;
+                };
+            in
+            {
+              packages = {
+                "${pname}-arx" = bundled;
+                ${pname} = build.wrapped;
+                "${pname}-unwrapped" = build.unwrapped;
+                default = build.wrapped;
+              };
+              inherit binDeps;
+            };
+
+          darwin =
+            let
+              binDeps = with pkgs; [
+                bash
+                gnutar
+                git
+              ];
+              build = mkBuild {
+                craneLib = mkCraneLib { buildPkgs = pkgs; };
+                inherit binDeps;
+              };
+            in
+            {
+              packages = {
+                ${pname} = build.wrapped;
+                "${pname}-unwrapped" = build.unwrapped;
+                default = build.wrapped;
+              };
+              inherit binDeps;
+            };
+
+          platforms = {
+            x86_64-linux = linux;
+            aarch64-darwin = darwin;
           };
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          platform = platforms.${system};
         in
         {
           devShells.default =
@@ -106,7 +189,7 @@
             in
             pkgs.mkShell {
               inherit shellHook;
-              packages = devTools ++ nativeBuildInputs ++ (binDeps pkgs);
+              packages = devTools ++ nativeBuildInputs ++ platform.binDeps;
             };
           pre-commit = {
             check.enable = false;
@@ -147,53 +230,7 @@
               just.enable = true;
             };
           };
-          packages =
-            let
-              unwrapped = craneLib.buildPackage (
-                commonArgs
-                // {
-                  inherit cargoArtifacts;
-                  pname = "${pname}-unwrapped";
-                  inherit meta;
-                }
-              );
-              wrapped = pkgs.symlinkJoin {
-                inherit pname meta;
-                inherit (unwrapped) version;
-                paths = [ unwrapped ];
-                strictDeps = true;
-                nativeBuildInputs = [ xcPkgs.buildPackages.makeWrapper ];
-                postBuild =
-                  let
-                    # HACK we should be using `binDeps xcPkgs`, but then we're rebuilding universe with musl
-                    # NOTE essentially xcPkgs.buildPackages = pkgs, but this is clearer in intent (?)
-                    binPath = lib.makeBinPath (binDeps xcPkgs.buildPackages);
-                  in
-                  ''
-                    wrapProgram $out/bin/${binName} --prefix PATH : ${binPath}
-                  '';
-              };
-              bundled =
-                let
-                  arxPname = "${pname}-arx";
-                  inherit (unwrapped) version;
-                in
-                (inputs.bundlers.bundlers.${system}.toArx wrapped).overrideAttrs {
-                  name = "${arxPname}-${version}";
-                  pname = arxPname;
-                };
-              packages =
-                map (x: lib.nameValuePair (x.pname) x) [
-                  bundled
-                  wrapped
-                  unwrapped
-                ]
-                |> lib.listToAttrs;
-            in
-            packages
-            // {
-              default = wrapped;
-            };
+          packages = platform.packages;
         };
     };
 }
