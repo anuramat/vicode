@@ -109,6 +109,7 @@ impl Agent {
         &mut self,
         event: AgentEvent,
     ) -> Result<ControlFlow<()>> {
+        #[allow(clippy::enum_glob_use)]
         use AgentEvent::*;
 
         debug!(event = ?event, "handling agent event");
@@ -145,7 +146,9 @@ impl Agent {
         &mut self,
         event: ExternalEvent,
     ) -> Result<ControlFlow<()>> {
+        #[allow(clippy::enum_glob_use)]
         use ExternalEvent::*;
+
         match event {
             Undo(n) => {
                 self.idle()?;

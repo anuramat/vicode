@@ -28,6 +28,7 @@ impl App<'_> {
         &mut self,
         event: AppEvent,
     ) -> Result<()> {
+        #[allow(clippy::enum_glob_use)]
         use AppEvent::*;
 
         debug!(event = ?event, "Handling app event");

@@ -2,7 +2,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyCode::Char;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers as Mods;
-use tui_textarea::CursorMove::*;
+use tui_textarea::CursorMove;
 
 use super::Input;
 
@@ -21,22 +21,22 @@ impl Input<'_> {
         match code {
             // move:
             Char('a') if mods == Mods::CONTROL => {
-                self.textarea.move_cursor(Head);
+                self.textarea.move_cursor(CursorMove::Head);
             }
             Char('e') if mods == Mods::CONTROL => {
-                self.textarea.move_cursor(End);
+                self.textarea.move_cursor(CursorMove::End);
             }
             Char('b') if mods == Mods::ALT => {
-                self.textarea.move_cursor(WordBack);
+                self.textarea.move_cursor(CursorMove::WordBack);
             }
             Char('f') if mods == Mods::ALT => {
-                self.textarea.move_cursor(WordForward);
+                self.textarea.move_cursor(CursorMove::WordForward);
             }
             Char('b') if mods == Mods::CONTROL => {
-                self.textarea.move_cursor(Back);
+                self.textarea.move_cursor(CursorMove::Back);
             }
             Char('f') if mods == Mods::CONTROL => {
-                self.textarea.move_cursor(Forward);
+                self.textarea.move_cursor(CursorMove::Forward);
             }
 
             // delete:
