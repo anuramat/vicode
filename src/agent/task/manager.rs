@@ -8,7 +8,7 @@ use tokio::task::AbortHandle;
 use tokio::task::JoinSet;
 
 use crate::agent::handle::AgentEvent;
-use crate::agent::task::sink::*;
+use crate::agent::task::sink::TaskHandle;
 use crate::define_uuid;
 use crate::llm::history::HistoryGeneration;
 

@@ -1,7 +1,7 @@
 use crate::llm::message::OutputContent;
 use crate::llm::message::OutputItem;
-use crate::tui::widgets::container::element::*;
-use crate::tui::widgets::markdown::*;
+use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::markdown::MarkdownWidget;
 
 impl From<&OutputItem> for Element {
     fn from(msg: &OutputItem) -> Self {

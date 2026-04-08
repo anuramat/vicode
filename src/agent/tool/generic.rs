@@ -3,7 +3,9 @@ use std::fmt::Debug;
 use anyhow::Result;
 use serde::Serialize;
 
-use super::traits::*;
+use super::traits::Function;
+use super::traits::ToolCall;
+use super::traits::ToolContext;
 use crate::agent::Agent;
 
 // TODO can we drop Clone for this and tctx?

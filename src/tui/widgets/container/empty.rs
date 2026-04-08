@@ -2,7 +2,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::RenderContext;
 
 #[derive(Debug, Clone)]
 pub struct EmptyElement;

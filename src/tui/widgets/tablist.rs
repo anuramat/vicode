@@ -2,7 +2,10 @@ use derive_more::From;
 use indexmap::IndexMap;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
-use ratatui::widgets::*;
+use ratatui::widgets::List;
+use ratatui::widgets::ListItem;
+use ratatui::widgets::ListState;
+use ratatui::widgets::StatefulWidget;
 
 use crate::agent::id::AgentId;
 use crate::tui::tab::TabEntry;

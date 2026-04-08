@@ -11,7 +11,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use similar::TextDiff;
 
-use crate::agent::tool::traits::*;
+use crate::agent::tool::traits::Function;
+use crate::agent::tool::traits::ToolCall;
+use crate::agent::tool::traits::ToolContext;
 use crate::declare_tool;
 use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::element::Element;

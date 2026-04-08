@@ -10,8 +10,8 @@ use anyhow::bail;
 use thiserror::Error;
 
 use super::Overlay;
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::*;
 use crate::deps;
 use crate::project::Layout;
 use crate::project::backend::Backend;

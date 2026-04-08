@@ -1,6 +1,11 @@
 use async_openai::types::responses;
 
-use crate::llm::message::*;
+use crate::llm::message::AsMessageText;
+use crate::llm::message::AssistantItem;
+use crate::llm::message::AssistantMessage;
+use crate::llm::message::DeveloperMessage;
+use crate::llm::message::Message;
+use crate::llm::message::UserMessage;
 
 impl From<&Message> for Vec<responses::InputItem> {
     fn from(val: &Message) -> Self {

@@ -6,7 +6,9 @@ use ratatui::widgets::Wrap;
 
 use crate::llm::message::ReasoningItem;
 use crate::tui::colors::REASONING_COLOR;
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::RenderContext;
 
 fn style() -> Style {
     Style::default().fg(REASONING_COLOR)

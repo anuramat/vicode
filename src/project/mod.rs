@@ -8,7 +8,8 @@ use anyhow::Result;
 use anyhow::anyhow;
 use git2::Repository;
 
-use crate::agent::*;
+use crate::agent::AgentId;
+use crate::agent::AgentState;
 use crate::config::Config;
 use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
@@ -16,7 +17,8 @@ use crate::project::backend::Backend;
 use crate::project::backend::BackendKind;
 use crate::project::backend::Copy;
 use crate::project::backend::Overlay;
-use crate::project::layout::*;
+use crate::project::layout::LayoutTrait;
+use crate::project::layout::ambassador_impl_LayoutTrait;
 
 #[derive(Clone, Delegate)]
 #[delegate(LayoutTrait, target = "layout")]

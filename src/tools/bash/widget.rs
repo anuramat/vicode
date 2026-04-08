@@ -9,7 +9,8 @@ use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use ratatui::widgets::block::Title;
 
-use super::*;
+use super::BashCall;
+use super::BashResult;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;

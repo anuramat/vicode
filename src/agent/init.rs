@@ -3,11 +3,17 @@ use futures::future::Abortable;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 
+use crate::agent::Agent;
+use crate::agent::AgentContext;
+use crate::agent::AgentId;
+use crate::agent::AgentKind;
+use crate::agent::AgentState;
+use crate::agent::AgentStatus;
+use crate::agent::AgentTopology;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::task::manager::AgentTaskManager;
-use crate::agent::*;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;

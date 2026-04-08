@@ -4,7 +4,7 @@ use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
 // TODO OnceCell doesn't work because type is invariant, maybe find smth else?
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::{HeightComputable, RenderContext};
 use crate::tui::widgets::syntax::HIGHLIGHTER;
 
 // TODO try to make markdown static

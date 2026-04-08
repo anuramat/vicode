@@ -7,7 +7,11 @@ use nucleo_matcher::pattern::AtomKind;
 use nucleo_matcher::pattern::CaseMatching;
 use nucleo_matcher::pattern::Normalization;
 
-use super::*;
+use super::Input;
+use super::ListItem;
+use super::ListState;
+use super::Matcher;
+use super::Result;
 
 #[derive(Debug, Clone, Getters)]
 pub struct Completion {

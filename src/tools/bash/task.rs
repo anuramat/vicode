@@ -2,7 +2,8 @@ use std::os::unix::process::ExitStatusExt;
 
 use anyhow::Result;
 
-use crate::agent::tool::traits::*;
+use crate::agent::tool::traits::Function;
+use crate::agent::tool::traits::ToolContext;
 use crate::project::layout::LayoutTrait;
 use crate::sandbox::Sandbox;
 use crate::tools::bash::BashArguments;

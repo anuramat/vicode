@@ -1,4 +1,5 @@
-use super::*;
+use super::Mode;
+use super::ScrollElements;
 use crate::tui::widgets::container::element::IntoElement;
 
 impl ScrollElements {

@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::agent::tool::traits::*;
+use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::tokens::count_message_tokens;
 
 #[derive(Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]

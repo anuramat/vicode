@@ -2,7 +2,11 @@ use ratatui::prelude::*;
 use ratatui::widgets::Clear;
 use tracing::debug;
 
-use super::*;
+use super::IntoElement;
+use super::Mode;
+use super::RenderContext;
+use super::ScrollElements;
+use super::StartLocation;
 
 impl ScrollElements {
     #[tracing::instrument(skip(self, data, buf))]

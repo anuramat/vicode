@@ -2,7 +2,8 @@ use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::RenderContext;
 
 impl HeightComputable for Paragraph<'_> {
     fn height(

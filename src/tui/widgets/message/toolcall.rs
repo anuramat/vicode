@@ -5,7 +5,10 @@ use ratatui::widgets::Paragraph;
 
 use crate::llm::message::ToolCallItem;
 use crate::tui::colors::TOOLCALL_COLOR;
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::IntoElement;
+use crate::tui::widgets::container::element::RenderContext;
 
 pub fn style() -> Style {
     Style::default().fg(TOOLCALL_COLOR)

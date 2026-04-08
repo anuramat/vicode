@@ -3,7 +3,7 @@ use crate::llm::message::AssistantMessage;
 use crate::llm::message::HistoryEntry;
 use crate::llm::message::Message;
 use crate::tui::widgets::container::composite::CompositeElement;
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::Element;
 
 pub mod developer;
 pub mod output;

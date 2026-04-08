@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tokio::fs::create_dir_all;
 
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::*;
 use crate::git;
 use crate::git::checkout;
 use crate::git::worktree;

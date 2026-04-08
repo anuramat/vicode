@@ -4,7 +4,9 @@ use derive_more::From;
 use derive_more::Into;
 use ratatui::prelude::*;
 
-use crate::tui::widgets::container::element::*;
+use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::element::RenderContext;
 
 #[derive(Debug, Default, From, Into)]
 pub struct CompositeElement(pub Vec<Element>);
