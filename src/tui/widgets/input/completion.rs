@@ -45,10 +45,16 @@ impl CompletionSource {
         }
         let (start, typed) = last_word(line);
         match self {
-            Self::Command(_) if start == 0 => Some(CompletionRequest {
-                start,
-                typed: typed.to_string(),
-            }),
+            Self::Command(_) => {
+                if start == 0 {
+                    Some(CompletionRequest {
+                        start,
+                        typed: typed.to_string(),
+                    })
+                } else {
+                    None
+                }
+            }
             Self::Freeform(items) => items
                 .iter()
                 .any(|(prefix, _)| typed.starts_with(*prefix))
@@ -56,7 +62,6 @@ impl CompletionSource {
                     start,
                     typed: typed.to_string(),
                 }),
-            _ => None,
         }
     }
 
@@ -88,7 +93,7 @@ impl CompletionSource {
                     groups.push((prefix, items));
                 }
             }
-            _ => {
+            Self::Command(_) => {
                 bail!("can only set items for freeform completion sources");
             }
         }

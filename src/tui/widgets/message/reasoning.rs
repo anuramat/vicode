@@ -74,7 +74,9 @@ impl From<&ReasoningItem> for Element {
         if text.is_empty()
             && let Some(content) = &item.content
         {
-            content.iter().for_each(|c| text.push_str(c));
+            for c in content {
+                text.push_str(c);
+            }
         }
 
         let char_count = text.chars().count();

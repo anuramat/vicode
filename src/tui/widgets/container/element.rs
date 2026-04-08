@@ -91,11 +91,8 @@ impl Element {
         if width == 0 {
             return 0;
         }
-        let block = match self.widget.block(ctx) {
-            Some(block) => block,
-            _ => {
-                return self.widget.height(width, ctx);
-            }
+        let Some(block) = self.widget.block(ctx) else {
+            return self.widget.height(width, ctx);
         };
         let outer = Rect {
             x: 0,

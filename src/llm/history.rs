@@ -481,7 +481,6 @@ impl History {
                     .handle_response(event.clone());
                 match event {
                     ResponseEvent::Completed(_) => self.apply_compact()?,
-                    ResponseEvent::Failed(_) => 0,
                     _ => 0,
                 }
             }

@@ -145,7 +145,7 @@ impl Project {
         for name in &self.config.context_files {
             match tokio::fs::read_to_string(root.join(name)).await {
                 Ok(text) => collected.push_str(&text),
-                Err(err) if err.kind() == ErrorKind::NotFound => continue,
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
                 Err(err) => return Err(err.into()),
             }
         }

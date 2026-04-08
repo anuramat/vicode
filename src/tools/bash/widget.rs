@@ -144,9 +144,7 @@ impl HeightComputable for BashWidget {
             .style(style())
             .title(title);
         if let Some(status_line) = &self.status_line {
-            let title =
-                Title::from(status_line.clone()).alignment(ratatui::layout::Alignment::Right);
-            block = block.title(title);
+            block = block.title_top(status_line.clone().right_aligned());
         }
         block.into()
     }
