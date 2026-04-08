@@ -84,7 +84,7 @@ fn request(
         .model(&model.model)
         .parallel_tool_calls(true)
         .reasoning(responses::Reasoning {
-            effort: model.effort.map(|x| x.into()),
+            effort: model.effort.map(Into::into),
             summary: Some(responses::ReasoningSummary::Detailed),
         })
         .include(vec![responses::IncludeEnum::ReasoningEncryptedContent])
@@ -92,13 +92,13 @@ fn request(
 
     // NOTE here order is important -- message with instructions (if any) should stay a developer message regardless
     if compat.developer_as_user {
-        messages.iter_mut().for_each(|message| {
+        for message in &mut messages {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
                     text: dev_msg.as_message_text(),
                 });
             }
-        });
+        }
     }
 
     if compat.instructions_as_message {
@@ -109,9 +109,9 @@ fn request(
     }
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
-        messages.iter_mut().for_each(move |message| {
+        for message in &mut messages {
             crate::llm::provider::compat::reasoning_to_output(&tag, message);
-        });
+        }
     }
 
     builder.stream(true);

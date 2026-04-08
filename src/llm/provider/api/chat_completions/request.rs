@@ -39,19 +39,19 @@ pub fn request(
     items.insert(0, Message::Developer(DeveloperMessage::new(instructions)));
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
-        items.iter_mut().for_each(move |message| {
+        for message in &mut items {
             crate::llm::provider::compat::reasoning_to_output(&tag, message);
-        });
+        }
     }
 
     if compat.developer_as_user {
-        items.iter_mut().for_each(|message| {
+        for message in &mut items {
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
                     text: dev_msg.as_message_text(),
                 });
             }
-        });
+        }
     }
 
     let message_values = message_values(&items, &compat.reasoning_content_field);
