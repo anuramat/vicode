@@ -100,7 +100,7 @@ impl AgentStatus {
         }
     }
 
-    pub fn idle(&self) -> bool {
+    pub const fn idle(&self) -> bool {
         match self {
             Self::Compacting => false,
             Self::InProgress => false,
@@ -109,7 +109,7 @@ impl AgentStatus {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             Self::InProgress | Self::Compacting => "+",
             Self::Idle => " ",

@@ -39,7 +39,7 @@ impl TurnHandle {
 }
 
 impl TaskHandle {
-    pub fn new(
+    pub const fn new(
         tid: TaskId,
         generation: HistoryGeneration,
         tx: Sender<AgentEvent>,

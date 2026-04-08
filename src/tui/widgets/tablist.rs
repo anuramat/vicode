@@ -35,7 +35,7 @@ impl<'a> TabList<'a> {
         self.widget = List::new(items).highlight_style(style()).into();
     }
 
-    pub fn selected(&self) -> Option<usize> {
+    pub const fn selected(&self) -> Option<usize> {
         self.state.0.selected()
     }
 

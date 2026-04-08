@@ -105,7 +105,7 @@ impl AsMessageText for CompactMessage {
 }
 
 impl DeveloperMessage {
-    pub fn new(text: String) -> Self {
+    pub const fn new(text: String) -> Self {
         Self::Misc(text)
     }
 }
@@ -170,7 +170,7 @@ impl ItemTiming {
         Self::with_start(now_ms())
     }
 
-    pub fn with_start(started_at_ms: u64) -> Self {
+    pub const fn with_start(started_at_ms: u64) -> Self {
         Self {
             started_at_ms,
             last_modified_ms: None,
@@ -183,7 +183,7 @@ impl ItemTiming {
         now
     }
 
-    pub fn touch_at(
+    pub const fn touch_at(
         &mut self,
         at_ms: u64,
     ) {
@@ -244,7 +244,7 @@ impl AssistantMessage {
 }
 
 impl AssistantItem {
-    pub fn timing(&self) -> &ItemTiming {
+    pub const fn timing(&self) -> &ItemTiming {
         match self {
             Self::Output(item) => &item.timing,
             Self::Reasoning(item) => &item.timing,
@@ -252,7 +252,7 @@ impl AssistantItem {
         }
     }
 
-    pub fn timing_mut(&mut self) -> &mut ItemTiming {
+    pub const fn timing_mut(&mut self) -> &mut ItemTiming {
         match self {
             Self::Output(item) => &mut item.timing,
             Self::Reasoning(item) => &mut item.timing,
@@ -271,7 +271,7 @@ impl AssistantItem {
 }
 
 impl ToolCallItem {
-    pub fn id(&self) -> &String {
+    pub const fn id(&self) -> &String {
         // HACK -- openai always has an actual id, but openrouter reuses call_id for id, and only sends it when creating the item;
         // regardless, it's a good enough heuristic -- we need *some* way to match calls and results;
         // I guess we could create a fake UUID on call creation, if this fails at some point?

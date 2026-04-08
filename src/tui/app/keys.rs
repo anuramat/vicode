@@ -11,7 +11,7 @@ use crate::tui::command::CommandName;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::Input;
 
-fn show_hide(hidden: bool) -> &'static str {
+const fn show_hide(hidden: bool) -> &'static str {
     if hidden { "hide" } else { "show" }
 }
 
@@ -121,7 +121,7 @@ impl<'a> App<'a> {
         Box::pin(command.execute(self)).await
     }
 
-    fn toggle_tabs(&mut self) {
+    const fn toggle_tabs(&mut self) {
         self.show_tabs = !self.show_tabs;
     }
 

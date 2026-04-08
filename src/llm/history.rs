@@ -135,7 +135,7 @@ impl<'a> FromIterator<&'a HistoryEntry> for Vec<Message> {
 }
 
 impl HistoryState {
-    fn apply_delta(
+    const fn apply_delta(
         &mut self,
         delta: isize,
     ) {
@@ -160,7 +160,7 @@ impl HistoryState {
         Ok(())
     }
 
-    pub fn compacting(&self) -> bool {
+    pub const fn compacting(&self) -> bool {
         self.compact.is_some()
     }
 }
@@ -421,7 +421,7 @@ impl History {
         self.instructions.token_count = count_text_tokens(&self.instructions.text);
     }
 
-    pub fn total_tokens(&self) -> usize {
+    pub const fn total_tokens(&self) -> usize {
         self.instructions.token_count + self.state.token_count
     }
 
@@ -449,11 +449,11 @@ impl History {
         self.len()
     }
 
-    fn increment(&mut self) {
+    const fn increment(&mut self) {
         self.generation += 1;
     }
 
-    pub fn generation(&self) -> HistoryGeneration {
+    pub const fn generation(&self) -> HistoryGeneration {
         self.generation
     }
 

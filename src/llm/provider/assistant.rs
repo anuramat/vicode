@@ -170,7 +170,7 @@ impl AssistantPool {
 }
 
 impl RoundRobin {
-    fn new(ids: Vec<String>) -> Self {
+    const fn new(ids: Vec<String>) -> Self {
         Self {
             ids,
             next: AtomicUsize::new(0),
