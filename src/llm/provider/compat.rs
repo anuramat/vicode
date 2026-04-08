@@ -19,7 +19,7 @@ pub fn reasoning_to_output(
             text.push_str(&format!("</{}>", tag));
             item.content
                 .push(crate::llm::message::OutputContent::Text(text));
-        };
+        }
         item
     }
 
@@ -29,5 +29,5 @@ pub fn reasoning_to_output(
                 *item = AssistantItem::Output(transform_item(tag, reasoning_item));
             }
         });
-    };
+    }
 }

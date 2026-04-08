@@ -97,7 +97,7 @@ impl App<'_> {
                 msg = self.rx.recv() => {
                     if let Err(e) = self.handle(msg.expect("app event channel closed")).await {
                         self.notify(NotificationKind::Error, e.to_string());
-                    };
+                    }
                     if self.should_exit {
                         self.save_app_state().await?;
                         self.cleanup().await.expect("failed app clean up");

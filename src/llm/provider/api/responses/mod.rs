@@ -167,11 +167,11 @@ fn failure_message(response: responses::Response) -> String {
         combined_error_message.push_str(
             format!("error; code={}, message: {};\n", error.code, error.message).as_str(),
         );
-    };
+    }
     if let Some(inc) = response.incomplete_details {
         combined_error_message
             .push_str(format!("incomplete response; reason: {};\n", inc.reason).as_str());
-    };
+    }
     combined_error_message
 }
 

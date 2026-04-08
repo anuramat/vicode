@@ -121,7 +121,7 @@ impl HeightComputable for BashWidget {
             command.element.render(Rect { height, ..area }, buf, ctx);
             area.height -= height;
             area.y += height;
-        };
+        }
         if let Some(element) = &mut self.output {
             element.render(area, buf, ctx);
         }
