@@ -150,12 +150,7 @@ unsafe fn check(code: i32) -> Result<()> {
             klass = Some(error.klass);
         }
     }
-    bail!(
-        "libgit2 error: code={}, klass={:#?}, message={:#?}",
-        code,
-        klass,
-        message
-    );
+    bail!("libgit2 error: code={code}, klass={klass:#?}, message={message:#?}");
 }
 
 pub async fn checkout(

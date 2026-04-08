@@ -159,7 +159,7 @@ impl Display for ItemTiming {
             Some(end) => {
                 let ms = end - self.started_at_ms;
                 let s: f64 = (ms as f64) / 1000_f64;
-                f.write_fmt(format_args!("{:.1}s", s))
+                f.write_fmt(format_args!("{s:.1}s"))
             }
         }
     }

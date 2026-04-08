@@ -225,10 +225,10 @@ fn result_to_element(result: &BashResult) -> (Element, Option<Line<'static>>) {
         if let Some(exit_status) = exit_status
             && *exit_status != 0
         {
-            parts.push(format!("exit status {}", exit_status));
+            parts.push(format!("exit status {exit_status}"));
         }
         if let Some(signal) = signal {
-            parts.push(format!("signal {}", signal));
+            parts.push(format!("signal {signal}"));
         }
 
         (!parts.is_empty()).then(|| parts.join(",").into())

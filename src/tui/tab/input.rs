@@ -16,7 +16,7 @@ use crate::tui::widgets::input::CompletionItem;
 fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem> {
     paths
         .into_iter()
-        .map(|x| CompletionItem::new(format!("@{}", x)))
+        .map(|x| CompletionItem::new(format!("@{x}")))
         .collect()
 }
 
@@ -79,7 +79,7 @@ impl Tab<'_> {
             if self.multiplier > 1 {
                 format!(" x{} | {} T ", self.multiplier, tokens)
             } else {
-                format!(" {} T ", tokens)
+                format!(" {tokens} T ")
             }
         };
         self.input = MessageInput {

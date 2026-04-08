@@ -270,9 +270,7 @@ impl Entries {
         let len = self.len();
         anyhow::ensure!(
             n <= len,
-            "Cannot pop {} messages from history of length {}",
-            n,
-            len
+            "Cannot pop {n} messages from history of length {len}"
         );
         let popped = self.split_off(len - n);
         Ok(-popped

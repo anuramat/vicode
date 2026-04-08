@@ -61,7 +61,7 @@ pub trait LayoutTrait {
         &self,
         aid: &AgentId,
     ) -> String {
-        format!("{}{}", WORKTREE_NAME_PREFIX, aid)
+        format!("{WORKTREE_NAME_PREFIX}{aid}")
     }
 
     async fn agent_id_exists(

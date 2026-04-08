@@ -27,8 +27,7 @@ pub async fn response(
     let text = state.context.history.last_output()?;
     let diff = diff(project, parent, aid)?;
     Ok(format!(
-        "<implementation id={}>\n{}\n```diff\n{}```\n</implementation>",
-        aid, text, diff
+        "<implementation id={aid}>\n{text}\n```diff\n{diff}```\n</implementation>"
     ))
 }
 

@@ -66,7 +66,7 @@ impl Project {
             root.to_string_lossy().as_bytes(),
         )
         .to_string();
-        format!("{}{}", name_prefix, uuid)
+        format!("{name_prefix}{uuid}")
     }
 
     pub fn new(config: Config) -> Result<Self> {

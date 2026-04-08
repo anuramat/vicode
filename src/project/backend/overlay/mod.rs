@@ -133,7 +133,7 @@ impl Overlay {
             Some(1) => MountStatus::Broken,
             Some(32) => MountStatus::Unmounted,
             _ => {
-                bail!("unexpected mountpoint output: {:?}", output)
+                bail!("unexpected mountpoint output: {output:?}")
             }
         };
         Ok(status)

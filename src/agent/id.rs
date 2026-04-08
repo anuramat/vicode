@@ -29,7 +29,7 @@ impl AgentId {
                 return Ok(id);
             }
         }
-        anyhow::bail!("{} name collisions when generating AgentId", PATIENCE);
+        anyhow::bail!("{PATIENCE} name collisions when generating AgentId");
     }
 }
 

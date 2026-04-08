@@ -68,7 +68,7 @@ impl TabEntry<'_> {
             Self::Loading => "*",
             Self::Ready(tab) => tab.agent.state.status.label(),
         };
-        format!("[{}]{}", prefix, aid)
+        format!("[{prefix}]{aid}")
     }
 
     pub fn set_osc7(
