@@ -7,7 +7,7 @@ use crate::llm::message::ToolCallItem;
 
 impl From<&ToolCallItem> for Vec<responses::InputItem> {
     fn from(v: &ToolCallItem) -> Self {
-        let mut result = Vec::new();
+        let mut result = Self::new();
         result.push(responses::InputItem::Item(responses::Item::FunctionCall(
             responses::FunctionToolCall {
                 arguments: v.task.arguments(),
@@ -40,7 +40,7 @@ impl TryFrom<responses::FunctionToolCall> for ToolCallItem {
             "arguments": serde_json::from_str::<Value>(&call.arguments)?,
         });
         let task = serde_json::from_value::<Box<dyn ToolCallSerializable>>(temp)?;
-        Ok(ToolCallItem {
+        Ok(Self {
             id: call.id,
             call_id: call.call_id,
             timing: ItemTiming::new(),

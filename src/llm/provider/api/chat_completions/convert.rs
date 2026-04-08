@@ -40,7 +40,7 @@ impl TryFrom<ChatCompletionMessageToolCalls> for ToolCallItem {
                     "arguments": serde_json::from_str::<Value>(&call.function.arguments)?,
                 });
                 let task = serde_json::from_value::<Box<dyn ToolCallSerializable>>(temp)?;
-                Ok(ToolCallItem {
+                Ok(Self {
                     id: Some(call.id.clone()),
                     call_id: call.id,
                     timing: ItemTiming::new(),

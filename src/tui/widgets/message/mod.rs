@@ -29,7 +29,7 @@ impl From<&Message> for Element {
 
 impl From<&AssistantMessage> for Element {
     fn from(value: &AssistantMessage) -> Self {
-        CompositeElement(value.content.values().map(Element::from).collect()).into()
+        CompositeElement(value.content.values().map(Self::from).collect()).into()
     }
 }
 

@@ -14,7 +14,7 @@ impl From<&Message> for Vec<responses::InputItem> {
 
 impl From<&DeveloperMessage> for responses::InputItem {
     fn from(msg: &DeveloperMessage) -> Self {
-        responses::InputItem::EasyMessage(responses::EasyInputMessage {
+        Self::EasyMessage(responses::EasyInputMessage {
             r#type: responses::MessageType::Message,
             role: responses::Role::Developer,
             content: responses::EasyInputContent::Text(msg.as_message_text()),
@@ -30,7 +30,7 @@ impl From<&UserMessage> for responses::InputItem {
             role: responses::InputRole::User,
             status: None,
         });
-        responses::InputItem::Item(responses::Item::Message(item))
+        Self::Item(responses::Item::Message(item))
     }
 }
 
@@ -38,7 +38,7 @@ impl From<&AssistantMessage> for Vec<responses::InputItem> {
     fn from(msg: &AssistantMessage) -> Self {
         msg.content
             .iter()
-            .flat_map(|(_, v)| Vec::<responses::InputItem>::from(v))
+            .flat_map(|(_, v)| Self::from(v))
             .collect()
     }
 }

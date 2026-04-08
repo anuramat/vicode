@@ -126,7 +126,7 @@ impl FromStr for Command {
             }
             None => (s, None),
         };
-        Ok(Command {
+        Ok(Self {
             name: serde_plain::from_str(name)?,
             args,
         })
@@ -340,7 +340,7 @@ impl Keymap {
             return self;
         }
 
-        let mut keymap = Keymap::default();
+        let mut keymap = Self::default();
         keymap.cmdline.extend(self.cmdline);
         keymap.normal.extend(self.normal);
         keymap.insert.extend(self.insert);

@@ -102,10 +102,10 @@ impl AgentStatus {
 
     pub fn idle(&self) -> bool {
         match self {
-            AgentStatus::Compacting => false,
-            AgentStatus::InProgress => false,
-            AgentStatus::Idle => true,
-            AgentStatus::Error(_) => true,
+            Self::Compacting => false,
+            Self::InProgress => false,
+            Self::Idle => true,
+            Self::Error(_) => true,
         }
     }
 

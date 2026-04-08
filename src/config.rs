@@ -126,7 +126,7 @@ impl Config {
     fn put_schema() -> Result<()> {
         let filepath = DIRS.place_config_file(SCHEMA_FILENAME)?;
         if !filepath.exists() {
-            let schema = schema_for!(Config);
+            let schema = schema_for!(Self);
             std::fs::write(&filepath, serde_json::to_string_pretty(&schema)?).with_context(
                 || format!("failed to write config schema to {}", filepath.display()),
             )?;

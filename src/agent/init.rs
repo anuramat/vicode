@@ -110,7 +110,7 @@ impl Agent {
         self.project
             .duplicate_agent(&self.id, &aid, &self.state, true)
             .await?;
-        Agent::load(self.project.clone(), self.parent.sibling(aid.clone()), aid)
+        Self::load(self.project.clone(), self.parent.sibling(aid.clone()), aid)
             .await?
             .spawn();
         Ok(())

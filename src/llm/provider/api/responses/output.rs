@@ -29,7 +29,7 @@ impl From<&OutputItem> for responses::InputItem {
             role: responses::AssistantRole::Assistant,
             status: responses::OutputStatus::Completed,
         });
-        responses::InputItem::Item(responses::Item::Message(item))
+        Self::Item(responses::Item::Message(item))
     }
 }
 

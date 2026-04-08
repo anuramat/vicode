@@ -40,7 +40,7 @@ impl Agent {
             .spawn(self.tx.clone(), generation, move |task| async move {
                 let handle = TurnHandle { task, turn_type };
                 if let Err(err) =
-                    Agent::turn(handle.clone(), &assistant, tools, instructions, messages).await
+                    Self::turn(handle.clone(), &assistant, tools, instructions, messages).await
                 {
                     handle.send(ResponseEvent::Failed(err.to_string())).await?;
                     return Err(err);

@@ -61,7 +61,7 @@ pub trait IntoElement {
 impl Element {
     pub fn new<T>(widget: T) -> Self
     where T: HeightComputable + 'static {
-        Element {
+        Self {
             widget: Box::new(widget),
             width: 0,
             height: 0,
@@ -164,13 +164,13 @@ impl<T> From<T> for Element
 where T: HeightComputable + 'static
 {
     fn from(p: T) -> Self {
-        Element::new(p)
+        Self::new(p)
     }
 }
 
 impl Default for Element {
     fn default() -> Self {
-        Element::from(EmptyElement)
+        Self::from(EmptyElement)
     }
 }
 

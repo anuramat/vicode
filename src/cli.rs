@@ -24,7 +24,7 @@ pub enum ConfigCommand {
 impl Command {
     pub fn run(&self) {
         match self {
-            Command::Config(ConfigCommand::Show) => println!("{}", Config::load().unwrap()),
+            Self::Config(ConfigCommand::Show) => println!("{}", Config::load().unwrap()),
         }
     }
 }

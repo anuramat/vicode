@@ -246,25 +246,25 @@ impl AssistantMessage {
 impl AssistantItem {
     pub fn timing(&self) -> &ItemTiming {
         match self {
-            AssistantItem::Output(item) => &item.timing,
-            AssistantItem::Reasoning(item) => &item.timing,
-            AssistantItem::ToolCall(item) => &item.timing,
+            Self::Output(item) => &item.timing,
+            Self::Reasoning(item) => &item.timing,
+            Self::ToolCall(item) => &item.timing,
         }
     }
 
     pub fn timing_mut(&mut self) -> &mut ItemTiming {
         match self {
-            AssistantItem::Output(item) => &mut item.timing,
-            AssistantItem::Reasoning(item) => &mut item.timing,
-            AssistantItem::ToolCall(item) => &mut item.timing,
+            Self::Output(item) => &mut item.timing,
+            Self::Reasoning(item) => &mut item.timing,
+            Self::ToolCall(item) => &mut item.timing,
         }
     }
 
     pub fn id(&self) -> String {
         match self {
-            AssistantItem::Output(msg) => &msg.id,
-            AssistantItem::Reasoning(item) => &item.id,
-            AssistantItem::ToolCall(tool) => tool.id(),
+            Self::Output(msg) => &msg.id,
+            Self::Reasoning(item) => &item.id,
+            Self::ToolCall(tool) => tool.id(),
         }
         .clone()
     }

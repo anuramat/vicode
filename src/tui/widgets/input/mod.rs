@@ -51,7 +51,7 @@ impl<'a> Input<'a> {
         }
     }
 
-    pub fn get_mut(&mut self) -> Result<&mut Input<'a>> {
+    pub fn get_mut(&mut self) -> Result<&mut Self> {
         if self.focused {
             Ok(self)
         } else {

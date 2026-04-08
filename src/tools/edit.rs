@@ -96,7 +96,7 @@ impl Function<EditContext, EditMeta, EditResult> for EditArguments {
 }
 
 impl From<&EditCall> for Element {
-    fn from(call: &EditCall) -> Element {
+    fn from(call: &EditCall) -> Self {
         let text: Option<Text<'_>> = if let Some(meta) = &call.meta {
             Some(HIGHLIGHTER.highlight(&meta.diff, &HIGHLIGHTER.diff))
         } else {

@@ -157,7 +157,7 @@ impl From<ToolSchemas> for Vec<responses::Tool> {
                     description: Some(tool.description),
                 })
             })
-            .collect::<Vec<_>>()
+            .collect::<Self>()
     }
 }
 
@@ -185,13 +185,13 @@ impl TryFrom<responses::ResponseStreamEvent> for StreamEvent {
     fn try_from(event: responses::ResponseStreamEvent) -> Result<Self> {
         Ok(match event {
             responses::ResponseStreamEvent::ResponseOutputTextDelta(event) => {
-                StreamEvent::Delta(event.into())
+                Self::Delta(event.into())
             }
             responses::ResponseStreamEvent::ResponseReasoningTextDelta(event) => {
-                StreamEvent::Delta(event.into())
+                Self::Delta(event.into())
             }
             responses::ResponseStreamEvent::ResponseReasoningSummaryTextDelta(event) => {
-                StreamEvent::Delta(event.into())
+                Self::Delta(event.into())
             }
             responses::ResponseStreamEvent::ResponseFailed(responses::ResponseFailedEvent {
                 response,
@@ -199,23 +199,23 @@ impl TryFrom<responses::ResponseStreamEvent> for StreamEvent {
             })
             | responses::ResponseStreamEvent::ResponseIncomplete(
                 responses::ResponseIncompleteEvent { response, .. },
-            ) => StreamEvent::Failed(failure_message(response)),
+            ) => Self::Failed(failure_message(response)),
             responses::ResponseStreamEvent::ResponseOutputItemDone(
                 responses::ResponseOutputItemDoneEvent { item, .. },
-            ) => StreamEvent::ItemDone(item.try_into()?),
+            ) => Self::ItemDone(item.try_into()?),
             responses::ResponseStreamEvent::ResponseOutputItemAdded(
                 responses::ResponseOutputItemAddedEvent { item, .. },
             ) => {
                 if let responses::OutputItem::FunctionCall(_) = item {
-                    StreamEvent::Ignore
+                    Self::Ignore
                 } else {
-                    StreamEvent::ItemAdded(item.try_into()?)
+                    Self::ItemAdded(item.try_into()?)
                 }
             }
             responses::ResponseStreamEvent::ResponseCompleted(event) => {
-                StreamEvent::Completed(output_items(event.response.output)?)
+                Self::Completed(output_items(event.response.output)?)
             }
-            _ => StreamEvent::Ignore,
+            _ => Self::Ignore,
         })
     }
 }
@@ -223,12 +223,12 @@ impl TryFrom<responses::ResponseStreamEvent> for StreamEvent {
 impl From<ReasoningEffort> for responses::ReasoningEffort {
     fn from(effort: ReasoningEffort) -> Self {
         match effort {
-            ReasoningEffort::None => responses::ReasoningEffort::None,
-            ReasoningEffort::Minimal => responses::ReasoningEffort::Minimal,
-            ReasoningEffort::Low => responses::ReasoningEffort::Low,
-            ReasoningEffort::Medium => responses::ReasoningEffort::Medium,
-            ReasoningEffort::High => responses::ReasoningEffort::High,
-            ReasoningEffort::Xhigh => responses::ReasoningEffort::Xhigh,
+            ReasoningEffort::None => Self::None,
+            ReasoningEffort::Minimal => Self::Minimal,
+            ReasoningEffort::Low => Self::Low,
+            ReasoningEffort::Medium => Self::Medium,
+            ReasoningEffort::High => Self::High,
+            ReasoningEffort::Xhigh => Self::Xhigh,
         }
     }
 }

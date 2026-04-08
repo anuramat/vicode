@@ -74,6 +74,6 @@ impl From<String> for MarkdownWidget {
             rendered: None,
             highlighted: None,
         });
-        MarkdownWidget(cell)
+        Self(cell)
     }
 }

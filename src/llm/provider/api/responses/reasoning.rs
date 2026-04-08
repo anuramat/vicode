@@ -23,7 +23,7 @@ impl From<responses::ReasoningItem> for ReasoningItem {
 
 impl From<ReasoningItem> for responses::InputItem {
     fn from(item: ReasoningItem) -> Self {
-        responses::InputItem::Item(responses::Item::Reasoning(responses::ReasoningItem {
+        Self::Item(responses::Item::Reasoning(responses::ReasoningItem {
             id: item.id,
             summary: item
                 .summary

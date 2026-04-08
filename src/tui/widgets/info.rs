@@ -32,7 +32,7 @@ impl InfoWidget {
         let text = output.stdout.into_text()?;
         let elements = vec![Paragraph::new(text).into()];
         let elements = CompositeElement(elements);
-        Ok(InfoWidget { elements })
+        Ok(Self { elements })
     }
 
     pub fn render(

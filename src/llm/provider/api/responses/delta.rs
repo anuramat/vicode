@@ -5,7 +5,7 @@ use crate::llm::delta::DeltaContent;
 
 impl From<responses::ResponseReasoningTextDeltaEvent> for Delta {
     fn from(event: responses::ResponseReasoningTextDeltaEvent) -> Self {
-        Delta {
+        Self {
             id: event.item_id,
             delta: DeltaContent::Reasoning(event.delta),
         }
@@ -14,7 +14,7 @@ impl From<responses::ResponseReasoningTextDeltaEvent> for Delta {
 
 impl From<responses::ResponseReasoningSummaryTextDeltaEvent> for Delta {
     fn from(event: responses::ResponseReasoningSummaryTextDeltaEvent) -> Self {
-        Delta {
+        Self {
             id: event.item_id,
             delta: DeltaContent::ReasoningSummary(event.delta),
         }
@@ -23,7 +23,7 @@ impl From<responses::ResponseReasoningSummaryTextDeltaEvent> for Delta {
 
 impl From<responses::ResponseTextDeltaEvent> for Delta {
     fn from(event: responses::ResponseTextDeltaEvent) -> Self {
-        Delta {
+        Self {
             id: event.item_id,
             delta: DeltaContent::Output(event.delta),
         }
