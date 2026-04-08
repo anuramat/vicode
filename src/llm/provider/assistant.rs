@@ -56,7 +56,7 @@ pub struct AssistantConfig {
     pub model: ModelConfig,
 }
 
-#[derive(Clone, Serialize, Debug, Deserialize, PartialEq, Default, JsonSchema)]
+#[derive(Clone, Serialize, Debug, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     None,

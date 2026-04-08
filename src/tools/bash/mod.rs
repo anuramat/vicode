@@ -15,7 +15,7 @@ declare_tool! {
 }
 
 #[derive(
-    Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct BashArguments {
@@ -29,7 +29,7 @@ pub struct BashContext {
     shell_cmd: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BashResult {
     pub stdout: String,
     pub stderr: String,

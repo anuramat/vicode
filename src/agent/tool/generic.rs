@@ -10,7 +10,7 @@ use crate::agent::Agent;
 
 // TODO can we drop Clone for this and tctx?
 // NOTE we have to write explicit bounds because serde heuristics break on Option<T> -- they incorrectly require T to implement Default
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound(
     serialize = "TArgs: serde::Serialize, TResult: serde::Serialize, TMeta: serde::Serialize",
     deserialize = "TArgs: serde::de::DeserializeOwned, TResult: serde::de::DeserializeOwned, TMeta: serde::de::DeserializeOwned",

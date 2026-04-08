@@ -27,7 +27,7 @@ pub struct TodoArguments {
     pub state: TodoState,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TodoResult {}
 
 #[derive(
@@ -41,7 +41,7 @@ pub struct TodoState {
 }
 
 #[derive(
-    Clone, Default, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Clone, Default, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub enum EntryStatus {
