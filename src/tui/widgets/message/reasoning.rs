@@ -48,7 +48,7 @@ impl HeightComputable for ReasoningWidget {
         }
         Paragraph::new(self.title())
             .style(style().italic())
-            .render(area, buf)
+            .render(area, buf);
     }
 
     fn block(

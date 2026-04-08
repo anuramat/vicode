@@ -68,7 +68,7 @@ impl ScrollElements {
         U: IntoElement,
     {
         let delta = (self.height / 2).max(1);
-        self.add_offset_down(data, delta)
+        self.add_offset_down(data, delta);
     }
 
     pub fn half_page_up<U>(
@@ -78,7 +78,7 @@ impl ScrollElements {
         U: IntoElement,
     {
         let delta = (self.height / 2).max(1);
-        self.add_offset_up(data, delta)
+        self.add_offset_up(data, delta);
     }
 
     pub fn page_down<U>(
@@ -87,7 +87,7 @@ impl ScrollElements {
     ) where
         U: IntoElement,
     {
-        self.add_offset_down(data, self.height)
+        self.add_offset_down(data, self.height);
     }
 
     pub fn page_up<U>(
@@ -96,7 +96,7 @@ impl ScrollElements {
     ) where
         U: IntoElement,
     {
-        self.add_offset_up(data, self.height)
+        self.add_offset_up(data, self.height);
     }
 
     pub fn line_down<U>(
@@ -105,7 +105,7 @@ impl ScrollElements {
     ) where
         U: IntoElement,
     {
-        self.add_offset_down(data, 1)
+        self.add_offset_down(data, 1);
     }
 
     pub fn line_up<U>(
@@ -114,7 +114,7 @@ impl ScrollElements {
     ) where
         U: IntoElement,
     {
-        self.add_offset_up(data, 1)
+        self.add_offset_up(data, 1);
     }
 
     #[tracing::instrument(skip(self, data))]

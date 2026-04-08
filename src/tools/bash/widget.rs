@@ -99,7 +99,7 @@ impl HeightComputable for BashWidget {
         if !self.oneliner(&self.command)
             && let Some(command) = &mut self.command
         {
-            height += command.element.height(width, ctx)
+            height += command.element.height(width, ctx);
         }
         height.max(1)
     }
@@ -123,7 +123,7 @@ impl HeightComputable for BashWidget {
             area.y += height;
         };
         if let Some(element) = &mut self.output {
-            element.render(area, buf, ctx)
+            element.render(area, buf, ctx);
         }
     }
 

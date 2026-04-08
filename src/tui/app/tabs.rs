@@ -150,7 +150,7 @@ impl<'a> App<'a> {
         if let Some(idx) = self.selected_tab_idx()
             && let Some((_, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx)
         {
-            tab.agent.send(ExternalEvent::Delete).await?
+            tab.agent.send(ExternalEvent::Delete).await?;
         }
         self.rebuild_tablist();
         Ok(())

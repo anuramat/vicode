@@ -55,7 +55,7 @@ impl<'a> App<'a> {
             if let Some(command) = keymap.insert(event) {
                 command.execute(self).await?;
             } else {
-                self.selected_tab_mut()?.key_insert(event).await?
+                self.selected_tab_mut()?.key_insert(event).await?;
             }
         } else if let Some(command) = keymap.normal(event) {
             command.execute(self).await?;
@@ -99,9 +99,9 @@ impl<'a> App<'a> {
 
     async fn submit(&mut self) -> Result<()> {
         if self.cmdline.input.focused() {
-            self.submit_cmdline().await?
+            self.submit_cmdline().await?;
         } else {
-            self.selected_tab_mut()?.submit().await?
+            self.selected_tab_mut()?.submit().await?;
         }
         Ok(())
     }
@@ -110,7 +110,7 @@ impl<'a> App<'a> {
         if self.cmdline.input.focused() {
             self.cmdline.input.set_focus(false);
         } else {
-            self.selected_tab_mut()?.insert_mode(false)
+            self.selected_tab_mut()?.insert_mode(false);
         }
         Ok(())
     }
@@ -161,7 +161,7 @@ impl Command {
             CommandName::Compact => {
                 app.selected_tab_mut()?
                     .compact(self.args.as_deref())
-                    .await?
+                    .await?;
             }
             CommandName::CompletionCancel => {
                 app.input()?.completion_cancel();
@@ -178,7 +178,7 @@ impl Command {
             CommandName::InsertPaste => {
                 app.selected_tab_mut()?
                     .paste(&self.args.unwrap_or_default())
-                    .await
+                    .await;
             }
             CommandName::MsgUndo => app.selected_tab_mut()?.undo(1).await?,
             CommandName::MsgUndoUser => app.selected_tab_mut()?.undo_user().await?,

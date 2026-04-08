@@ -40,7 +40,7 @@ pub fn request(
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
         items.iter_mut().for_each(move |message| {
-            crate::llm::provider::compat::reasoning_to_output(&tag, message)
+            crate::llm::provider::compat::reasoning_to_output(&tag, message);
         });
     }
 

@@ -91,7 +91,7 @@ fn request(
             if let Message::Developer(dev_msg) = message {
                 *message = Message::User(UserMessage {
                     text: dev_msg.as_message_text(),
-                })
+                });
             }
         });
     }
@@ -105,7 +105,7 @@ fn request(
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
         messages.iter_mut().for_each(move |message| {
-            crate::llm::provider::compat::reasoning_to_output(&tag, message)
+            crate::llm::provider::compat::reasoning_to_output(&tag, message);
         });
     }
 

@@ -55,7 +55,7 @@ where T: HeightComputable + Clone
         }
         Paragraph::new(self.name.as_str())
             .style(style().italic())
-            .render(area, buf)
+            .render(area, buf);
     }
 
     // TODO make method &mut self, and recompute height on call. if height is 1, no block. maybe

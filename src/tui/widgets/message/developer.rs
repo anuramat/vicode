@@ -44,7 +44,7 @@ impl HeightComputable for DeveloperMessageWidget {
         let text = format!("developer: {} chars", self.char_count);
         Paragraph::new(text)
             .style(style().italic())
-            .render(area, buf)
+            .render(area, buf);
     }
 
     fn block(
