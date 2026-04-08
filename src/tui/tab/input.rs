@@ -34,9 +34,9 @@ fn tracked_files(
 }
 
 impl Tab<'_> {
-    async fn cycle_assistant(
+    pub async fn cycle_assistant(
         &mut self,
-        step: isize,
+        prev: bool,
     ) -> Result<()> {
         // XXX replace this with an externalEvent
         if !self.agent.state.status.idle() {
@@ -44,7 +44,7 @@ impl Tab<'_> {
         }
         let pool = ASSISTANT_POOL.get().unwrap();
         let id = pool
-            .switch_assistant(&self.agent.state.assistant.id, step)
+            .switch_assistant(&self.agent.state.assistant.id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
         self.agent.state.assistant = pool.assistant(&id)?;
         self.agent.send(ExternalEvent::SetAssistant(id)).await?;
@@ -150,14 +150,6 @@ impl Tab<'_> {
         let n = messages.len() - loc;
         self.undo(n).await?;
         Ok(())
-    }
-
-    pub async fn next_assistant(&mut self) -> Result<()> {
-        self.cycle_assistant(1).await
-    }
-
-    pub async fn prev_assistant(&mut self) -> Result<()> {
-        self.cycle_assistant(-1).await
     }
 
     pub fn key_insert(

@@ -155,8 +155,8 @@ impl Command {
         app: &mut App<'_>,
     ) -> Result<()> {
         match self.name {
-            CommandName::AssistantNext => app.selected_tab_mut()?.next_assistant().await?,
-            CommandName::AssistantPrev => app.selected_tab_mut()?.prev_assistant().await?,
+            CommandName::AssistantNext => app.selected_tab_mut()?.cycle_assistant(false).await?,
+            CommandName::AssistantPrev => app.selected_tab_mut()?.cycle_assistant(true).await?,
             CommandName::CmdlineEnter => app.cmdline.input.set_focus(true),
             CommandName::Compact => {
                 app.selected_tab_mut()?

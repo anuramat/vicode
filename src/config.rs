@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::Context;
 use anyhow::Result;
+use indexmap::IndexMap;
 use schemars::JsonSchema;
 use schemars::schema_for;
 use serde::Deserialize;
@@ -97,7 +98,11 @@ pub struct Config {
     pub render: RenderContext,
 
     pub providers: HashMap<String, ProviderConfig>,
-    pub assistants: HashMap<String, AssistantConfig>,
+
+    // NOTE these would be required for non-toml
+    // #[serde(with = "indexmap::map::serde_seq")]
+    // #[schemars(with = "HashMap<String, AssistantConfig>")]
+    pub assistants: IndexMap<String, AssistantConfig>,
 
     // TODO maybe collapse into a struct or something?
     /// list of assistants for new tabs (round robin)
