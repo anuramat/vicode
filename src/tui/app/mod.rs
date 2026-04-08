@@ -67,7 +67,7 @@ const CHANNEL_CAPACITY: usize = 100;
 // TODO make configurable
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
-impl<'a> App<'a> {
+impl App<'_> {
     fn new(project: Project) -> Result<Self> {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);

@@ -6,7 +6,7 @@ use tui_textarea::CursorMove::*;
 
 use super::Input;
 
-impl<'a> Input<'a> {
+impl Input<'_> {
     pub fn handle(
         &mut self,
         input: KeyEvent,

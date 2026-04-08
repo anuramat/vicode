@@ -15,7 +15,7 @@ const fn show_hide(hidden: bool) -> &'static str {
     if hidden { "hide" } else { "show" }
 }
 
-impl<'a> Tab<'a> {
+impl Tab<'_> {
     fn set_multiplier(
         &mut self,
         value: Option<&str>,

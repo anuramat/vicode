@@ -9,7 +9,7 @@ use ratatui::widgets::Widget;
 
 use super::Input;
 
-impl<'a> Input<'a> {
+impl Input<'_> {
     pub fn render(
         &mut self,
         area: Rect,

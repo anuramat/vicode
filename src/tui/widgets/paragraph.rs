@@ -4,7 +4,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::tui::widgets::container::element::*;
 
-impl<'a> HeightComputable for Paragraph<'a> {
+impl HeightComputable for Paragraph<'_> {
     fn height(
         &mut self,
         width: u16,

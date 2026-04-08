@@ -59,7 +59,7 @@ pub enum TabEntry<'a> {
     Ready(Tab<'a>),
 }
 
-impl<'a> TabEntry<'a> {
+impl TabEntry<'_> {
     pub fn label(
         &self,
         aid: &AgentId,
@@ -94,7 +94,7 @@ impl<'a> TabEntry<'a> {
     }
 }
 
-impl<'a> Tab<'a> {
+impl Tab<'_> {
     pub async fn new(
         tx: Sender<AppEvent>,
         aid: AgentId,
@@ -205,7 +205,7 @@ pub struct MessageInput<'a> {
     pub title: String,
 }
 
-impl<'a> MessageInput<'a> {
+impl MessageInput<'_> {
     pub fn visible(&self) -> bool {
         self.focused() || !self.empty()
     }

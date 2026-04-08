@@ -22,7 +22,7 @@ use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
-impl<'a> App<'a> {
+impl App<'_> {
     pub async fn launch(project: Project) -> Result<()> {
         let mut app = Self::new(project)?;
         let term = app.setup_terminal()?;

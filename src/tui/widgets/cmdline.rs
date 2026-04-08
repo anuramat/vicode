@@ -20,7 +20,7 @@ pub struct Cmdline<'a> {
     pub input: Input<'a>,
 }
 
-impl<'a> Cmdline<'a> {
+impl Cmdline<'_> {
     pub fn new() -> Self {
         let input = Input::new(InputOpts {
             source: CompletionSource::Command(

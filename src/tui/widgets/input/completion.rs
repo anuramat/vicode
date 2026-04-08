@@ -184,7 +184,7 @@ impl Completion {
     }
 }
 
-impl<'a> Input<'a> {
+impl Input<'_> {
     pub(super) fn completion_update(&mut self) {
         let line = self.line_until_cursor();
         let request = self.completion.source.request(&line);

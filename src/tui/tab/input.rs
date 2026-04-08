@@ -33,7 +33,7 @@ fn tracked_files(
         .collect()
 }
 
-impl<'a> Tab<'a> {
+impl Tab<'_> {
     async fn cycle_assistant(
         &mut self,
         step: isize,

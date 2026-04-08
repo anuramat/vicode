@@ -22,7 +22,7 @@ pub enum AppEvent {
     Redraw,
 }
 
-impl<'a> App<'a> {
+impl App<'_> {
     #[instrument(skip(self))]
     pub async fn handle(
         &mut self,
