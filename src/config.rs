@@ -57,7 +57,7 @@ where
 {
     values
         .into_iter()
-        .flat_map(|value| shellexpand::full(value.as_ref()).map(String::from).ok())
+        .filter_map(|value| shellexpand::full(value.as_ref()).map(String::from).ok())
         .collect()
 }
 

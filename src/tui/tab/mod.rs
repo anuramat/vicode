@@ -95,7 +95,7 @@ impl TabEntry<'_> {
 }
 
 impl Tab<'_> {
-    pub async fn new(
+    pub fn new(
         tx: Sender<AppEvent>,
         aid: AgentId,
         agent: AgentHandle,
@@ -105,7 +105,7 @@ impl Tab<'_> {
             tx,
             aid,
             agent,
-            scroll: Default::default(),
+            scroll: ScrollElements::default(),
             input: MessageInput {
                 title: Default::default(),
                 input: Input::new(InputOpts {

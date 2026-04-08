@@ -204,22 +204,18 @@ impl Entries {
     }
 
     pub fn needs_another_turn(&self) -> bool {
-        if let Some(entry) = self.last() {
-            match &entry.message {
-                Message::Assistant(msg) => msg.content.iter().any(|(_, content)| {
-                    matches!(content, AssistantItem::ToolCall(_))
-                        && matches!(msg.finish_reason, AssistantMessageStatus::Success)
-                }),
-                Message::Developer(msg) => match msg {
-                    DeveloperMessage::Compact(compact) => compact.needs_another_turn,
-                    DeveloperMessage::SubagentReport(_) => true,
-                    _ => false,
-                },
-                Message::User(_) => false,
-            }
-        } else {
-            false
-        }
+        self.last().is_some_and(|entry| match &entry.message {
+            Message::Assistant(msg) => msg.content.iter().any(|(_, content)| {
+                matches!(content, AssistantItem::ToolCall(_))
+                    && matches!(msg.finish_reason, AssistantMessageStatus::Success)
+            }),
+            Message::Developer(msg) => match msg {
+                DeveloperMessage::Compact(compact) => compact.needs_another_turn,
+                DeveloperMessage::SubagentReport(_) => true,
+                DeveloperMessage::Misc(_) => false,
+            },
+            Message::User(_) => false,
+        })
     }
 
     pub fn handle_response(

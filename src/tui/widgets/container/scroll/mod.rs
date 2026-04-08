@@ -26,7 +26,7 @@ enum Mode {
     Scrolling,
     /// Last line of the last element is at the bottom of the view.
     /// If history fits on screen, we're always forcing Tail.
-    /// During render we update the StartLocation s.t. it looks the same if we switch to Scrolling
+    /// During render we update the `StartLocation` s.t. it looks the same if we switch to Scrolling
     #[default]
     Tail,
 }

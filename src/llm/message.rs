@@ -157,8 +157,10 @@ impl Display for ItemTiming {
         match self.last_modified_ms {
             None => f.write_str("tbd"),
             Some(end) => {
-                let ms = end - self.started_at_ms;
-                let s: f64 = (ms as f64) / 1000_f64;
+                #[allow(clippy::cast_precision_loss)]
+                let ms = (end - self.started_at_ms) as f64;
+
+                let s: f64 = ms / 1000_f64;
                 f.write_fmt(format_args!("{s:.1}s"))
             }
         }

@@ -2,8 +2,12 @@ pub mod compact;
 pub mod handle;
 pub mod id;
 pub mod init;
+/// SLOP `replica` module is vibecoded
+#[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
 pub mod replica;
 pub mod run;
+/// SLOP `subagent` module is vibecoded
+#[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
 pub mod subagent;
 pub mod task;
 pub mod tool;
@@ -103,10 +107,8 @@ impl AgentStatus {
 
     pub const fn idle(&self) -> bool {
         match self {
-            Self::Compacting => false,
-            Self::InProgress => false,
-            Self::Idle => true,
-            Self::Error(_) => true,
+            Self::InProgress | Self::Compacting => false,
+            Self::Idle | Self::Error(_) => true,
         }
     }
 

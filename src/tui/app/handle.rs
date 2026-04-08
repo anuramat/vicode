@@ -68,6 +68,7 @@ impl App<'_> {
         aid: AgentId,
         event: AgentParentEvent,
     ) -> Result<()> {
+        #[allow(clippy::enum_glob_use)]
         use AgentParentEvent::*;
 
         match event {
@@ -79,6 +80,7 @@ impl App<'_> {
             }
             HistoryUpdate(loc, event) => {
                 self.tab_mut_by_aid(&aid)?.update(loc, event)?;
+                // TODO resync history if tab handler fails
             }
             Error(msg) => {
                 self.notify(NotificationKind::Error, msg);

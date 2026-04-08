@@ -64,7 +64,7 @@ impl<'a> Input<'a> {
         focus: bool,
     ) {
         self.focused = focus;
-        if (!focus && self.clear_on_unfocus) || self.text().chars().all(|c| c.is_whitespace()) {
+        if (!focus && self.clear_on_unfocus) || self.text().chars().all(char::is_whitespace) {
             self.textarea = new_textarea("");
         }
         self.clear_completion();

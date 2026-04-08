@@ -21,7 +21,7 @@ use crate::tui::widgets::message::toolcall::ToolCallWidget;
 use crate::tui::widgets::syntax::HIGHLIGHTER;
 
 #[derive(
-    Clone, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct EditArguments {
@@ -99,13 +99,16 @@ impl Function<EditContext, EditMeta, EditResult> for EditArguments {
 
 impl From<&EditCall> for Element {
     fn from(call: &EditCall) -> Self {
-        let text: Option<Text<'_>> = if let Some(meta) = &call.meta {
-            Some(HIGHLIGHTER.highlight(&meta.diff, &HIGHLIGHTER.diff))
-        } else {
-            call.output().map(|o| o.into())
-        };
+        let text: Option<Text<'_>> = call.meta.as_ref().map_or_else(
+            || call.output().map(std::convert::Into::into),
+            |meta| Some(HIGHLIGHTER.highlight(&meta.diff, &HIGHLIGHTER.diff)),
+        );
+        let name = call.arguments.clone().map_or_else(
+            || "edit".to_string(),
+            |args| format!("edit: {}", args.filepath),
+        );
         ToolCallWidget {
-            name: format!("edit: {}", call.arguments.clone().unwrap().filepath),
+            name,
             inner: text.map(Paragraph::new),
         }
         .into()

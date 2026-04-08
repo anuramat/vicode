@@ -39,7 +39,13 @@ impl Cmdline<'_> {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let height = self.input.textarea.lines().len() as u16;
+        let height: u16 = self
+            .input
+            .textarea
+            .lines()
+            .len()
+            .try_into()
+            .expect("that's a lot of lines");
         let delta = height.saturating_sub(area.height);
         let area = Rect {
             y: area.y.saturating_sub(delta),

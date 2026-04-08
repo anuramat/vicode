@@ -83,8 +83,7 @@ impl<'a> App<'a> {
     ) {
         let idx = self
             .selected_tab_idx()
-            .map(|x| x + 1)
-            .unwrap_or(self.tabs.len());
+            .map_or(self.tabs.len(), |x| x + 1);
         self.tabs.shift_insert(idx, aid, TabEntry::Loading);
         self.select_tab(Some(idx));
         self.rebuild_tablist();
@@ -125,8 +124,8 @@ impl<'a> App<'a> {
         aid: AgentId,
         agent: AgentHandle,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), aid.clone(), agent, &self.project).await?;
-        self.tabs.insert(aid.clone(), TabEntry::Ready(tab));
+        let tab = Tab::new(self.tx.clone(), aid.clone(), agent, &self.project)?;
+        self.tabs.insert(aid, TabEntry::Ready(tab));
         self.rebuild_tablist();
         Ok(())
     }

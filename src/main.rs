@@ -1,4 +1,4 @@
-#![cfg_attr(test, allow(clippy::pedantic, clippy::nursery))]
+#![cfg_attr(test, allow(clippy::pedantic, clippy::nursery, clippy::style))]
 
 mod agent;
 mod cli;

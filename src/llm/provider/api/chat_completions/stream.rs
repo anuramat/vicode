@@ -133,8 +133,10 @@ impl StreamState {
         if let Some(delta) = raw_delta {
             if let Some(text) = delta[key.as_str()].as_str().filter(|s| !s.is_empty()) {
                 let reasoning_id = format!("{response_id}:reasoning:{}", choice.index);
-                if !self.reasoning_outputs.contains_key(&choice.index) {
-                    self.reasoning_outputs.insert(choice.index, true);
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    self.reasoning_outputs.entry(choice.index)
+                {
+                    e.insert(true);
                     events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
                         ReasoningItem {
                             id: reasoning_id.clone(),
@@ -153,8 +155,9 @@ impl StreamState {
         }
 
         if let Some(content) = choice.delta.content.clone() {
-            if !self.outputs.contains_key(&choice.index) {
-                self.outputs.insert(choice.index, true);
+            if let std::collections::btree_map::Entry::Vacant(e) = self.outputs.entry(choice.index)
+            {
+                e.insert(true);
                 events.push(StreamEvent::ItemAdded(AssistantItem::Output(OutputItem {
                     id: output_id.clone(),
                     timing: ItemTiming::new(),

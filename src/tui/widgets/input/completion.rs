@@ -41,8 +41,7 @@ impl CompletionSource {
     ) -> Option<CompletionRequest> {
         fn last_word(line: &str) -> (usize, &str) {
             line.rsplit_once(' ')
-                .map(|(head, tail)| (head.chars().count() + 1, tail))
-                .unwrap_or((0, line))
+                .map_or((0, line), |(head, tail)| (head.chars().count() + 1, tail))
         }
         let (start, typed) = last_word(line);
         match self {

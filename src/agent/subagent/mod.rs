@@ -1,4 +1,3 @@
-// SLOP
 pub mod candidate;
 
 use anyhow::Result;

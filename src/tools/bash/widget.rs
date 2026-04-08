@@ -27,14 +27,14 @@ impl From<&BashCall> for Element {
                 line = y;
                 x
             }
-            Err(err) => text_element("app error", err.to_string()),
+            Err(err) => text_element("app error", err.clone()),
         });
         let widget = BashWidget {
             // TODO push colored text to name
             command: value.arguments.as_ref().map(|x| {
                 let str = x.command.trim().to_string();
                 CommandWrapped {
-                    no_newlines: !str.contains("\n"),
+                    no_newlines: !str.contains('\n'),
                     element: bash_to_element(&str),
                     str,
                 }
@@ -65,7 +65,7 @@ struct BashWidget {
 impl BashWidget {
     fn oneliner(
         &self,
-        command: &Option<CommandWrapped>,
+        command: Option<&CommandWrapped>,
     ) -> bool {
         command
             .as_ref()
@@ -73,7 +73,7 @@ impl BashWidget {
     }
 
     fn title(&self) -> Line<'static> {
-        if self.oneliner(&self.command)
+        if self.oneliner(self.command.as_ref())
             && let Some(command) = self.command.as_ref()
         {
             bash_to_text(&command.str).lines[0].clone()
@@ -97,7 +97,7 @@ impl HeightComputable for BashWidget {
         if let Some(inner) = &mut self.output {
             height += inner.height(width, ctx);
         }
-        if !self.oneliner(&self.command)
+        if !self.oneliner(self.command.as_ref())
             && let Some(command) = &mut self.command
         {
             height += command.element.height(width, ctx);
@@ -115,7 +115,7 @@ impl HeightComputable for BashWidget {
         if ctx.hide_tools || self.height(self.width, ctx) == 1 {
             return Paragraph::new(self.title()).render_ref(area, buf);
         }
-        if !self.oneliner(&self.command)
+        if !self.oneliner(self.command.as_ref())
             && let Some(command) = &mut self.command
         {
             let height = command.element.height(self.width, ctx);

@@ -108,12 +108,15 @@ impl ScrollElements {
         let relative = if let Some(relative) = self.start.relative_offset {
             relative
         } else {
-            let relative = (self.start.offset as f32) / (self.start.height as f32);
+            let relative = f32::from(self.start.offset) / f32::from(self.start.height);
             self.start.relative_offset = Some(relative);
             relative
         };
         let max_offset = new_height.saturating_sub(1);
-        let new_offset = (relative * (new_height as f32)) as u16;
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let new_offset = (relative * f32::from(new_height)) as u16;
+
         self.start = StartLocation {
             offset: new_offset.min(max_offset),
             height: new_height,

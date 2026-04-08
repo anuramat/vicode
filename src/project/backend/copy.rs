@@ -37,11 +37,11 @@ impl Backend for super::Copy {
         aid: &AgentId,
         git: bool,
     ) -> Result<()> {
-        if !git {
+        if git {
+            worktree(layout, aid, commit, true).await?;
+        } else {
             let path = layout.agent_workdir(aid);
             checkout(layout, commit, path).await?;
-        } else {
-            worktree(layout, aid, commit, true).await?;
         }
         Ok(())
     }
@@ -80,10 +80,10 @@ impl Backend for super::Copy {
     ) -> Result<()> {
         let from = layout.agent_workdir(src_id);
         let to = layout.agent_workdir(aid);
-        if !git {
-            create_dir_all(to.clone()).await?;
-        } else {
+        if git {
             git::worktree(layout, aid, &state.context.commit, false).await?;
+        } else {
+            create_dir_all(to.clone()).await?;
         }
         crate::git::copy_without_dot_git(&from, to).await?;
         Ok(())

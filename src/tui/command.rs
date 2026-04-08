@@ -76,7 +76,7 @@ pub enum CommandName {
     ToggleDeveloper,
     /// toggle markdown rendering
     ToggleMarkdown,
-    /// show/hide CoT
+    /// show/hide reasoning
     ToggleReasoning,
     /// show/hide tab pane
     ToggleTabs,
@@ -328,6 +328,7 @@ impl Default for Keymap {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Insert,

@@ -258,7 +258,6 @@ mod tests {
             },
             &project,
         )
-        .await
         .unwrap();
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(

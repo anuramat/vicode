@@ -87,27 +87,29 @@ impl<'a> App<'a> {
                 Error => STL_ERROR_BG,
             };
             line.push_span(Span::styled(&msg.msg, Style::new().fg(STL_FG)));
+        } else if let Ok(tab) = self.selected_tab() {
+            line.push_span(Span::styled(
+                format!("{}/", &self.project_name),
+                Style::new().fg(STL_DIM_FG),
+            ));
+            line.push_span(Span::styled(tab.aid.to_string(), Style::new().fg(STL_FG)));
         } else {
-            if let Ok(tab) = self.selected_tab() {
-                line.push_span(Span::styled(
-                    format!("{}/", &self.project_name),
-                    Style::new().fg(STL_DIM_FG),
-                ));
-                line.push_span(Span::styled(tab.aid.to_string(), Style::new().fg(STL_FG)));
-            } else {
-                line.push_span(Span::styled(&self.project_name, Style::new().fg(STL_FG)));
-            }
+            line.push_span(Span::styled(&self.project_name, Style::new().fg(STL_FG)));
         }
 
         if let Ok(tab) = self.selected_tab() {
             let remaining_width: usize = (width as usize).saturating_sub(line.width());
 
+            #[allow(clippy::cast_precision_loss)]
             let tokens = {
-                let window = if let Some(window) = tab.agent.state.assistant.config.window {
-                    format!(" / {:.1}", window as f64 / 1000.0)
-                } else {
-                    "".to_string()
-                };
+                let window = tab
+                    .agent
+                    .state
+                    .assistant
+                    .config
+                    .window
+                    .map(|window| format!(" / {:.1}", window as f64 / 1000.0))
+                    .unwrap_or_default();
                 format!(
                     "{:.1}{} kT",
                     tab.agent.state.context.history.total_tokens() as f64 / 1000.0,

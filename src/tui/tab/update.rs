@@ -12,6 +12,7 @@ use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
+use crate::tui::widgets::container::scroll::ScrollElements;
 
 impl Tab<'_> {
     pub fn set_osc7(
@@ -32,12 +33,8 @@ impl Tab<'_> {
         } else {
             None
         };
-        self.agent
-            .state
-            .context
-            .history
-            .handle(generation, event)
-            .expect("history desync");
+        self.agent.state.context.history.handle(generation, event)?;
+
         // XXX proper handling -- resync and show error notification
         if let Some(input) = input {
             self.input.prepend_text(input);
@@ -55,7 +52,7 @@ impl Tab<'_> {
         history: History,
     ) {
         self.agent.state.context.history = history;
-        self.scroll = Default::default();
+        self.scroll = ScrollElements::default();
     }
 
     // XXX does this make sense

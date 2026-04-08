@@ -130,7 +130,7 @@ impl Agent {
         Ok(ControlFlow::Continue(()))
     }
 
-    pub fn idle(&mut self) -> Result<()> {
+    pub fn idle(&self) -> Result<()> {
         anyhow::ensure!(self.tskmgr.idle(), "agent is busy");
         Ok(())
     }
@@ -232,7 +232,6 @@ impl Agent {
             .history
             .handle(generation, event.clone())?;
         match event {
-            HistoryUpdate::GenerationIncremented => return Ok(()),
             HistoryUpdate::TurnResponse(ResponseEvent::Item(ref item)) => {
                 self.execute_tool_calls(item)?;
             }
@@ -240,7 +239,8 @@ impl Agent {
             | HistoryUpdate::CompactResponse(ResponseEvent::Failed(msg)) => {
                 error!("response error in agent {}: {}", self.id, msg);
             }
-            HistoryUpdate::TurnResponse(ResponseEvent::Delta(_))
+            HistoryUpdate::GenerationIncremented
+            | HistoryUpdate::TurnResponse(ResponseEvent::Delta(_))
             | HistoryUpdate::CompactResponse(ResponseEvent::Delta(_)) => return Ok(()),
             _ => {}
         }

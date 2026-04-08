@@ -35,10 +35,10 @@ fn default_stages() -> Vec<Stage> {
         "$XDG_DATA_HOME",
     ]);
     vec![Stage {
-        args,
         ro,
         tmpfs,
-        ..Default::default()
+        args,
+        ..Stage::default()
     }]
 }
 

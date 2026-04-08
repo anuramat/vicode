@@ -82,7 +82,7 @@ impl App<'_> {
                 }
 
                 // notification expiration
-                _ = async {
+                () = async {
                     if let Some(notification) = self.notification.as_ref() {
                         sleep_until(notification.expires_at).await;
                     } else {

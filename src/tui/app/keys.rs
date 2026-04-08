@@ -300,7 +300,6 @@ mod tests {
             },
             &project,
         )
-        .await
         .unwrap();
         tab.input.input = Input::new(InputOpts {
             source: CompletionSource::Freeform(vec![(

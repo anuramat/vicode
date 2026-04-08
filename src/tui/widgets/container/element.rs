@@ -41,6 +41,7 @@ pub struct Element {
     ctx: RenderContext,
 }
 
+#[allow(clippy::struct_excessive_bools)] // fine for a config
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize, SmartDefault, JsonSchema)]
 #[serde(default)]
 pub struct RenderContext {
@@ -65,7 +66,7 @@ impl Element {
             widget: Box::new(widget),
             width: 0,
             height: 0,
-            ctx: Default::default(),
+            ctx: RenderContext::default(),
         }
     }
 
@@ -146,15 +147,18 @@ impl Element {
         });
         self.render(tmp_buf.area, &mut tmp_buf, ctx);
         // then copy the visible part to the destination buffer
-        let drop_cells = offset * area.width;
+        let drop_cells: u32 = (offset * area.width).into();
         let take_cells = area.area();
-        let width = area.width as u32;
+        let width: u32 = area.width.into();
         for i in 0..take_cells {
-            let src_idx = drop_cells + (i as u16);
-            let x = (i % width) as u16;
-            let y = (i / width) as u16;
-            let dest_x: u16 = area.x + x;
-            let dest_y: u16 = area.y + y;
+            let src_idx: u32 = i + drop_cells;
+            let x: u32 = i % width;
+            let y: u32 = i / width;
+            let dest_x: u32 = x + u32::from(area.x);
+            let dest_y: u32 = y + u32::from(area.y);
+
+            let dest_x: u16 = dest_x.try_into().expect("area width overflow");
+            let dest_y: u16 = dest_y.try_into().expect("area height overflow");
             buf[(dest_x, dest_y)] = tmp_buf.content[src_idx as usize].clone();
         }
     }

@@ -59,18 +59,21 @@ fn worktree_no_checkout(
     unsafe {
         // open the repository
         let mut repo_ptr = ptr::null_mut();
-        check(raw::git_repository_open(&mut repo_ptr, repo_cstr.as_ptr()))?;
+        check(raw::git_repository_open(
+            &raw mut repo_ptr,
+            repo_cstr.as_ptr(),
+        ))?;
 
         // init options with --no-checkout
         let mut opts: raw::git_worktree_add_options = std::mem::zeroed();
         {
             check(raw::git_worktree_add_options_init(
-                &mut opts,
+                &raw mut opts,
                 raw::GIT_WORKTREE_ADD_OPTIONS_VERSION,
             ))?;
             // TODO is this line required?
             check(raw::git_checkout_init_options(
-                &mut opts.checkout_options,
+                &raw mut opts.checkout_options,
                 raw::GIT_CHECKOUT_OPTIONS_VERSION,
             ))?;
             opts.reference = wt_ref.raw();
@@ -81,11 +84,11 @@ fn worktree_no_checkout(
         // create the worktree
         let mut worktree_ptr = ptr::null_mut();
         check(raw::git_worktree_add(
-            &mut worktree_ptr,
+            &raw mut worktree_ptr,
             repo_ptr,
             name_cstr.as_ptr(),
             worktree_cstr.as_ptr(),
-            &opts,
+            &raw const opts,
         ))?;
 
         if !worktree_ptr.is_null() {
