@@ -18,6 +18,7 @@ use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabEntry;
 
+#[derive(Debug)]
 struct AppParentSink {
     aid: AgentId,
     tx: Sender<AppEvent>,

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use anyhow::Result;
 use futures::future::Abortable;
 use tokio::sync::mpsc::Sender;
@@ -22,7 +23,7 @@ use crate::project::layout::LayoutTrait;
 
 const CHANNEL_CAPACITY: usize = 100;
 
-// TODO this should store `aid` just like AppEvent implementation
+#[derive(Debug)]
 struct ChannelParentSink(Sender<ParentEvent>);
 
 #[async_trait::async_trait]
@@ -45,7 +46,6 @@ impl ParentSink for ChannelParentSink {
     }
 }
 
-// XXX after refactoring task manager, this should instead translate parent events into AgentEvent::* or something
 pub fn channel_parent_sink(tx: Sender<ParentEvent>) -> ParentHandle {
     Box::new(ChannelParentSink(tx))
 }
@@ -59,7 +59,9 @@ impl Agent {
         commit: String,
         instructions: String,
     ) -> Result<Self> {
-        let state = AgentState::new(&project, id.clone(), commit, instructions).await?;
+        project.new_agent_workdir(&commit, &id, true).await?;
+        let state = AgentState::new(commit, instructions).await?;
+        state.save(&project, &id).await?;
         Ok(Self::from_state(project, parent, id, state))
     }
 
@@ -85,6 +87,17 @@ impl Agent {
         state: AgentState,
     ) -> Self {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
+        let mut tools = ToolSchemas::default();
+        if matches!(state.topology.kind, AgentKind::Subagent { .. }) {
+            // TODO use a const from subagent module
+            // TODO allow recursive calls with max depth from config
+            tools = tools
+                .iter()
+                .filter(|tool| tool.name != "subagent")
+                .cloned()
+                .collect::<Vec<_>>()
+                .into();
+        }
         Self {
             project,
             id,
@@ -93,7 +106,7 @@ impl Agent {
             rx,
             tskmgr: AgentTaskManager::new(),
             tx,
-            tools: ToolSchemas::default(),
+            tools,
         }
     }
 
@@ -115,11 +128,16 @@ impl Agent {
         aid: AgentId,
     ) -> Result<()> {
         self.project
-            .duplicate_agent(&self.id, &aid, &self.state, true)
+            .duplicate_agent_workdir(&self.id, &aid, &self.state.context.commit, true)
             .await?;
-        Self::load(self.project.clone(), self.parent.sibling(aid.clone()), aid)
-            .await?
-            .spawn();
+        let agent = Self::from_state(
+            self.project.clone(),
+            self.parent.sibling(aid.clone()),
+            aid,
+            self.state.clone(),
+        );
+        agent.save().await?;
+        agent.spawn();
         Ok(())
     }
 
@@ -128,17 +146,42 @@ impl Agent {
         self.project.unmount_agent(aid).await?;
         Ok(tokio::fs::remove_dir_all(self.project.agent(aid)).await?)
     }
+
+    pub async fn subagent(
+        &self,
+        parent: ParentHandle,
+        inherit_context: bool,
+    ) -> Result<Self> {
+        let state = AgentState {
+            status: AgentStatus::Idle,
+            assistant: ASSISTANT_POOL
+                .get()
+                .context("assistant pool not initialized")?
+                .next_subagent(&self.state.assistant.id)?,
+            topology: AgentTopology {
+                children: Vec::new(),
+                kind: AgentKind::Subagent {
+                    parent: self.id.clone(),
+                },
+            },
+            context: self.state.context.subagent(inherit_context),
+        };
+        let id = AgentId::new(&self.project).await?;
+        let agent = Self::from_state(self.project.clone(), parent, id, state);
+        self.project
+            .duplicate_agent_workdir(&self.id, &agent.id, &self.state.context.commit, false)
+            .await?;
+        agent.save().await?;
+        Ok(agent)
+    }
 }
 
 impl AgentState {
     /// init a primary agent from scratch
     async fn new(
-        project: &Project,
-        id: AgentId,
         commit: String,
         instructions: String,
     ) -> Result<Self> {
-        project.new_agent(&commit, &id, true).await?;
         let state = Self {
             status: AgentStatus::Idle,
             assistant: ASSISTANT_POOL
@@ -154,7 +197,6 @@ impl AgentState {
                 history: History::with_instructions(instructions),
             },
         };
-        state.save(project, &id).await?;
         Ok(state)
     }
 

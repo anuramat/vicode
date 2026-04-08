@@ -10,7 +10,6 @@ use anyhow::Result;
 use git2::Repository;
 
 use crate::agent::AgentId;
-use crate::agent::AgentState;
 use crate::config::Config;
 use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
@@ -21,7 +20,7 @@ use crate::project::backend::Overlay;
 use crate::project::layout::LayoutTrait;
 use crate::project::layout::ambassador_impl_LayoutTrait;
 
-#[derive(Clone, Delegate)]
+#[derive(Clone, Delegate, Debug)]
 #[delegate(LayoutTrait, target = "layout")]
 pub struct Project {
     layout: Layout,
@@ -152,15 +151,15 @@ impl Project {
         Ok(collected)
     }
 
-    pub async fn duplicate_agent(
+    pub async fn duplicate_agent_workdir(
         &self,
         src_id: &AgentId,
         aid: &AgentId,
-        state: &AgentState,
+        commit: &str,
         git: bool,
     ) -> Result<()> {
         self.backend
-            .duplicate_agent(&self.layout, src_id, aid, state, git)
+            .duplicate_agent_workdir(&self.layout, src_id, aid, commit, git)
             .await
     }
 
@@ -171,12 +170,14 @@ impl Project {
         self.backend.unmount_agent(&self.layout, aid).await
     }
 
-    pub async fn new_agent(
+    pub async fn new_agent_workdir(
         &self,
         commit: &str,
         aid: &AgentId,
         git: bool,
     ) -> Result<()> {
-        self.backend.new_agent(&self.layout, commit, aid, git).await
+        self.backend
+            .new_agent_workdir(&self.layout, commit, aid, git)
+            .await
     }
 }

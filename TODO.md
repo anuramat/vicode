@@ -14,6 +14,7 @@
   - maybe there's a clippy lint? or use astgrep
 - check that tool call timing records execution start+end
 - count tool schema in the token usage
+- replace .map_err with .context()
 
 # UI
 

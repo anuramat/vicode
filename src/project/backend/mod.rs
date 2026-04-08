@@ -8,7 +8,6 @@ use ambassador::delegatable_trait;
 use anyhow::Result;
 
 use crate::agent::AgentId;
-use crate::agent::AgentState;
 use crate::config::Config;
 use crate::project::Layout;
 
@@ -38,7 +37,7 @@ pub trait Backend {
         layout: &Layout,
         config: &Config,
     ) -> Result<()>;
-    async fn new_agent(
+    async fn new_agent_workdir(
         &self,
         layout: &Layout,
         commit: &str,
@@ -60,12 +59,12 @@ pub trait Backend {
         &self,
         layout: &Layout,
     ) -> Result<()>;
-    async fn duplicate_agent(
+    async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
         src_id: &AgentId,
-        aid: &AgentId,
-        state: &AgentState,
+        dst_aid: &AgentId,
+        commit: &str,
         git: bool,
     ) -> Result<()>;
 }

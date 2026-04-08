@@ -82,6 +82,9 @@ impl App<'_> {
                     self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&self.project, &aid).await?;
                 }
             }
+            SubagentDone(out) => {
+                anyhow::bail!("unexpected subagent completion: {out:?}")
+            }
         }
         Ok(())
     }

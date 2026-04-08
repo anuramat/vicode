@@ -1,8 +1,10 @@
 use anyhow::Result;
 
 use crate::agent::Agent;
+use crate::agent::AgentKind;
 use crate::agent::AgentStatus;
 use crate::agent::handle::ParentEvent;
+use crate::agent::subagent::result::diff;
 use crate::agent::task::manager::TaskId;
 
 impl Agent {
@@ -28,6 +30,15 @@ impl Agent {
                 self.start_turn();
             } else {
                 self.sync_status().await?;
+                if let AgentKind::Subagent { parent } = &self.state.topology.kind {
+                    let output = self.state.context.history.last_output()?;
+                    let diff = diff(&self.project, &parent, &self.id)?;
+                    self.parent
+                        .send(ParentEvent::SubagentDone(
+                            crate::agent::subagent::SubagentResult { output, diff },
+                        ))
+                        .await?;
+                }
             }
         }
         Ok(())

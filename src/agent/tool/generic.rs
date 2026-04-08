@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use anyhow::Context;
 use anyhow::Result;
 use serde::Serialize;
 
@@ -8,9 +9,8 @@ use super::traits::ToolCall;
 use super::traits::ToolContext;
 use crate::agent::Agent;
 
-// TODO can we drop Clone for this and tctx?
 // NOTE we have to write explicit bounds because serde heuristics break on Option<T> -- they incorrectly require T to implement Default
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound(
     serialize = "TArgs: serde::Serialize, TResult: serde::Serialize, TMeta: serde::Serialize",
     deserialize = "TArgs: serde::de::DeserializeOwned, TResult: serde::de::DeserializeOwned, TMeta: serde::de::DeserializeOwned",
@@ -22,6 +22,23 @@ pub struct GenericTask<TArgs, TCtx, TMeta, TResult> {
     pub meta: Option<TMeta>,
     /// None if the task has not been run yet; Some(Err) if there was a runtime error (we still send the message to the LLM)
     pub output: Option<Result<TResult, String>>,
+}
+
+// TODO can we drop `Clone` for `GenericTask`? We only need tCtx once, right after we prepare it and start the task
+impl<TArgs, TCtx, TMeta, TResult> Clone for GenericTask<TArgs, TCtx, TMeta, TResult>
+where
+    TArgs: Clone,
+    TMeta: Clone,
+    TResult: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            arguments: self.arguments.clone(),
+            context: None,
+            meta: self.meta.clone(),
+            output: self.output.clone(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -52,13 +69,12 @@ where
             .expect("could not serialize output")
     }
 
-    fn prepare(
+    async fn prepare(
         &mut self,
         agent: &Agent,
     ) -> Result<()> {
-        self.context = TCtx::prepare(self.arguments.as_ref().unwrap(), agent)
-            .unwrap()
-            .into();
+        let args = self.arguments.as_ref().context("arguments not set")?;
+        self.context = Some(TCtx::prepare(args, agent).await?);
         Ok(())
     }
 

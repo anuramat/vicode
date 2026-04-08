@@ -1,3 +1,7 @@
+use derive_more::Deref;
+use derive_more::DerefMut;
+use derive_more::From;
+use derive_more::Into;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -14,7 +18,7 @@ pub struct ToolSchema {
     pub parameters: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, From, Into, Deref, DerefMut)]
 pub struct ToolSchemas(pub Vec<ToolSchema>);
 
 impl Default for ToolSchemas {

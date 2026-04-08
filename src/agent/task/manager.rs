@@ -15,6 +15,7 @@ use crate::llm::history::HistoryGeneration;
 define_uuid!(TaskId);
 
 /// manages tool calls, API requests, subagents
+#[derive(Debug)]
 pub struct AgentTaskManager {
     tasks: JoinSet<()>,
     /// if a task is not in pending, we should ignore the results

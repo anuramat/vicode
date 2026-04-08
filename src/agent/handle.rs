@@ -1,7 +1,10 @@
+use std::fmt::Debug;
 use std::ops::ControlFlow;
 
 use anyhow::Result;
-use futures::future::try_join_all;
+use futures::StreamExt;
+use futures::TryStreamExt;
+use futures::stream;
 use tracing::debug;
 use tracing::error;
 use tracing::instrument;
@@ -10,7 +13,9 @@ use crate::agent::Agent;
 use crate::agent::AgentHandle;
 use crate::agent::AgentStatus;
 use crate::agent::id::AgentId;
-use crate::agent::replica;
+use crate::agent::subagent;
+use crate::agent::subagent::SubagentResult;
+use crate::agent::subagent::replica;
 use crate::agent::task::manager::TaskId;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
@@ -39,6 +44,7 @@ pub enum ParentEvent {
     Started(Box<AgentHandle>),
     HistoryReset(History),
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
+    SubagentDone(SubagentResult),
     // XXX maybe status update should be a variant of history update?
     StatusUpdate(AgentStatus),
     Error(String),
@@ -58,7 +64,7 @@ pub enum ExternalEvent {
 }
 
 #[async_trait::async_trait]
-pub trait ParentSink: Send + Sync {
+pub trait ParentSink: Send + Sync + Debug {
     async fn send(
         &self,
         event: ParentEvent,
@@ -189,11 +195,7 @@ impl Agent {
                 if multiplier <= 1 {
                     self.start_turn();
                 } else {
-                    let replicas =
-                        try_join_all((0..multiplier).map(|_| AgentId::new(&self.project))).await?;
-                    self.state.topology.children.extend(replicas.clone());
-                    self.save().await?;
-                    self.start_replica_turns(replicas);
+                    self.start_replica_turns(multiplier).await?;
                 }
             }
             Compact(n) => {
@@ -233,7 +235,7 @@ impl Agent {
             .handle(generation, event.clone())?;
         match event {
             HistoryUpdate::TurnResponse(ResponseEvent::Item(ref item)) => {
-                self.execute_tool_calls(item)?;
+                self.execute_tool_calls(item).await?;
             }
             HistoryUpdate::TurnResponse(ResponseEvent::Failed(msg))
             | HistoryUpdate::CompactResponse(ResponseEvent::Failed(msg)) => {
@@ -249,20 +251,25 @@ impl Agent {
         Ok(())
     }
 
-    fn start_replica_turns(
+    async fn start_replica_turns(
         &mut self,
-        replicas: Vec<AgentId>,
-    ) {
-        let project = self.project.clone();
-        let parent = self.id.clone();
-        let context = self.state.context.clone();
-        let assistant = self.state.assistant.clone();
+        n: usize,
+    ) -> Result<()> {
+        let handles: Vec<_> = stream::iter(0..n)
+            .map(async |_| subagent::spawn(self, String::new(), true).await)
+            .buffered(16)
+            .try_collect()
+            .await?;
+        self.state
+            .topology
+            .children
+            .extend(handles.iter().map(|handle| handle.id.clone()));
+        self.save().await?;
         self.tskmgr.spawn(
             self.tx.clone(),
-            context.history.generation(),
+            self.state.context.history.generation(),
             move |task| async move {
-                let result =
-                    replica::run_replicas(project, parent, context, assistant, replicas).await?;
+                let result = replica::run_replicas(handles).await?;
                 task.send(HistoryUpdate::DeveloperMessage(
                     DeveloperMessage::SubagentReport(SubagentReportMessage {
                         text: result.report,
@@ -271,6 +278,7 @@ impl Agent {
                 .await
             },
         );
+        Ok(())
     }
 
     pub async fn set_assistant(
@@ -281,7 +289,7 @@ impl Agent {
         self.save().await
     }
 
-    pub fn execute_tool_calls(
+    pub async fn execute_tool_calls(
         &mut self,
         item: &AssistantItem,
     ) -> Result<()> {
@@ -289,7 +297,7 @@ impl Agent {
             && call.task.output().is_none()
         {
             let generation = self.state.context.history.generation();
-            call.task.prepare(self)?;
+            call.task.prepare(self).await?;
             self.tskmgr
                 .spawn(self.tx.clone(), generation, move |task| async move {
                     let handle = TurnHandle {

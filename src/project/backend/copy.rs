@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tokio::fs::create_dir_all;
 
-use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::git;
 use crate::git::checkout;
@@ -30,7 +29,7 @@ impl Backend for super::Copy {
         Ok(())
     }
 
-    async fn new_agent(
+    async fn new_agent_workdir(
         &self,
         layout: &Layout,
         commit: &str,
@@ -70,18 +69,18 @@ impl Backend for super::Copy {
         Ok(())
     }
 
-    async fn duplicate_agent(
+    async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
         src_id: &AgentId,
         aid: &AgentId,
-        state: &AgentState,
+        commit: &str,
         git: bool,
     ) -> Result<()> {
         let from = layout.agent_workdir(src_id);
         let to = layout.agent_workdir(aid);
         if git {
-            git::worktree(layout, aid, &state.context.commit, false).await?;
+            git::worktree(layout, aid, commit, false).await?;
         } else {
             create_dir_all(to.clone()).await?;
         }

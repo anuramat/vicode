@@ -95,6 +95,7 @@ enum SubagentSelector {
 impl AssistantPool {
     pub async fn from_config(config: &Config) -> Result<Self> {
         let providers: HashMap<_, _> = {
+            // TODO stream::iter map buffered try_collect
             let futures = config.providers.iter().map(
                 async |(id, config)| -> Result<(String, Arc<Provider>)> {
                     Ok((id.clone(), Arc::new(Provider::new(config.clone()).await?)))
@@ -164,11 +165,15 @@ impl AssistantPool {
     pub fn next_subagent(
         &self,
         parent: &str,
-    ) -> String {
-        match &self.subagent {
+    ) -> Result<Assistant> {
+        let id = match &self.subagent {
             SubagentSelector::Inherit => parent.to_string(),
             SubagentSelector::RoundRobin(selector) => selector.next(),
-        }
+        };
+        self.assistants
+            .get(&id)
+            .cloned()
+            .with_context(|| format!("failed to get assistant {id} for subagent"))
     }
 }
 
@@ -245,7 +250,7 @@ mod tests {
         let fast = pool.assistant("fast").unwrap();
         let deep = pool.assistant("deep").unwrap();
         assert!(Arc::ptr_eq(&fast.provider, &deep.provider));
-        assert_eq!(pool.next_subagent("fast"), "fast");
+        assert_eq!(pool.next_subagent("fast").unwrap().id, "fast");
     }
 
     #[tokio::test]
@@ -287,8 +292,8 @@ mod tests {
         )
         .unwrap();
         let pool = AssistantPool::from_config(&config).await.unwrap();
-        assert_eq!(pool.next_subagent("fast"), "deep");
-        assert_eq!(pool.next_subagent("fast"), "fast");
+        assert_eq!(pool.next_subagent("fast").unwrap().id, "deep");
+        assert_eq!(pool.next_subagent("fast").unwrap().id, "fast");
     }
 
     #[tokio::test]

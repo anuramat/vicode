@@ -10,7 +10,6 @@ use anyhow::bail;
 use thiserror::Error;
 
 use super::Overlay;
-use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::deps;
 use crate::project::Layout;
@@ -45,7 +44,7 @@ impl Backend for Overlay {
         Ok(())
     }
 
-    async fn new_agent(
+    async fn new_agent_workdir(
         &self,
         layout: &Layout,
         commit: &str,
@@ -102,20 +101,19 @@ impl Backend for Overlay {
         Ok(())
     }
 
-    async fn duplicate_agent(
+    async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
         src_id: &AgentId,
         aid: &AgentId,
-        state: &AgentState,
+        commit: &str,
         git: bool,
     ) -> Result<()> {
         let src = self.overlay_upper(layout, src_id);
         let dst = self.overlay_upper(layout, aid);
         crate::git::copy_without_dot_git(&src, dst).await?;
-        self.init_overlay(layout, &state.context.commit, aid, git)
-            .await?;
-        state.save(layout, aid).await
+        self.init_overlay(layout, commit, aid, git).await?;
+        Ok(())
     }
 }
 

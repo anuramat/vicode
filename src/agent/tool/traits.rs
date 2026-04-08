@@ -18,7 +18,7 @@ pub trait ToolCall: Send + Sync {
 
     async fn run(&mut self);
 
-    fn prepare(
+    async fn prepare(
         &mut self,
         _agent: &Agent,
     ) -> Result<()>;
@@ -26,8 +26,9 @@ pub trait ToolCall: Send + Sync {
 
 // some helper traits:
 
+#[async_trait::async_trait]
 pub trait ToolContext<TArgs>: Send + Sync {
-    fn prepare(
+    async fn prepare(
         _args: &TArgs,
         _agent: &Agent,
     ) -> Result<Self>
@@ -43,8 +44,9 @@ pub trait Function<TCtx = (), TMeta = (), TResult = ()>: Send + Sync {
     ) -> Result<(TResult, TMeta)>;
 }
 
+#[async_trait::async_trait]
 impl<TArgs> ToolContext<TArgs> for () {
-    fn prepare(
+    async fn prepare(
         _args: &TArgs,
         _agent: &Agent,
     ) -> Result<Self>

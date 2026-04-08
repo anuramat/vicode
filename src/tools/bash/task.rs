@@ -10,8 +10,9 @@ use crate::tools::bash::BashArguments;
 use crate::tools::bash::BashContext;
 use crate::tools::bash::BashResult;
 
+#[async_trait::async_trait]
 impl ToolContext<BashArguments> for BashContext {
-    fn prepare(
+    async fn prepare(
         _args: &BashArguments,
         agent: &crate::agent::Agent,
     ) -> Result<Self>

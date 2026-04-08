@@ -71,8 +71,9 @@ pub struct EditContext {
     workdir: PathBuf,
 }
 
+#[async_trait::async_trait]
 impl ToolContext<EditArguments> for EditContext {
-    fn prepare(
+    async fn prepare(
         _: &EditArguments,
         agent: &crate::agent::Agent,
     ) -> Result<Self>

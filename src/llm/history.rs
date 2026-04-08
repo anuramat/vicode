@@ -520,6 +520,41 @@ impl History {
         self.generation += 1;
         Ok(())
     }
+
+    // TODO maybe we can omit this? just insert an assistant message afterwards that explains "you're a subagent"
+    /// `Entries` for subagent -- full copy of latest state but with tool calls dropped in the last message
+    fn subagent_entries(&self) -> Entries {
+        let mut entries = self.state.entries.clone();
+        if let Some(last) = entries.last_mut()
+            && let Message::Assistant(msg) = &mut last.message
+        {
+            msg.content
+                .retain(|_, content| !matches!(content, AssistantItem::ToolCall(_)));
+        }
+        entries
+    }
+
+    pub fn subagent(
+        &self,
+        inherit_context: bool,
+    ) -> Self {
+        let mut result = Self {
+            instructions: self.instructions.clone(),
+            generation: 0,
+            state: HistoryState {
+                token_count: 0,
+                entries: if inherit_context {
+                    self.subagent_entries()
+                } else {
+                    Entries::default()
+                },
+                compact: None,
+            },
+            archive: Vec::new(),
+        };
+        result.recount_tokens();
+        result
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +567,9 @@ mod tests {
     use crate::llm::message::OutputContent;
     use crate::llm::message::OutputItem;
     use crate::llm::tokens::count_text_tokens;
+    use crate::llm::message::ToolCallItem;
+    use crate::tools::bash::BashArguments;
+    use crate::tools::bash::BashCall;
 
     fn response(event: ResponseEvent) -> HistoryUpdate {
         HistoryUpdate::TurnResponse(event)
@@ -551,6 +589,23 @@ mod tests {
                     content: vec![OutputContent::Text(text.into())],
                 }),
             },
+        })
+    }
+
+    fn tool_call(id: &str) -> AssistantItem {
+        AssistantItem::ToolCall(ToolCallItem {
+            id: Some(id.into()),
+            call_id: id.into(),
+            timing: ItemTiming::with_start(2),
+            executed_at_ms: None,
+            task: Box::new(BashCall {
+                arguments: Some(BashArguments {
+                    command: "echo hello".into(),
+                }),
+                output: None,
+                meta: None,
+                context: None,
+            }),
         })
     }
 
@@ -616,6 +671,102 @@ mod tests {
             AssistantMessageStatus::InProgress
         ));
         assert_eq!(history.total_tokens(), 10);
+    }
+
+    #[test]
+    fn subagent_history_resets_generation_and_drops_last_tool_calls() {
+        let mut history = History::with_instructions("be precise".into());
+        history.entries = vec![
+            HistoryEntry {
+                meta: MessageMeta {
+                    timing: ItemTiming::with_start(0),
+                    token_count: 0,
+                },
+                message: Message::User(UserMessage {
+                    text: "parent prompt".into(),
+                }),
+            },
+            HistoryEntry {
+                meta: MessageMeta {
+                    timing: ItemTiming::with_start(0),
+                    token_count: 0,
+                },
+                message: Message::Assistant(AssistantMessage {
+                    finish_reason: AssistantMessageStatus::Success,
+                    content: indexmap! {
+                        "out".into() => AssistantItem::Output(OutputItem {
+                            id: "out".into(),
+                            timing: ItemTiming::with_start(1),
+                            content: vec![OutputContent::Text("done".into())],
+                        }),
+                        "call_1".into() => tool_call("call_1"),
+                    },
+                }),
+            },
+        ]
+        .into();
+        history.generation = 2;
+        history.recount_tokens();
+
+        let child = history.subagent(true);
+
+        assert_eq!(child.generation(), 0);
+        insta::assert_json_snapshot!(serde_json::to_value(&child).unwrap(), @r#"
+        {
+          "archive": [],
+          "instructions": {
+            "text": "be precise",
+            "token_count": 2
+          },
+          "state": {
+            "compact": null,
+            "entries": [
+              {
+                "meta": {
+                  "timing": {
+                    "last_modified_ms": null,
+                    "started_at_ms": 0
+                  },
+                  "token_count": 12
+                },
+                "role": "user",
+                "text": "parent prompt"
+              },
+              {
+                "content": [
+                  [
+                    "out",
+                    {
+                      "Output": {
+                        "content": [
+                          {
+                            "Text": "done"
+                          }
+                        ],
+                        "id": "out",
+                        "timing": {
+                          "last_modified_ms": null,
+                          "started_at_ms": 1
+                        }
+                      }
+                    }
+                  ]
+                ],
+                "finish_reason": "Success",
+                "meta": {
+                  "timing": {
+                    "last_modified_ms": null,
+                    "started_at_ms": 0
+                  },
+                  "token_count": 11
+                },
+                "role": "assistant"
+              }
+            ],
+            "token_count": 23
+          }
+        }
+        "#);
     }
 
     #[test]

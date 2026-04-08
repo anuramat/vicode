@@ -2,12 +2,7 @@ pub mod compact;
 pub mod handle;
 pub mod id;
 pub mod init;
-/// SLOP `replica` module is vibecoded
-#[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
-pub mod replica;
 pub mod run;
-/// SLOP `subagent` module is vibecoded
-#[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
 pub mod subagent;
 pub mod task;
 pub mod tool;
@@ -51,6 +46,7 @@ impl AgentHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct Agent {
     pub project: Project,
     pub id: AgentId,
@@ -143,13 +139,22 @@ pub struct AgentContext {
     pub history: History,
 }
 
+impl AgentContext {
+    pub fn subagent(
+        &self,
+        inherit_context: bool,
+    ) -> Self {
+        Self {
+            commit: self.commit.clone(),
+            history: self.history.subagent(inherit_context),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub enum AgentKind {
     #[default]
     Primary,
-    Replica {
-        parent: AgentId,
-    },
     Subagent {
         parent: AgentId,
     },
