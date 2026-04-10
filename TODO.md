@@ -36,6 +36,7 @@
 
 # core features & QoL
 
+- better prompting in tool descriptions
 - mac support
   - add a default mac sandbox profile
   - detect the platorm and store somewhere

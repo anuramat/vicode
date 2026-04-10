@@ -521,7 +521,6 @@ impl History {
         Ok(())
     }
 
-    // TODO maybe we can omit this? just insert an assistant message afterwards that explains "you're a subagent"
     /// `Entries` for subagent -- full copy of latest state but with tool calls dropped in the last message
     fn subagent_entries(&self) -> Entries {
         let mut entries = self.state.entries.clone();
@@ -531,6 +530,22 @@ impl History {
             msg.content
                 .retain(|_, content| !matches!(content, AssistantItem::ToolCall(_)));
         }
+        // TODO move to a const somewhere
+        let subagent_header = String::from(
+            r"
+You are a subagent, assisting your parent agent.
+Messages above are from the conversation between the user and your parent agent.
+The parent agent will provide you with a task in the next user message, and you should closely follow the instructions in it.
+
+- Do NOT converse, ask questions, or suggest next steps
+- Do NOT editorialize or add meta-commentary
+- Do NOT emit text between tool calls. Use tools silently, then report once at the end.
+- Stay strictly within your directive's scope. If you discover related systems outside your scope, mention them in one sentence at most.
+- Keep your report under 500 words unless the directive specifies otherwise. Be factual and concise.
+- Do NOT describe the file changes you made in your report -- parent agent will receive the file diffs separately.
+",
+        );
+        entries.push_message(Message::Developer(DeveloperMessage::Misc(subagent_header)));
         entries
     }
 
@@ -566,8 +581,8 @@ mod tests {
     use crate::llm::message::CompactMessage;
     use crate::llm::message::OutputContent;
     use crate::llm::message::OutputItem;
-    use crate::llm::tokens::count_text_tokens;
     use crate::llm::message::ToolCallItem;
+    use crate::llm::tokens::count_text_tokens;
     use crate::tools::bash::BashArguments;
     use crate::tools::bash::BashCall;
 
