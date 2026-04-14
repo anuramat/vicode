@@ -36,6 +36,8 @@
 
 # core features & QoL
 
+- let tools take an optional `stage` param: signed int, 0 by default
+  - tools in a single stage execute in parallel, stages execute sequentially
 - better prompting in tool descriptions
 - mac support
   - add a default mac sandbox profile
