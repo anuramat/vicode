@@ -134,7 +134,10 @@ mod tests {
         let task = tokio::spawn(run_child(0, String::new(), child_tx, parent_rx));
 
         child_rx.recv().await.unwrap();
-        parent_tx.send(ParentEvent::Error("oops".into())).await.unwrap();
+        parent_tx
+            .send(ParentEvent::Error("oops".into()))
+            .await
+            .unwrap();
         tokio::task::yield_now().await;
         assert!(!task.is_finished());
 
