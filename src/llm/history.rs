@@ -726,7 +726,11 @@ mod tests {
         let child = history.subagent(true);
 
         assert_eq!(child.generation(), 0);
-        insta::assert_json_snapshot!(serde_json::to_value(&child).unwrap(), @r#"
+        insta::assert_json_snapshot!(serde_json::to_value(&child).unwrap(),
+        {
+            ".state.entries[2].meta.timing.started_at_ms" => "[started_at_ms]",
+        },
+            @r#"
         {
           "archive": [],
           "instructions": {
@@ -776,9 +780,20 @@ mod tests {
                   "token_count": 11
                 },
                 "role": "assistant"
+              },
+              {
+                "Misc": "\nYou are a subagent, assisting your parent agent.\nMessages above are from the conversation between the user and your parent agent.\nThe parent agent will provide you with a task in the next user message, and you should closely follow the instructions in it.\n\n- Do NOT converse, ask questions, or suggest next steps\n- Do NOT editorialize or add meta-commentary\n- Do NOT emit text between tool calls. Use tools silently, then report once at the end.\n- Stay strictly within your directive's scope. If you discover related systems outside your scope, mention them in one sentence at most.\n- Keep your report under 500 words unless the directive specifies otherwise. Be factual and concise.\n- Do NOT describe the file changes you made in your report -- parent agent will receive the file diffs separately.\n",
+                "meta": {
+                  "timing": {
+                    "last_modified_ms": null,
+                    "started_at_ms": "[started_at_ms]"
+                  },
+                  "token_count": 173
+                },
+                "role": "developer"
               }
             ],
-            "token_count": 23
+            "token_count": 196
           }
         }
         "#);
