@@ -188,6 +188,7 @@ mod tests {
                 [keymap.insert]
 
                 [providers.main]
+                api = "responses"
                 base_url = "https://api.example.com/v1"
 
                 [assistants.test]
@@ -236,6 +237,7 @@ mod tests {
                         [keymap.insert]
 
                         [providers.main]
+                        api = "responses"
                         base_url = "https://api.example.com/v1"
 
                         [assistants.test]

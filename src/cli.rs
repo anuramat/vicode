@@ -1,6 +1,8 @@
+use anyhow::Result;
 use clap::Parser;
 
 use crate::config::Config;
+use crate::llm::provider::api::chatgpt::cli::ChatgptCommand;
 
 #[derive(Parser)]
 pub struct Cli {
@@ -13,6 +15,10 @@ pub enum Command {
     /// Manage config
     #[command(subcommand)]
     Config(ConfigCommand),
+    #[allow(clippy::doc_markdown)]
+    /// Manage ChatGPT authentication
+    #[command(subcommand)]
+    Chatgpt(ChatgptCommand),
 }
 
 #[derive(clap::Subcommand)]
@@ -22,9 +28,11 @@ pub enum ConfigCommand {
 }
 
 impl Command {
-    pub fn run(&self) {
+    pub async fn run(&self) -> Result<()> {
         match self {
-            Self::Config(ConfigCommand::Show) => println!("{}", Config::load().unwrap()),
+            Self::Config(ConfigCommand::Show) => println!("{}", Config::load()?),
+            Self::Chatgpt(cmd) => cmd.run().await?,
         }
+        Ok(())
     }
 }

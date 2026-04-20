@@ -344,6 +344,7 @@ mod tests {
                 stages = []
 
                 [providers.main]
+                api = "responses"
                 base_url = "https://api.example.com/v1"
 
                 [assistants.test]

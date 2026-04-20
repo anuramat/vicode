@@ -14,6 +14,9 @@ use crate::llm::message::Message;
 /// SLOP `chat_completions` module is vibecoded
 #[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
 pub mod chat_completions;
+/// SLOP `chatgpt` module is vibecoded
+#[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
+pub mod chatgpt;
 pub mod responses;
 
 pub type AssistantStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, anyhow::Error>> + Send>>;

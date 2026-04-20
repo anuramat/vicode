@@ -7,6 +7,12 @@ provider = "cerebras"
 model = "zai-glm-4.7"
 window = 131000
 
+[assistants.codex]
+provider = "chatgpt"
+model = "gpt-5.4"
+effort = "xhigh"
+window = 400000
+
 [assistants.gpt]
 provider = "openai"
 model = "gpt-5.1-codex-mini"
@@ -24,14 +30,21 @@ model = "glm-5"
 window = 200000
 
 [providers.openrouter]
+api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 key_command = "cat /run/agenix/openrouter"
 
 [providers.llama]
+api = "responses"
 base_url = "$LLAMA_HOST/v1"
 developer_as_user = true
 
+[providers.chatgpt]
+api = "chatgpt"
+retries = 1
+
 [providers.openai]
+api = "responses"
 base_url = "https://api.openai.com/v1"
 key_command = "cat /run/agenix/openai"
 

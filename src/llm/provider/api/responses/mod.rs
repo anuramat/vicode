@@ -19,7 +19,6 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::config::ProviderConfig;
 use crate::llm::message::AsMessageText;
 use crate::llm::message::AssistantItem;
 use crate::llm::message::DeveloperMessage;
@@ -38,14 +37,11 @@ pub struct ResponsesApi {
 }
 
 impl ResponsesApi {
-    pub fn new(
+    pub const fn new(
         client: Client<OpenAIConfig>,
-        config: ProviderConfig,
+        compat: ApiCompatConfig,
     ) -> Self {
-        Self {
-            client,
-            compat: config.compat,
-        }
+        Self { client, compat }
     }
 }
 
@@ -60,19 +56,25 @@ impl Api for ResponsesApi {
         tools: ToolSchemas,
     ) -> Result<StartedAssistantStream> {
         let request = request(model, instructions, messages, tools, &self.compat)?;
-        let started_at_ms = now_ms();
         let inner = self.client.responses().create_stream(request).await?;
-        Ok(StartedAssistantStream {
-            started_at_ms,
-            stream: Box::pin(ResponsesStream {
-                inner,
-                _permit: permit,
-            }),
-        })
+        Ok(started_stream(permit, inner))
     }
 }
 
-fn request(
+pub fn started_stream(
+    permit: OwnedSemaphorePermit,
+    inner: responses::ResponseStream,
+) -> StartedAssistantStream {
+    StartedAssistantStream {
+        started_at_ms: now_ms(),
+        stream: Box::pin(ResponsesStream {
+            inner,
+            _permit: permit,
+        }),
+    }
+}
+
+pub fn request(
     model: ModelConfig,
     instructions: String,
     mut messages: Vec<Message>,

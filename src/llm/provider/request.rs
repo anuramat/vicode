@@ -36,8 +36,8 @@ impl Assistant {
                     )
                     .await
             },
-            self.provider.config.backoff_ms,
-            self.provider.config.retries,
+            self.provider.config.limits().backoff_ms,
+            self.provider.config.limits().retries,
         )
         .await
     }

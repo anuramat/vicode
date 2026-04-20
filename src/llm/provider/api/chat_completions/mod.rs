@@ -11,7 +11,6 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::config::ProviderConfig;
 use crate::llm::message::Message;
 use crate::llm::message::now_ms;
 use crate::llm::provider::api::Api;
@@ -26,12 +25,9 @@ pub struct ChatCompletionsApi {
 impl ChatCompletionsApi {
     pub fn new(
         client: Client<OpenAIConfig>,
-        config: ProviderConfig,
+        compat: ApiCompatConfig,
     ) -> Self {
-        Self {
-            client,
-            compat: config.compat,
-        }
+        Self { client, compat }
     }
 }
 

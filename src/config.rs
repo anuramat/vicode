@@ -14,7 +14,6 @@ use xdg::BaseDirectories;
 
 use crate::deps;
 pub use crate::llm::provider::ApiCompatConfig;
-pub use crate::llm::provider::ApiType;
 pub use crate::llm::provider::ProviderConfig;
 pub use crate::llm::provider::assistant::AssistantConfig;
 pub use crate::llm::provider::assistant::ModelConfig;
@@ -201,6 +200,8 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     #[test]
@@ -223,6 +224,7 @@ mod tests {
             stages = []
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
@@ -268,6 +270,7 @@ mod tests {
             "q" = "quit"
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
@@ -284,5 +287,123 @@ mod tests {
         let colon = ":".parse::<crate::tui::command::KeyChord>().unwrap();
         assert!(config.keymap.normal.contains_key(&q));
         assert!(!config.keymap.normal.contains_key(&colon));
+    }
+
+    #[test]
+    fn parses_chatgpt_provider() {
+        let config = Config::parse_with_defaults(
+            r#"
+            primary_assistant = ["fast"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
+
+            [keymap.cmdline]
+
+            [keymap.normal]
+
+            [keymap.insert]
+
+            [providers.main]
+            api = "chatgpt"
+            concurrency = 1
+            rpm = 1
+            retries = 2
+            backoff_ms = 10
+
+            [assistants.fast]
+            provider = "main"
+            model = "gpt-fast"
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(
+            config.providers["main"],
+            ProviderConfig::Chatgpt(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_extra_fields_on_chatgpt_provider() {
+        for extra in [
+            "base_url = \"http://x\"",
+            "key_command = \"echo nope\"",
+            "oauth_issuer = \"x\"",
+            "oauth_client_id = \"x\"",
+        ] {
+            let toml = format!(
+                r#"
+                primary_assistant = ["fast"]
+                shell_cmd = ["bash", "-c"]
+
+                [sandbox]
+                kind = "bwrap"
+                bin = "bwrap"
+                args = []
+                stages = []
+
+                [keymap.cmdline]
+                [keymap.normal]
+                [keymap.insert]
+
+                [providers.main]
+                api = "chatgpt"
+                {extra}
+
+                [assistants.fast]
+                provider = "main"
+                model = "gpt-fast"
+                "#
+            );
+            assert!(
+                Config::parse_with_defaults(&toml).is_err(),
+                "expected error for extra field: {extra}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_multiple_chatgpt_providers() {
+        let config = Config::parse_with_defaults(
+            r#"
+            primary_assistant = ["fast"]
+            shell_cmd = ["bash", "-c"]
+
+            [sandbox]
+            kind = "bwrap"
+            bin = "bwrap"
+            args = []
+            stages = []
+
+            [keymap.cmdline]
+            [keymap.normal]
+            [keymap.insert]
+
+            [providers.chatgpt1]
+            api = "chatgpt"
+
+            [providers.chatgpt2]
+            api = "chatgpt"
+            rpm = 30
+
+            [assistants.fast]
+            provider = "chatgpt1"
+            model = "gpt-fast"
+            "#,
+        )
+        .unwrap();
+        assert!(matches!(
+            config.providers["chatgpt1"],
+            ProviderConfig::Chatgpt(_)
+        ));
+        assert!(matches!(
+            config.providers["chatgpt2"],
+            ProviderConfig::Chatgpt(_)
+        ));
+        assert_eq!(config.providers["chatgpt2"].limits().rpm, 30);
     }
 }

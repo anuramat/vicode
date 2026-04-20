@@ -36,7 +36,10 @@ fn init_tracing(project: &Project) -> Result<WorkerGuard> {
 #[tokio::main]
 async fn main() {
     if let Some(command) = Cli::parse().command {
-        return command.run();
+        if let Err(err) = command.run().await {
+            fatal(&err);
+        }
+        return;
     }
 
     let config = Config::load().unwrap();
@@ -45,8 +48,12 @@ async fn main() {
     let result = App::launch(project).await;
     App::reset_terminal();
     if let Err(err) = result {
-        eprintln!("{err:?}");
-        eprintln!("{err:#?}");
-        std::process::exit(1);
+        fatal(&err);
     }
+}
+
+fn fatal(err: &anyhow::Error) -> ! {
+    eprintln!("{err:?}");
+    eprintln!("{err:#?}");
+    std::process::exit(1);
 }

@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
+use async_openai::Client;
+use async_openai::config::OpenAIConfig;
 use governor::DefaultDirectRateLimiter;
 use governor::Quota;
 use governor::RateLimiter;
@@ -19,6 +21,8 @@ use tokio::sync::Semaphore;
 use crate::deps;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::chat_completions::ChatCompletionsApi;
+use crate::llm::provider::api::chatgpt::ChatgptApi;
+use crate::llm::provider::api::chatgpt::ChatgptAuthManager;
 use crate::llm::provider::api::responses::ResponsesApi;
 
 #[derive(Debug)]
@@ -29,10 +33,17 @@ pub struct Provider {
     pub semaphore: Arc<Semaphore>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "api", rename_all = "snake_case")]
+pub enum ProviderConfig {
+    Responses(ApiKeyProvider),
+    ChatCompletions(ApiKeyProvider),
+    Chatgpt(ChatgptProvider),
+}
+
 #[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
-pub struct ProviderConfig {
-    pub api: ApiType,
+pub struct ApiKeyProvider {
     /// base URL for the api; expands env vars
     #[default = "localhost"]
     pub base_url: String,
@@ -43,6 +54,20 @@ pub struct ProviderConfig {
     #[serde(flatten)]
     pub compat: ApiCompatConfig,
 
+    #[serde(flatten)]
+    pub limits: RateLimits,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, Serialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChatgptProvider {
+    #[serde(flatten)]
+    pub limits: RateLimits,
+}
+
+#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimits {
     /// max number of concurrent requests
     #[default = 1]
     pub concurrency: usize,
@@ -57,14 +82,6 @@ pub struct ProviderConfig {
     pub backoff_ms: u64,
 }
 
-#[derive(Deserialize, Default, Debug, Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ApiType {
-    #[default]
-    Responses,
-    ChatCompletions,
-}
-
 #[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct ApiCompatConfig {
@@ -77,64 +94,78 @@ pub struct ApiCompatConfig {
 }
 
 impl ProviderConfig {
-    pub fn base_url(&self) -> Result<String> {
-        Ok(shellexpand::full(&self.base_url)?.into_owned())
+    pub const fn limits(&self) -> &RateLimits {
+        match self {
+            Self::Responses(p) | Self::ChatCompletions(p) => &p.limits,
+            Self::Chatgpt(p) => &p.limits,
+        }
+    }
+
+    pub const fn is_chatgpt(&self) -> bool {
+        matches!(self, Self::Chatgpt(_))
     }
 }
 
 impl Provider {
-    async fn new(provider_config: ProviderConfig) -> Result<Self> {
-        let openai_config = {
-            let mut openai_config = async_openai::config::OpenAIConfig::new()
-                .with_api_base(&provider_config.base_url()?);
-            if let Some(key) = Self::key(provider_config.key_command.as_deref()).await? {
-                openai_config = openai_config.with_api_key(key);
+    async fn new(
+        provider_id: String,
+        provider_config: ProviderConfig,
+    ) -> Result<Self> {
+        let api: Arc<dyn Api> = match &provider_config {
+            ProviderConfig::Responses(p) => {
+                Arc::new(ResponsesApi::new(openai_client(p).await?, p.compat.clone()))
             }
-            openai_config
-        };
-
-        let client = async_openai::Client::with_config(openai_config);
-        let api: Arc<dyn Api> = match provider_config.api {
-            crate::config::ApiType::Responses => {
-                Arc::new(ResponsesApi::new(client, provider_config.clone()))
-            }
-            crate::config::ApiType::ChatCompletions => {
-                Arc::new(ChatCompletionsApi::new(client, provider_config.clone()))
+            ProviderConfig::ChatCompletions(p) => Arc::new(ChatCompletionsApi::new(
+                openai_client(p).await?,
+                p.compat.clone(),
+            )),
+            ProviderConfig::Chatgpt(_) => {
+                Arc::new(ChatgptApi::new(ChatgptAuthManager::new(&provider_id)?))
             }
         };
 
+        let limits = provider_config.limits();
         Ok(Self {
             ratelimiter: RateLimiter::direct(Quota::per_minute(
-                provider_config
+                limits
                     .rpm
                     .try_into()
                     .with_context(|| "invalid rpm provided")?,
             )),
             api,
-            semaphore: Arc::new(Semaphore::new(provider_config.concurrency)),
+            semaphore: Arc::new(Semaphore::new(limits.concurrency)),
             config: provider_config,
         })
     }
+}
 
-    async fn key(command: Option<&str>) -> Result<Option<String>> {
-        let Some(command) = command else {
-            return Ok(None);
-        };
-        let output = tokio::process::Command::new(deps::BASH)
-            .args(["-c", command])
-            .output()
-            .await
-            .context("Failed to run API key command")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "API key command failed with status {}",
-            output.status
-        );
-        Ok(Some(
-            String::from_utf8(output.stdout)
-                .context("API key command did not produce valid UTF-8")?
-                .trim()
-                .to_string(),
-        ))
+async fn openai_client(p: &ApiKeyProvider) -> Result<Client<OpenAIConfig>> {
+    let base = shellexpand::full(&p.base_url)?;
+    let mut cfg = OpenAIConfig::new().with_api_base(&*base);
+    if let Some(k) = key(p.key_command.as_deref()).await? {
+        cfg = cfg.with_api_key(k);
     }
+    Ok(Client::with_config(cfg))
+}
+
+async fn key(command: Option<&str>) -> Result<Option<String>> {
+    let Some(command) = command else {
+        return Ok(None);
+    };
+    let output = tokio::process::Command::new(deps::BASH)
+        .args(["-c", command])
+        .output()
+        .await
+        .context("Failed to run API key command")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "API key command failed with status {}",
+        output.status
+    );
+    Ok(Some(
+        String::from_utf8(output.stdout)
+            .context("API key command did not produce valid UTF-8")?
+            .trim()
+            .to_string(),
+    ))
 }

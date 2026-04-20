@@ -98,7 +98,10 @@ impl AssistantPool {
             // TODO stream::iter map buffered try_collect
             let futures = config.providers.iter().map(
                 async |(id, config)| -> Result<(String, Arc<Provider>)> {
-                    Ok((id.clone(), Arc::new(Provider::new(config.clone()).await?)))
+                    Ok((
+                        id.clone(),
+                        Arc::new(Provider::new(id.clone(), config.clone()).await?),
+                    ))
                 },
             );
             try_join_all(futures).await?.into_iter().collect()
@@ -228,6 +231,7 @@ mod tests {
             [keymap.insert]
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
@@ -274,6 +278,7 @@ mod tests {
             [keymap.insert]
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
@@ -316,6 +321,7 @@ mod tests {
             [keymap.insert]
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
@@ -368,6 +374,7 @@ mod tests {
             [keymap.insert]
 
             [providers.main]
+            api = "responses"
             base_url = "https://api.example.com/v1"
             concurrency = 1
             rpm = 1
