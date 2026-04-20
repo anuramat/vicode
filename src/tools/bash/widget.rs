@@ -73,6 +73,7 @@ fn command(cmd: &str) -> (Section, Option<u16>) {
     let highlighted = HIGHLIGHTER.highlight(cmd.trim(), &HIGHLIGHTER.bash);
 
     let width = if let [line] = highlighted.lines.as_slice() {
+        #[allow(clippy::cast_possible_truncation)]
         Some(line.width() as u16)
     } else {
         None

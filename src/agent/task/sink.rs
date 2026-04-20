@@ -3,9 +3,9 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::handle::AgentEvent;
 use crate::agent::task::manager::TaskId;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::ResponseEvent;
 
 #[derive(Clone)]
 pub struct TaskHandle {
@@ -29,7 +29,7 @@ pub enum TurnType {
 impl TurnHandle {
     pub async fn send(
         &self,
-        event: ResponseEvent,
+        event: AssistantEvent,
     ) -> Result<()> {
         match self.turn_type {
             TurnType::Default => self.task.send(HistoryUpdate::TurnResponse(event)).await,

@@ -20,15 +20,14 @@ use crate::agent::task::manager::TaskId;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
 use crate::llm::history;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::ResponseEvent;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::DeveloperMessage;
-use crate::llm::message::SubagentReportMessage;
-use crate::llm::message::now_ms;
+use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::DeveloperMessage;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::utils::now;
 
 const ABORTED_BY_USER: &str = "aborted by user";
 
@@ -86,28 +85,26 @@ pub struct UserPrompt {
 }
 
 impl Agent {
-    pub async fn set_status(
-        &mut self,
-        status: AgentStatus,
-    ) -> Result<()> {
-        // TODO move ParentEvent::Error event emission here?
-        if self.state.status == status {
-            return Ok(());
+    pub fn derive_status(&self) -> AgentStatus {
+        let busy = !self.tskmgr.idle();
+        match self.history().activity() {
+            history::Activity::Normal { state } => AgentStatus::Normal(state.turn_status(busy)),
+            history::Activity::Compacting { compact, .. } => {
+                AgentStatus::Compact(compact.state.turn_status(busy))
+            }
         }
-        self.state.status = status.clone();
-        self.parent.send(ParentEvent::StatusUpdate(status)).await?;
-        Ok(())
     }
 
-    // XXX try to drop this
     pub async fn sync_status(&mut self) -> Result<()> {
-        let status = match AgentStatus::from_history(&self.state.context.history) {
-            AgentStatus::Idle if matches!(self.state.status, AgentStatus::Error(_)) => {
-                self.state.status.clone()
-            }
-            status => status,
-        };
-        self.set_status(status).await
+        let new_status = self.derive_status();
+        if new_status == self.state.status {
+            return Ok(());
+        }
+        self.state.status = new_status.clone();
+        self.parent
+            .send(ParentEvent::StatusUpdate(new_status))
+            .await?;
+        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -120,20 +117,21 @@ impl Agent {
 
         debug!(event = ?event, "handling agent event");
 
-        match event {
+        let result = match event {
             TaskDone(tid, result) => {
                 self.handle_task_result(tid, result).await?;
+                ControlFlow::Continue(())
             }
             TaskEvent(tid, generation, event) => {
                 if self.tskmgr.pending(&tid) {
                     self.handle_history(generation, event).await?;
                 }
+                ControlFlow::Continue(())
             }
-            External(event) => {
-                return self.handle_external(event).await;
-            }
-        }
-        Ok(ControlFlow::Continue(()))
+            External(event) => self.handle_external(event).await?,
+        };
+        self.sync_status().await?;
+        Ok(result)
     }
 
     pub fn idle(&self) -> Result<()> {
@@ -142,10 +140,10 @@ impl Agent {
     }
 
     async fn increment_generation(&mut self) -> Result<HistoryGeneration> {
-        let generation = self.state.context.history.generation();
+        let generation = self.history().generation();
         self.handle_history(generation, HistoryUpdate::GenerationIncremented)
             .await?;
-        Ok(self.state.context.history.generation())
+        Ok(self.history().generation())
     }
 
     async fn handle_external(
@@ -164,13 +162,12 @@ impl Agent {
             Abort => {
                 self.tskmgr.abort().await;
                 let g = self.increment_generation().await?;
-                let event = if self.state.context.history.compacting() {
-                    HistoryUpdate::CompactResponse(ResponseEvent::Failed(ABORTED_BY_USER.into()))
+                let event = if self.history().compacting() {
+                    HistoryUpdate::CompactResponse(AssistantEvent::Failed(ABORTED_BY_USER.into()))
                 } else {
-                    HistoryUpdate::TurnResponse(ResponseEvent::Failed(ABORTED_BY_USER.into()))
+                    HistoryUpdate::TurnResponse(AssistantEvent::Failed(ABORTED_BY_USER.into()))
                 };
                 self.handle_history(g, event).await?;
-                self.sync_status().await?;
             }
             Delete => {
                 self.tskmgr.abort().await;
@@ -191,9 +188,8 @@ impl Agent {
                 self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
                     .await?;
                 self.increment_generation().await?;
-                self.set_status(AgentStatus::InProgress).await?;
                 if multiplier <= 1 {
-                    self.start_turn();
+                    self.start_turn().await?;
                 } else {
                     self.start_replica_turns(multiplier).await?;
                 }
@@ -206,11 +202,10 @@ impl Agent {
             Retry => {
                 self.idle()?;
                 self.increment_generation().await?;
-                if self.state.context.history.compact.is_some() {
+                if self.history().compacting() {
                     self.compact_turn().await?;
                 } else {
-                    self.set_status(AgentStatus::InProgress).await?;
-                    self.start_turn();
+                    self.start_turn().await?;
                 }
             }
             SetAssistant(id) => {
@@ -234,16 +229,16 @@ impl Agent {
             .history
             .handle(generation, event.clone())?;
         match event {
-            HistoryUpdate::TurnResponse(ResponseEvent::Item(ref item)) => {
+            HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
                 self.execute_tool_calls(item).await?;
             }
-            HistoryUpdate::TurnResponse(ResponseEvent::Failed(msg))
-            | HistoryUpdate::CompactResponse(ResponseEvent::Failed(msg)) => {
+            HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
+            | HistoryUpdate::CompactResponse(AssistantEvent::Failed(msg)) => {
                 error!("response error in agent {}: {}", self.id, msg);
             }
             HistoryUpdate::GenerationIncremented
-            | HistoryUpdate::TurnResponse(ResponseEvent::Delta(_))
-            | HistoryUpdate::CompactResponse(ResponseEvent::Delta(_)) => return Ok(()),
+            | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
+            | HistoryUpdate::CompactResponse(AssistantEvent::Delta(_)) => return Ok(()),
             _ => {}
         }
         // TODO save less often; save on errors
@@ -267,14 +262,14 @@ impl Agent {
         self.save().await?;
         self.tskmgr.spawn(
             self.tx.clone(),
-            self.state.context.history.generation(),
+            self.history().generation(),
             move |task| async move {
+                let created_at = now();
                 let result = replica::run_replicas(handles).await?;
-                task.send(HistoryUpdate::DeveloperMessage(
-                    DeveloperMessage::SubagentReport(SubagentReportMessage {
-                        text: result.report,
-                    }),
-                ))
+                task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
+                    result.report,
+                    created_at,
+                )))
                 .await
             },
         );
@@ -296,7 +291,7 @@ impl Agent {
         if let AssistantItem::ToolCall(mut call) = item.clone()
             && call.task.output().is_none()
         {
-            let generation = self.state.context.history.generation();
+            let generation = self.history().generation();
             call.task.prepare(self).await?;
             self.tskmgr
                 .spawn(self.tx.clone(), generation, move |task| async move {
@@ -305,9 +300,11 @@ impl Agent {
                         turn_type: TurnType::Default,
                     };
                     call.task.run().await;
-                    call.executed_at_ms = Some(now_ms());
+                    call.touch_ready_at_now();
                     handle
-                        .send(ResponseEvent::Item(Box::new(AssistantItem::ToolCall(call))))
+                        .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+                            call,
+                        ))))
                         .await
                 });
         }
@@ -318,7 +315,10 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use futures::future::pending;
+    use tokio::sync::mpsc::Receiver;
     use tokio::sync::mpsc::channel;
+    use tokio::time::Duration;
+    use tokio::time::timeout;
 
     use super::*;
     use crate::agent::AgentState;
@@ -328,6 +328,18 @@ mod tests {
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
+
+    const RX_TIMEOUT: Duration = Duration::from_secs(1);
+
+    async fn recv<T>(
+        rx: &mut Receiver<T>,
+        name: &str,
+    ) -> T {
+        timeout(RX_TIMEOUT, rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {name}"))
+            .unwrap_or_else(|| panic!("{name} channel closed"))
+    }
 
     async fn assistant() -> Assistant {
         AssistantPool::from_config(
@@ -378,7 +390,8 @@ mod tests {
                 assistant: assistant.clone(),
                 topology: Default::default(),
                 context: crate::agent::AgentContext {
-                    ..Default::default()
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -391,7 +404,7 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::TurnResponse(ResponseEvent::Started(0)))
+            .handle(0, HistoryUpdate::TurnResponse(AssistantEvent::Created(0)))
             .unwrap();
         agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
             pending::<Result<()>>().await
@@ -400,22 +413,24 @@ mod tests {
         let _ = agent.handle_external(ExternalEvent::Abort).await.unwrap();
 
         let events = [
-            parent_rx.recv().await.unwrap(),
-            parent_rx.recv().await.unwrap(),
-            parent_rx.recv().await.unwrap(),
+            recv(&mut parent_rx, "parent event").await,
+            recv(&mut parent_rx, "parent event").await,
+            recv(&mut parent_rx, "parent event").await,
         ];
         assert!(matches!(
             events.as_slice(),
             [
                 ParentEvent::HistoryUpdate(_, HistoryUpdate::GenerationIncremented),
-                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(ResponseEvent::Failed(msg))),
-                ParentEvent::StatusUpdate(crate::agent::AgentStatus::Error(status)),
+                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))),
+                ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
+                    crate::llm::history::TurnStatus::Failed(status),
+                )),
             ] if msg == ABORTED_BY_USER && status == ABORTED_BY_USER
         ));
         assert!(matches!(
-            agent.state.context.history.last().map(|entry| &entry.message),
-            Some(crate::llm::message::Message::Assistant(crate::llm::message::AssistantMessage {
-                finish_reason: crate::llm::message::AssistantMessageStatus::Error(msg),
+            agent.state.context.history.state().last(),
+            Some(crate::llm::history::message::Message::Assistant(crate::llm::history::message::AssistantMessage {
+                status: crate::llm::history::message::AssistantStatus::Error(msg),
                 ..
             })) if msg == ABORTED_BY_USER
         ));
@@ -443,7 +458,8 @@ mod tests {
                 assistant: assistant.clone(),
                 topology: Default::default(),
                 context: crate::agent::AgentContext {
-                    ..Default::default()
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -456,29 +472,23 @@ mod tests {
         history
             .handle(
                 0,
-                HistoryUpdate::DeveloperMessage(DeveloperMessage::new("x".repeat(2000))),
+                HistoryUpdate::DeveloperMessage(DeveloperMessage::misc("x".repeat(2000))),
             )
             .unwrap();
         history
-            .handle(
-                0,
-                HistoryUpdate::CompactStart {
-                    dropped: 1,
-                    needs_another_turn: false,
-                },
-            )
+            .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
             .unwrap();
         agent
             .handle_history(
                 0,
-                HistoryUpdate::CompactResponse(ResponseEvent::Failed("oops".into())),
+                HistoryUpdate::CompactResponse(AssistantEvent::Failed("oops".into())),
             )
             .await
             .unwrap();
 
         let _ = agent.handle_external(ExternalEvent::Retry).await.unwrap();
 
-        assert!(agent.state.context.history.compact.is_some());
+        assert!(agent.state.context.history.compacting());
 
         tokio::fs::remove_dir_all(project.agent(&aid))
             .await

@@ -234,7 +234,6 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentHandle;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
@@ -242,6 +241,7 @@ mod tests {
     use crate::agent::handle::AgentEvent;
     use crate::agent::id::AgentId;
     use crate::config::Config;
+    use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
@@ -296,10 +296,13 @@ mod tests {
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
-            status: AgentStatus::Idle,
+            status: AgentStatus::default(),
             assistant: assistant().await,
             topology: AgentTopology::default(),
-            context: AgentContext::default(),
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
         };
         let mut tab = Tab::new(
             tx,

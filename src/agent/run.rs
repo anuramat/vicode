@@ -5,7 +5,6 @@ use futures::stream::AbortHandle;
 
 use crate::agent::Agent;
 use crate::agent::AgentHandle;
-use crate::agent::AgentStatus;
 use crate::agent::handle::ParentEvent;
 
 impl Agent {
@@ -33,7 +32,6 @@ impl Agent {
                 Err(e) => {
                     tracing::error!("error in agent {}: {:?}", self.id, e);
                     self.parent.send(ParentEvent::Error(e.to_string())).await?;
-                    self.set_status(AgentStatus::Error(e.to_string())).await?;
                 }
             }
         }

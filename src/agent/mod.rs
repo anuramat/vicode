@@ -22,10 +22,9 @@ use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::history::Entries;
+use crate::forward;
 use crate::llm::history::History;
-use crate::llm::message::AssistantMessageStatus;
-use crate::llm::message::Message;
+use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
 
@@ -50,7 +49,6 @@ impl AgentHandle {
 pub struct Agent {
     pub project: Project,
     pub id: AgentId,
-    /// persistent and/or visible in UI
     pub state: AgentState,
     /// parent
     pub parent: ParentHandle,
@@ -64,6 +62,7 @@ pub struct Agent {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentState {
+    /// last emitted status for deduplication of status updates
     #[serde(skip)]
     pub status: AgentStatus,
     pub assistant: Assistant,
@@ -71,58 +70,35 @@ pub struct AgentState {
     pub context: AgentContext,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, PartialEq, Eq, Display)]
 pub enum AgentStatus {
-    #[default]
-    #[display("idle")]
-    Idle,
-    #[display("in progress")]
-    InProgress,
-    #[display("error: {_0}")]
-    Error(String),
-    #[display("compacting")]
-    Compacting,
+    Normal(TurnStatus),
+    #[display("compacting: {_0}")]
+    Compact(TurnStatus),
+}
+
+impl Default for AgentStatus {
+    fn default() -> Self {
+        Self::Normal(TurnStatus::Idle)
+    }
 }
 
 impl AgentStatus {
-    pub fn from_history(history: &History) -> Self {
-        history
-            .compact
-            .as_ref()
-            .and_then(|compact| Self::from_entries(&compact.entries))
-            .or_else(|| Self::from_entries(history))
-            .unwrap_or(Self::Idle)
-    }
-
-    fn from_entries(entries: &Entries) -> Option<Self> {
-        match entries.last().map(|entry| &entry.message) {
-            Some(Message::Assistant(msg)) => Some(msg.finish_reason.clone().into()),
-            _ => None,
+    pub const fn turn(&self) -> &TurnStatus {
+        match self {
+            Self::Normal(t) | Self::Compact(t) => t,
         }
     }
 
     pub const fn idle(&self) -> bool {
-        match self {
-            Self::InProgress | Self::Compacting => false,
-            Self::Idle | Self::Error(_) => true,
-        }
+        !matches!(self.turn(), TurnStatus::InProgress)
     }
 
     pub const fn label(&self) -> &'static str {
-        match self {
-            Self::InProgress | Self::Compacting => "+",
-            Self::Idle => " ",
-            Self::Error(_) => "!",
-        }
-    }
-}
-
-impl From<AssistantMessageStatus> for AgentStatus {
-    fn from(value: AssistantMessageStatus) -> Self {
-        match value {
-            AssistantMessageStatus::InProgress => Self::InProgress,
-            AssistantMessageStatus::Success => Self::Idle,
-            AssistantMessageStatus::Error(s) => Self::Error(s),
+        match self.turn() {
+            TurnStatus::InProgress => "+",
+            TurnStatus::Idle => " ",
+            TurnStatus::Failed(_) => "!",
         }
     }
 }
@@ -133,7 +109,7 @@ pub struct AgentTopology {
     pub children: Vec<AgentId>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentContext {
     pub commit: String,
     pub history: History,
@@ -158,6 +134,12 @@ pub enum AgentKind {
     Subagent {
         parent: AgentId,
     },
+}
+
+impl Agent {
+    forward! {
+        history: History = self.state.context.history;
+    }
 }
 
 #[cfg(test)]
@@ -208,9 +190,12 @@ mod tests {
     async fn status_is_not_persisted() {
         let state = AgentState {
             assistant: assistant().await,
-            status: AgentStatus::Error("oops".into()),
+            status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
             topology: Default::default(),
-            context: Default::default(),
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
         };
 
         let serialized = serde_json::to_value(&state).unwrap();
@@ -252,6 +237,6 @@ mod tests {
             })
             .await;
         let restored: AgentState = serde_json::from_value(serialized).unwrap();
-        assert_eq!(restored.status, AgentStatus::Idle);
+        assert_eq!(restored.status, AgentStatus::default());
     }
 }

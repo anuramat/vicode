@@ -20,6 +20,7 @@ use crate::agent::handle::ParentEvent;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
 use crate::agent::init::channel_parent_sink;
+use crate::llm::history::TurnStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentResult {
@@ -80,7 +81,10 @@ async fn run_child(
         match parent_rx.recv().await {
             Some(event) => match event {
                 ParentEvent::SubagentDone(s) => return Ok(s),
-                ParentEvent::StatusUpdate(AgentStatus::Error(err)) => {
+                ParentEvent::StatusUpdate(
+                    AgentStatus::Normal(TurnStatus::Failed(err))
+                    | AgentStatus::Compact(TurnStatus::Failed(err)),
+                ) => {
                     anyhow::bail!("subagent error: {err}");
                 }
                 _ => {}
@@ -142,7 +146,9 @@ mod tests {
         assert!(!task.is_finished());
 
         parent_tx
-            .send(ParentEvent::StatusUpdate(AgentStatus::Error("oops".into())))
+            .send(ParentEvent::StatusUpdate(AgentStatus::Normal(
+                TurnStatus::Failed("oops".into()),
+            )))
             .await
             .unwrap();
         insta::assert_snapshot!(task.await.unwrap().unwrap_err().to_string(), @"subagent error: oops");

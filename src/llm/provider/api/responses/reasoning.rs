@@ -1,23 +1,20 @@
 use async_openai::types::responses;
 
-use crate::llm::message::ItemTiming;
-use crate::llm::message::ReasoningItem;
+use crate::llm::history::message::ReasoningItem;
 
 impl From<responses::ReasoningItem> for ReasoningItem {
     fn from(item: responses::ReasoningItem) -> Self {
-        Self {
-            id: item.id,
-            timing: ItemTiming::new(),
-            content: item
-                .content
-                .map(|c| c.into_iter().map(|s| s.text).collect()),
-            summary: item
-                .summary
-                .into_iter()
-                .map(|responses::SummaryPart::SummaryText(s)| s.text)
-                .collect(),
-            encrypted: item.encrypted_content,
-        }
+        let mut result = Self::new(item.id);
+        result.content = item
+            .content
+            .map(|c| c.into_iter().map(|s| s.text).collect());
+        result.summary = item
+            .summary
+            .into_iter()
+            .map(|responses::SummaryPart::SummaryText(s)| s.text)
+            .collect();
+        result.encrypted = item.encrypted_content;
+        result
     }
 }
 

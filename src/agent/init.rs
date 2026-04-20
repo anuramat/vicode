@@ -76,8 +76,7 @@ impl Agent {
     ) -> Result<Self> {
         let path = project.agent_state(&id);
         let serialized = tokio::fs::read_to_string(path).await?;
-        let mut state: AgentState = serde_json::from_str(&serialized)?;
-        state.context.history.recount_tokens();
+        let state: AgentState = serde_json::from_str(&serialized)?;
 
         Ok(Self::from_state(project, parent, id, state))
     }
@@ -161,7 +160,7 @@ impl Agent {
         inherit_context: bool,
     ) -> Result<Self> {
         let state = AgentState {
-            status: AgentStatus::Idle,
+            status: AgentStatus::default(),
             assistant: ASSISTANT_POOL
                 .get()
                 .context("assistant pool not initialized")?
@@ -191,7 +190,7 @@ impl AgentState {
         instructions: String,
     ) -> Result<Self> {
         let state = Self {
-            status: AgentStatus::Idle,
+            status: AgentStatus::default(),
             assistant: ASSISTANT_POOL
                 .get()
                 .unwrap()
@@ -202,7 +201,7 @@ impl AgentState {
             },
             context: AgentContext {
                 commit,
-                history: History::with_instructions(instructions),
+                history: History::new(instructions),
             },
         };
         Ok(state)

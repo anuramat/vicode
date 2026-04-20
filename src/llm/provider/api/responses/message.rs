@@ -1,11 +1,11 @@
 use async_openai::types::responses;
 
-use crate::llm::message::AsMessageText;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::AssistantMessage;
-use crate::llm::message::DeveloperMessage;
-use crate::llm::message::Message;
-use crate::llm::message::UserMessage;
+use crate::llm::history::message::AsMessageText;
+use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::AssistantMessage;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::Message;
+use crate::llm::history::message::UserMessage;
 
 impl From<&Message> for Vec<responses::InputItem> {
     fn from(val: &Message) -> Self {
@@ -22,14 +22,14 @@ impl From<&DeveloperMessage> for responses::InputItem {
         Self::EasyMessage(responses::EasyInputMessage {
             r#type: responses::MessageType::Message,
             role: responses::Role::Developer,
-            content: responses::EasyInputContent::Text(msg.as_message_text()),
+            content: responses::EasyInputContent::Text(msg.as_message_text().to_string()),
         })
     }
 }
 
 impl From<&UserMessage> for responses::InputItem {
     fn from(msg: &UserMessage) -> Self {
-        let UserMessage { text } = msg;
+        let UserMessage { text, .. } = msg;
         let item = responses::MessageItem::Input(responses::InputMessage {
             content: vec![responses::InputContent::InputText(text.into())],
             role: responses::InputRole::User,
@@ -78,7 +78,7 @@ mod tests {
     use async_openai::types::responses::FunctionToolCall;
     use similar_asserts::assert_eq;
 
-    use crate::llm::message::*;
+    use crate::llm::history::message::*;
     use crate::tools::bash::BashArguments;
     use crate::tools::bash::BashCall;
     use crate::tools::bash::BashResult;
@@ -102,12 +102,11 @@ mod tests {
         let call = ToolCallItem {
             id: Some("id_1".into()),
             call_id: "call_id_2".into(),
-            timing: ItemTiming {
-                started_at_ms: 1,
-                last_modified_ms: Some(2),
-            },
-            executed_at_ms: Some(3),
+            started_at: 1,
+            ended_at: Some(3),
+            token_count: 0,
             task: Box::new(task),
+            ready_at: Some(5),
         };
 
         let api_call: Vec<async_openai::types::responses::InputItem> = (&call).into();
@@ -144,11 +143,10 @@ mod tests {
         let call = ToolCallItem {
             id: Some("id_1".into()),
             call_id: "call_id_2".into(),
-            timing: ItemTiming {
-                started_at_ms: 1,
-                last_modified_ms: Some(2),
-            },
-            executed_at_ms: Some(3),
+            started_at: 1,
+            ended_at: Some(3),
+            ready_at: None,
+            token_count: 0,
             task: Box::new(task),
         };
 
@@ -186,15 +184,14 @@ mod tests {
             id,
             call_id,
             task,
-            timing,
-            executed_at_ms,
+            ready_at: executed_ms,
+            token_count: _,
+            ..
         } = ToolCallItem::try_from(call).unwrap();
 
         assert_eq!(id, Some("id_42".into()));
         assert_eq!(call_id, "call_id_69");
-        assert!(timing.started_at_ms > 0);
-        assert_eq!(timing.last_modified_ms, None);
-        assert_eq!(executed_at_ms, None);
+        assert_eq!(executed_ms, None);
 
         assert_eq!(task.typetag_name(), "bash");
         assert_eq!(task.output(), None);

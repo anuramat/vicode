@@ -1,9 +1,8 @@
 use async_openai::types::responses::OutputTextContent;
 use async_openai::types::responses::{self};
 
-use crate::llm::message::ItemTiming;
-use crate::llm::message::OutputContent;
-use crate::llm::message::OutputItem;
+use crate::llm::history::message::OutputContent;
+use crate::llm::history::message::OutputItem;
 
 impl From<&OutputItem> for responses::InputItem {
     fn from(item: &OutputItem) -> Self {
@@ -15,10 +14,6 @@ impl From<&OutputItem> for responses::InputItem {
                 OutputContent::Refusal(_) => unimplemented!("refusal in an assistant message"),
             })
             .collect();
-        // if text.trim().is_empty() {
-        //     // TODO z.ai sends "\n" messages and breaks when we send it back, thus we drop empty items; move this to compat
-        //     return None;
-        // }
         let item = responses::MessageItem::Output(responses::OutputMessage {
             id: item.id.clone(),
             content: vec![responses::OutputMessageContent::OutputText(
@@ -37,19 +32,15 @@ impl From<&OutputItem> for responses::InputItem {
 
 impl From<responses::OutputMessage> for OutputItem {
     fn from(value: responses::OutputMessage) -> Self {
-        Self {
-            id: value.id,
-            timing: ItemTiming::new(),
-            content: value
-                .content
-                .into_iter()
-                .map(|c| match c {
-                    responses::OutputMessageContent::OutputText(t) => OutputContent::Text(t.text),
-                    responses::OutputMessageContent::Refusal(r) => {
-                        OutputContent::Refusal(r.refusal)
-                    }
-                })
-                .collect(),
-        }
+        let mut item = Self::new(value.id);
+        item.content = value
+            .content
+            .into_iter()
+            .map(|c| match c {
+                responses::OutputMessageContent::OutputText(t) => OutputContent::Text(t.text),
+                responses::OutputMessageContent::Refusal(r) => OutputContent::Refusal(r.refusal),
+            })
+            .collect();
+        item
     }
 }

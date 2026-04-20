@@ -7,10 +7,12 @@ mod deps;
 mod git;
 mod id;
 mod llm;
+mod macros;
 mod project;
 mod sandbox;
 mod tools;
 mod tui;
+mod utils;
 
 use anyhow::Result;
 use clap::Parser;

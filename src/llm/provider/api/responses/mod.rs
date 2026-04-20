@@ -19,16 +19,16 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::llm::message::AsMessageText;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::DeveloperMessage;
-use crate::llm::message::Message;
-use crate::llm::message::UserMessage;
-use crate::llm::message::now_ms;
+use crate::llm::history::message::AsMessageText;
+use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::Message;
+use crate::llm::history::message::UserMessage;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::api::StreamEvent;
 use crate::llm::provider::assistant::ReasoningEffort;
+use crate::utils::now;
 
 #[derive(Debug)]
 pub struct ResponsesApi {
@@ -66,7 +66,7 @@ pub fn started_stream(
     inner: responses::ResponseStream,
 ) -> StartedAssistantStream {
     StartedAssistantStream {
-        started_at_ms: now_ms(),
+        started_at_ms: now(),
         stream: Box::pin(ResponsesStream {
             inner,
             _permit: permit,
@@ -96,15 +96,13 @@ pub fn request(
     if compat.developer_as_user {
         for message in &mut messages {
             if let Message::Developer(dev_msg) = message {
-                *message = Message::User(UserMessage {
-                    text: dev_msg.as_message_text(),
-                });
+                *message = Message::User(UserMessage::new(dev_msg.as_message_text().to_string()));
             }
         }
     }
 
     if compat.instructions_as_message {
-        let msg = Message::Developer(DeveloperMessage::new(instructions));
+        let msg = Message::Developer(DeveloperMessage::misc(instructions));
         messages.insert(0, msg);
     } else {
         builder.instructions(instructions);

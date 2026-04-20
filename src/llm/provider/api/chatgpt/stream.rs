@@ -120,7 +120,7 @@ mod tests {
     use super::super::test_support;
     use super::super::test_support::RecordedRequest;
     use super::*;
-    use crate::llm::message::now_ms;
+    use crate::utils::now;
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vicode-stream-{}", uuid::Uuid::new_v4()));
@@ -203,7 +203,7 @@ mod tests {
                 client_id: OAUTH_CLIENT_ID.into(),
                 access_token: "old_access".into(),
                 refresh_token: "old_refresh".into(),
-                expires_at_unix_ms: now_ms() + 1_000,
+                expires_at_unix_ms: now() + 1_000,
                 account_id: None,
                 plan_type: None,
                 email: None,
@@ -282,7 +282,7 @@ mod tests {
                 client_id: OAUTH_CLIENT_ID.into(),
                 access_token: "stale_access".into(),
                 refresh_token: "old_refresh".into(),
-                expires_at_unix_ms: now_ms() + 10 * 60_000,
+                expires_at_unix_ms: now() + 10 * 60_000,
                 account_id: None,
                 plan_type: None,
                 email: None,

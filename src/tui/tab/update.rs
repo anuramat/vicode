@@ -1,12 +1,11 @@
 use anyhow::Result;
 
 use crate::agent::AgentStatus;
-use crate::llm::history::Entries;
 use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::message::Message;
-use crate::llm::message::UserMessage;
+use crate::llm::history::message::Message;
+use crate::llm::history::message::UserMessage;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
@@ -37,9 +36,9 @@ impl Tab<'_> {
             self.update_input_title();
         }
         // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
-        self.scroll
-            .set_dirty(self.agent.state.context.history.len().saturating_sub(1));
-        self.scroll.set_len(self.agent.state.context.history.len());
+        let len = self.agent.state.context.history.state().messages.len();
+        self.scroll.set_dirty(len.saturating_sub(1));
+        self.scroll.set_len(len);
         Ok(())
     }
 
@@ -73,9 +72,10 @@ impl Tab<'_> {
     ) -> String {
         // NOTE we only apply the results if history event was successfully handled, so we don't have to check it here
         let mut result = Vec::new();
-        let entries: &Entries = &self.agent.state.context.history;
-        for entry in &entries[entries.len().saturating_sub(popped)..] {
-            if let Message::User(UserMessage { ref text }) = entry.message {
+        let messages = &self.agent.state.context.history.state().messages;
+        let start = messages.len().saturating_sub(popped);
+        for msg in &messages[start..] {
+            if let Message::User(UserMessage { text, .. }) = msg {
                 result.push(text.clone());
             }
         }

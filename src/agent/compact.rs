@@ -1,15 +1,9 @@
-use anyhow::Context;
 use anyhow::Result;
 
 use crate::agent::Agent;
-use crate::agent::AgentStatus;
 use crate::agent::task::sink::TurnType;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::message::Message;
-use crate::llm::message::UserMessage;
-
-const COMPACT_PROMPT: &str = "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only.";
 
 impl Agent {
     pub fn dropped(&self) -> usize {
@@ -17,77 +11,45 @@ impl Agent {
         self.state
             .context
             .history
-            .compact_dropped(window, self.project.config().compact.target)
+            .window_percentage_to_n_msg(window, self.project.config().compact.target)
     }
 
     pub async fn init_compact(
         &mut self,
-        dropped: usize,
+        n_drop: usize,
     ) -> Result<()> {
-        if dropped == 0 {
+        if n_drop == 0 {
             return Ok(());
         }
-        let needs_another_turn = self.state.context.history.needs_another_turn();
-        let g = self.state.context.history.generation();
-        self.handle_history(
-            g,
-            HistoryUpdate::CompactStart {
-                dropped,
-                needs_another_turn,
-            },
-        )
-        .await?;
-        self.append_compact_prompt()?;
+        let g = self.history().generation();
+        self.handle_history(g, HistoryUpdate::CompactStart { n_drop })
+            .await?;
         Ok(())
     }
 
     pub async fn compact_turn(&mut self) -> Result<()> {
-        let messages = self.compact_messages()?;
-        self.set_status(AgentStatus::Compacting).await?;
+        let messages = self.history().compact_turn_input()?;
         self.spawn_turn(
             ToolSchemas::empty(),
-            self.state.context.history.instructions().to_string(),
+            self.history().instructions().to_string(),
             messages,
             TurnType::Compact,
-        );
-        Ok(())
-    }
-
-    // TODO dev message instead?
-    fn append_compact_prompt(&mut self) -> Result<()> {
-        self.state
-            .context
-            .history
-            .compact
-            .as_mut()
-            .context("no compact available")?
-            .entries
-            .push_message(Message::User(UserMessage {
-                text: COMPACT_PROMPT.into(),
-            }));
-        Ok(())
-    }
-
-    fn compact_messages(&self) -> Result<Vec<Message>> {
-        let compact = self.state.context.history.compact.as_ref();
-        let entries = &compact.context("no compact available")?.entries;
-        Ok(entries.iter().collect())
+        )
+        .await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use similar_asserts::assert_eq;
+
     use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentState;
     use crate::agent::init::channel_parent_sink;
     use crate::agent::task::manager::AgentTaskManager;
     use crate::config::Config;
-    use crate::llm::message::Message;
-    use crate::llm::message::UserMessage;
+    use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
@@ -147,8 +109,9 @@ mod tests {
                 status: Default::default(),
                 assistant: assistant.clone(),
                 topology: Default::default(),
-                context: AgentContext {
-                    ..Default::default()
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -168,7 +131,7 @@ mod tests {
         agent.compact_turn().await.err().unwrap();
 
         assert!(agent.tskmgr.idle());
-        assert!(agent.state.context.history.compact.is_none());
+        assert!(!agent.state.context.history.compacting());
 
         tokio::fs::remove_dir_all(project.agent(&aid))
             .await
@@ -192,8 +155,9 @@ mod tests {
                 status: Default::default(),
                 assistant: assistant.clone(),
                 topology: Default::default(),
-                context: AgentContext {
-                    ..Default::default()
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -206,34 +170,17 @@ mod tests {
             .state
             .context
             .history
-            .handle(
-                0,
-                HistoryUpdate::CompactStart {
-                    dropped: 0,
-                    needs_another_turn: false,
-                },
-            )
+            .handle(0, HistoryUpdate::CompactStart { n_drop: 0 })
             .unwrap();
 
-        agent.append_compact_prompt().unwrap();
+        let entries = &agent.history().compact_turn_input().unwrap();
 
-        let entries = &agent
-            .state
-            .context
-            .history
-            .compact
-            .as_ref()
-            .unwrap()
-            .entries;
-        assert_eq!(
-            entries
-                .iter()
-                .filter(|entry| {
-                    matches!(&entry.message, Message::User(UserMessage { text }) if text == COMPACT_PROMPT)
-                })
-                .count(),
-            1
-        );
+        insta::assert_yaml_snapshot!(entries, @r#"
+        - role: user
+          text: "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only."
+          token_count: 35
+          created_at: 1777264279001
+        "#);
 
         tokio::fs::remove_dir_all(project.agent(&aid))
             .await

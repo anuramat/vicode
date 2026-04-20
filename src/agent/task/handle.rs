@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::agent::AgentKind;
-use crate::agent::AgentStatus;
 use crate::agent::handle::ParentEvent;
 use crate::agent::subagent::result::diff;
 use crate::agent::task::manager::TaskId;
@@ -17,28 +16,22 @@ impl Agent {
             self.parent
                 .send(ParentEvent::Error(err.to_string()))
                 .await?;
-            self.set_status(AgentStatus::Error(err.to_string())).await?;
         }
         let applied = self.tskmgr.finish_task(&id);
         if !applied {
             return Ok(());
         }
         if self.tskmgr.idle() {
-            if self.state.context.history.needs_another_turn()
-                && self.state.context.history.compact.is_none()
-            {
-                self.start_turn();
-            } else {
-                self.sync_status().await?;
-                if let AgentKind::Subagent { parent } = &self.state.topology.kind {
-                    let output = self.state.context.history.last_output()?;
-                    let diff = diff(&self.project, parent, &self.id)?;
-                    self.parent
-                        .send(ParentEvent::SubagentDone(
-                            crate::agent::subagent::SubagentResult { output, diff },
-                        ))
-                        .await?;
-                }
+            if self.history().state().needs_another_turn() && !self.history().compacting() {
+                self.start_turn().await?;
+            } else if let AgentKind::Subagent { parent } = &self.state.topology.kind {
+                let output = self.history().state().last_text_output()?;
+                let diff = diff(&self.project, parent, &self.id)?;
+                self.parent
+                    .send(ParentEvent::SubagentDone(
+                        crate::agent::subagent::SubagentResult { output, diff },
+                    ))
+                    .await?;
             }
         }
         Ok(())
@@ -47,10 +40,12 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::Receiver;
     use tokio::sync::mpsc::channel;
+    use tokio::time::Duration;
+    use tokio::time::timeout;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentId;
     use crate::agent::AgentState;
     use crate::agent::AgentTopology;
@@ -58,12 +53,25 @@ mod tests {
     use crate::agent::handle::ParentEvent;
     use crate::agent::init::channel_parent_sink;
     use crate::config::Config;
+    use crate::llm::history::AssistantEvent;
+    use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
-    use crate::llm::history::ResponseEvent;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
+
+    const RX_TIMEOUT: Duration = Duration::from_secs(1);
+
+    async fn recv<T>(
+        rx: &mut Receiver<T>,
+        name: &str,
+    ) -> T {
+        timeout(RX_TIMEOUT, rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {name}"))
+            .unwrap_or_else(|| panic!("{name} channel closed"))
+    }
 
     async fn assistant() -> Assistant {
         AssistantPool::from_config(
@@ -119,8 +127,9 @@ mod tests {
                 status: Default::default(),
                 assistant: assistant.clone(),
                 topology: AgentTopology::default(),
-                context: AgentContext {
-                    ..Default::default()
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -139,45 +148,44 @@ mod tests {
             .state
             .context
             .history
+            .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
+            .unwrap();
+        agent
+            .state
+            .context
+            .history
             .handle(
                 0,
-                HistoryUpdate::CompactStart {
-                    dropped: 1,
-                    needs_another_turn: true,
-                },
+                HistoryUpdate::CompactResponse(AssistantEvent::Created(0)),
             )
             .unwrap();
         agent
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::CompactResponse(ResponseEvent::Started(0)))
-            .unwrap();
-        agent
-            .state
-            .context
-            .history
             .handle(
                 0,
-                HistoryUpdate::CompactResponse(ResponseEvent::Failed("oops".into())),
+                HistoryUpdate::CompactResponse(AssistantEvent::Failed("oops".into())),
             )
             .unwrap();
         agent
             .tskmgr
             .spawn(agent.tx.clone(), 0, |_| async { Ok(()) });
-        let Some(AgentEvent::TaskDone(tid, result)) = agent.rx.recv().await else {
+        let AgentEvent::TaskDone(tid, result) = recv(&mut agent.rx, "task completion").await else {
             panic!("expected task completion");
         };
 
         agent.handle_task_result(tid, result).await.unwrap();
 
         assert!(agent.tskmgr.idle());
-        assert!(agent.state.context.history.compact.is_some());
-        let event = parent_rx.recv().await;
+        assert!(agent.state.context.history.compacting());
+        let event = recv(&mut parent_rx, "parent event").await;
         assert!(
             matches!(
                 event,
-                Some(ParentEvent::StatusUpdate(crate::agent::AgentStatus::Error(ref msg)))
+                ParentEvent::StatusUpdate(crate::agent::AgentStatus::Compact(
+                    crate::llm::history::TurnStatus::Failed(ref msg),
+                ))
                     if msg == "oops"
             ),
             "{event:?}"
@@ -202,11 +210,14 @@ mod tests {
             project: project.clone(),
             id: aid.clone(),
             state: AgentState {
-                status: crate::agent::AgentStatus::InProgress,
+                status: crate::agent::AgentStatus::Normal(
+                    crate::llm::history::TurnStatus::InProgress,
+                ),
                 assistant: assistant.clone(),
                 topology: AgentTopology::default(),
-                context: AgentContext {
-                    ..Default::default()
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
                 },
             },
             parent: channel_parent_sink(parent_tx),
@@ -224,41 +235,45 @@ mod tests {
         agent
             .handle_history(
                 0,
-                HistoryUpdate::TurnResponse(ResponseEvent::Failed("oops".into())),
+                HistoryUpdate::TurnResponse(AssistantEvent::Failed("oops".into())),
             )
             .await
             .unwrap();
         agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async {
             Err(anyhow::anyhow!("oops"))
         });
-        let Some(AgentEvent::TaskDone(tid, result)) = agent.rx.recv().await else {
+        let AgentEvent::TaskDone(tid, result) = recv(&mut agent.rx, "task completion").await else {
             panic!("expected task completion");
         };
 
         agent.handle_task_result(tid, result).await.unwrap();
 
-        assert!(
-            matches!(agent.state.status, crate::agent::AgentStatus::Error(ref msg) if msg == "oops")
-        );
         assert!(matches!(
-            agent.state.context.history.last().map(|entry| &entry.message),
-            Some(crate::llm::message::Message::User(crate::llm::message::UserMessage { text })) if text == "first"
+            agent.state.status,
+            crate::agent::AgentStatus::Normal(crate::llm::history::TurnStatus::Failed(ref msg))
+                if msg == "oops"
+        ));
+        assert!(matches!(
+            agent.state.context.history.state().last(),
+            Some(crate::llm::history::message::Message::User(crate::llm::history::message::UserMessage { text, .. })) if text == "first"
         ));
         let events = [
-            parent_rx.recv().await,
-            parent_rx.recv().await,
-            parent_rx.recv().await,
+            recv(&mut parent_rx, "parent event").await,
+            recv(&mut parent_rx, "parent event").await,
+            recv(&mut parent_rx, "parent event").await,
         ];
         assert!(
             matches!(
                 events.as_slice(),
                 [
-                    Some(ParentEvent::HistoryUpdate(
+                    ParentEvent::HistoryUpdate(
                         _,
-                        HistoryUpdate::TurnResponse(ResponseEvent::Failed(msg))
+                        HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
+                    ),
+                    ParentEvent::Error(error),
+                    ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
+                        crate::llm::history::TurnStatus::Failed(status),
                     )),
-                    Some(ParentEvent::Error(error)),
-                    Some(ParentEvent::StatusUpdate(crate::agent::AgentStatus::Error(status))),
                 ] if msg == "oops" && error == "oops" && status == "oops"
             ),
             "{events:?}"

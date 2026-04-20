@@ -2,8 +2,8 @@ use async_openai::types::responses;
 use serde_json::Value;
 
 use crate::agent::tool::traits::ToolCallSerializable;
-use crate::llm::message::ItemTiming;
-use crate::llm::message::ToolCallItem;
+use crate::llm::history::message::ToolCallItem;
+use crate::utils::now;
 
 impl From<&ToolCallItem> for Vec<responses::InputItem> {
     fn from(v: &ToolCallItem) -> Self {
@@ -31,6 +31,8 @@ impl From<&ToolCallItem> for Vec<responses::InputItem> {
     }
 }
 
+// TODO: should we count tokens here?
+
 impl TryFrom<responses::FunctionToolCall> for ToolCallItem {
     type Error = anyhow::Error;
 
@@ -43,8 +45,10 @@ impl TryFrom<responses::FunctionToolCall> for ToolCallItem {
         Ok(Self {
             id: call.id,
             call_id: call.call_id,
-            timing: ItemTiming::new(),
-            executed_at_ms: None,
+            started_at: now(),
+            ended_at: None,
+            ready_at: None,
+            token_count: 0,
             task,
         })
     }

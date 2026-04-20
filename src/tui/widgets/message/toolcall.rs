@@ -4,7 +4,7 @@ use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 
-use crate::llm::message::ToolCallItem;
+use crate::llm::history::message::ToolCallItem;
 use crate::tui::colors::TOOLCALL_COLOR;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;

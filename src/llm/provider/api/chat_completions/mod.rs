@@ -11,10 +11,10 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::llm::message::Message;
-use crate::llm::message::now_ms;
+use crate::llm::history::message::Message;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
+use crate::utils::now;
 
 #[derive(Debug)]
 pub struct ChatCompletionsApi {
@@ -43,7 +43,7 @@ impl Api for ChatCompletionsApi {
     ) -> Result<StartedAssistantStream> {
         let request = request::request(model, instructions, messages, tools, true, &self.compat)?;
         tracing::debug!(request = %request);
-        let started_at_ms = now_ms();
+        let started_at_ms = now();
         let inner = self.client.chat().create_stream_byot(request).await?;
         Ok(StartedAssistantStream {
             started_at_ms,

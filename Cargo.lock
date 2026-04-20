@@ -3685,6 +3685,7 @@ dependencies = [
  "libgit2-sys",
  "notify",
  "nucleo-matcher",
+ "paste",
  "petname",
  "proc-mounts",
  "pulldown-cmark",

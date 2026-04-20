@@ -5,7 +5,7 @@ use git2::Repository;
 
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
-use crate::llm::message::Message;
+use crate::llm::history::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
@@ -94,7 +94,7 @@ impl Tab<'_> {
         let prompt = UserPrompt {
             text,
             multiplier: self.multiplier,
-            generation: self.agent.state.context.history.generation(),
+            generation: self.history().generation(),
         };
 
         self.agent.send(ExternalEvent::Submit(prompt)).await?;
@@ -114,7 +114,7 @@ impl Tab<'_> {
             n.parse()
                 .with_context(|| format!("invalid compact number: {n}"))?
         } else {
-            self.agent.state.context.history.len()
+            self.history().state().len()
         };
         self.agent.send(ExternalEvent::Compact(n)).await?;
         Ok(())
@@ -129,7 +129,7 @@ impl Tab<'_> {
         &self,
         n: usize,
     ) -> Result<()> {
-        if n > self.agent.state.context.history.len() {
+        if n > self.history().state().len() {
             return Ok(());
         }
         self.agent.send(ExternalEvent::Undo(n)).await?;
@@ -137,10 +137,10 @@ impl Tab<'_> {
     }
 
     pub async fn undo_user(&self) -> Result<()> {
-        let messages = &self.agent.state.context.history;
+        let messages = self.history().state();
         let Some(loc) = messages
             .iter()
-            .rposition(|entry| matches!(entry.message, Message::User(_)))
+            .rposition(|entry| matches!(entry, Message::User(_)))
         else {
             return Ok(());
         };
@@ -177,7 +177,6 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentHandle;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
@@ -185,6 +184,7 @@ mod tests {
     use crate::agent::handle::AgentEvent;
     use crate::agent::id::AgentId;
     use crate::config::Config;
+    use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::tui::widgets::input::InputOpts;
@@ -232,10 +232,13 @@ mod tests {
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
-            status: AgentStatus::Idle,
+            status: AgentStatus::default(),
             assistant: assistant().await,
             topology: AgentTopology::default(),
-            context: AgentContext::default(),
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
         };
         let mut tab = Tab::new(
             tx,

@@ -4,7 +4,9 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 
-use crate::llm::message::ReasoningItem;
+use crate::llm::history::Timing;
+use crate::llm::history::TokenCount;
+use crate::llm::history::message::ReasoningItem;
 use crate::tui::colors::REASONING_COLOR;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;
@@ -18,12 +20,12 @@ fn style() -> Style {
 struct ReasoningWidget {
     widget: Paragraph<'static>,
     timing: String,
-    char_count: usize,
+    token_count: usize,
 }
 
 impl ReasoningWidget {
     fn title(&self) -> String {
-        format!("reasoning: {} chars, {}", self.char_count, self.timing)
+        format!("reasoning: {} T, {}", self.token_count, self.timing)
     }
 
     fn block(&self) -> Block<'_> {
@@ -75,13 +77,13 @@ impl From<&ReasoningItem> for Element {
             }
         }
 
-        let char_count = text.chars().count();
+        let token_count = item.token_count();
         let widget = ReasoningWidget {
             widget: Paragraph::new(text)
                 .style(style())
                 .wrap(Wrap { trim: false }),
-            char_count,
-            timing: item.timing.to_string(),
+            token_count,
+            timing: item.duration_str(),
         };
         widget.into()
     }

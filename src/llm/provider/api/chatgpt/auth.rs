@@ -31,7 +31,7 @@ use super::error::missing_login_error;
 use super::error::relogin_error;
 use crate::config::Config;
 use crate::config::DIRS;
-use crate::llm::message::now_ms;
+use crate::utils::now;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthRecord {
@@ -154,11 +154,11 @@ impl AuthRecord {
     }
 
     pub fn expired(&self) -> bool {
-        self.expires_at_unix_ms <= now_ms()
+        self.expires_at_unix_ms <= now()
     }
 
     pub fn needs_refresh(&self) -> bool {
-        self.expires_at_unix_ms <= now_ms() + LOGIN_REFRESH_WINDOW_MS
+        self.expires_at_unix_ms <= now() + LOGIN_REFRESH_WINDOW_MS
     }
 }
 
@@ -610,7 +610,7 @@ fn build_record(
         client_id: store.client_id.clone(),
         access_token,
         refresh_token,
-        expires_at_unix_ms: now_ms() + expires_in.unwrap_or(3600) * 1000,
+        expires_at_unix_ms: now() + expires_in.unwrap_or(3600) * 1000,
         account_id: metadata.account_id,
         plan_type: metadata.plan_type,
         email: metadata.email,
@@ -829,7 +829,7 @@ mod tests {
                 client_id: OAUTH_CLIENT_ID.into(),
                 access_token: "access".into(),
                 refresh_token: "refresh".into(),
-                expires_at_unix_ms: now_ms() + 1_000,
+                expires_at_unix_ms: now() + 1_000,
                 account_id: Some("org_123".into()),
                 plan_type: None,
                 email: None,

@@ -14,7 +14,7 @@ use ratatui::widgets::ListState;
 use tui_textarea::CursorMove;
 use tui_textarea::TextArea;
 
-use crate::llm::tokens::count_text_tokens;
+use crate::llm::history::count_text_tokens;
 
 #[derive(Debug, Clone, Getters)]
 pub struct Input<'a> {

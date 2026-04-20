@@ -1,7 +1,7 @@
 use async_openai::types::responses;
 
-use crate::llm::delta::Delta;
-use crate::llm::delta::DeltaContent;
+use crate::llm::history::delta::Delta;
+use crate::llm::history::delta::DeltaContent;
 
 impl From<responses::ResponseReasoningTextDeltaEvent> for Delta {
     fn from(event: responses::ResponseReasoningTextDeltaEvent) -> Self {

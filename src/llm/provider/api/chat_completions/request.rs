@@ -13,15 +13,15 @@ use async_openai::types::chat::CreateChatCompletionRequestArgs;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
-use crate::llm::message::AsMessageText;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::AssistantMessage;
-use crate::llm::message::DeveloperMessage;
-use crate::llm::message::Message;
-use crate::llm::message::OutputContent;
-use crate::llm::message::OutputItem;
-use crate::llm::message::ToolCallItem;
-use crate::llm::message::UserMessage;
+use crate::llm::history::message::AsMessageText;
+use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::AssistantMessage;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::Message;
+use crate::llm::history::message::OutputContent;
+use crate::llm::history::message::OutputItem;
+use crate::llm::history::message::ToolCallItem;
+use crate::llm::history::message::UserMessage;
 
 pub fn request(
     assistant: ModelConfig,
@@ -36,7 +36,7 @@ pub fn request(
     if let Some(effort) = assistant.effort {
         builder.reasoning_effort(effort);
     }
-    items.insert(0, Message::Developer(DeveloperMessage::new(instructions)));
+    items.insert(0, Message::Developer(DeveloperMessage::misc(instructions)));
 
     if let Some(tag) = compat.reasoning_as_output.clone() {
         for message in &mut items {
@@ -47,9 +47,7 @@ pub fn request(
     if compat.developer_as_user {
         for message in &mut items {
             if let Message::Developer(dev_msg) = message {
-                *message = Message::User(UserMessage {
-                    text: dev_msg.as_message_text(),
-                });
+                *message = Message::User(UserMessage::new(dev_msg.as_message_text().to_string()));
             }
         }
     }
@@ -225,11 +223,10 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::messages;
-    use crate::llm::message::AssistantItem;
-    use crate::llm::message::AssistantMessage;
-    use crate::llm::message::ItemTiming;
-    use crate::llm::message::Message;
-    use crate::llm::message::ToolCallItem;
+    use crate::llm::history::message::AssistantItem;
+    use crate::llm::history::message::AssistantMessage;
+    use crate::llm::history::message::Message;
+    use crate::llm::history::message::ToolCallItem;
     use crate::tools::bash::BashArguments;
     use crate::tools::bash::BashCall;
     use crate::tools::bash::BashResult;
@@ -249,21 +246,19 @@ mod tests {
             meta: None,
             context: None,
         };
-        let message = Message::Assistant(AssistantMessage {
-            finish_reason: Default::default(),
-            content: indexmap! {
-                "call_1".into() => AssistantItem::ToolCall(ToolCallItem {
-                    id: Some("call_1".into()),
-                    call_id: "call_1".into(),
-                    timing: ItemTiming {
-                        started_at_ms: 1,
-                        last_modified_ms: Some(2),
-                    },
-                    executed_at_ms: Some(3),
-                    task: Box::new(task),
-                })
-            },
-        });
+        let mut assistant = AssistantMessage::new(0);
+        assistant.content = indexmap! {
+            "call_1".into() => AssistantItem::ToolCall(ToolCallItem {
+                id: Some("call_1".into()),
+                call_id: "call_1".into(),
+                started_at: 1,
+                ended_at: Some(2),
+                ready_at: Some(3),
+                token_count: 0,
+                task: Box::new(task),
+            })
+        };
+        let message = Message::Assistant(assistant);
 
         let messages = messages([message]);
         let value = serde_json::to_value(&messages).unwrap();

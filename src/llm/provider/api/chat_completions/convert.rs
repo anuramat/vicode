@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::agent::tool::traits::ToolCallSerializable;
-use crate::llm::message::ItemTiming;
-use crate::llm::message::ToolCallItem;
+use crate::llm::history::message::ToolCallItem;
+use crate::utils::now;
 
 impl From<ToolSchemas> for Vec<ChatCompletionTools> {
     fn from(schema: ToolSchemas) -> Self {
@@ -43,8 +43,10 @@ impl TryFrom<ChatCompletionMessageToolCalls> for ToolCallItem {
                 Ok(Self {
                     id: Some(call.id.clone()),
                     call_id: call.id,
-                    timing: ItemTiming::new(),
-                    executed_at_ms: None,
+                    started_at: now(),
+                    ended_at: None,
+                    ready_at: None,
+                    token_count: 0,
                     task,
                 })
             }

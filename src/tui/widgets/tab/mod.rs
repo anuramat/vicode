@@ -103,8 +103,12 @@ impl Tab<'_> {
             unreachable!()
         };
 
-        self.scroll
-            .render(&self.agent.state.context.history, messages_area, buf, ctx);
+        self.scroll.render(
+            self.agent.state.context.history.state().messages.as_slice(),
+            messages_area,
+            buf,
+            ctx,
+        );
         self.input.render(input_area, buf);
 
         if let Some(info_area) = info_area {

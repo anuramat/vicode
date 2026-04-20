@@ -1,5 +1,5 @@
-use crate::llm::message::OutputContent;
-use crate::llm::message::OutputItem;
+use crate::llm::history::message::OutputContent;
+use crate::llm::history::message::OutputItem;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::markdown::MarkdownWidget;
 

@@ -9,7 +9,7 @@ use tokio::sync::AcquireError;
 use tracing::instrument;
 
 use crate::agent::tool::registry::ToolSchemas;
-use crate::llm::message::Message;
+use crate::llm::history::message::Message;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::assistant::Assistant;
 

@@ -58,7 +58,7 @@ pub struct CompactConfig {
     #[default = 80]
     pub threshold: usize,
     /// context window percentage to compact to
-    /// we compact the first N messages, where N is the smallest number s.t. `old_total - dropped < target_percentage * context_window`
+    /// we compact the first N messages, where N is the smallest number s.t. `old_total - n_drop < target_percentage * context_window`
     /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
     #[default = 20]
     pub target: usize,

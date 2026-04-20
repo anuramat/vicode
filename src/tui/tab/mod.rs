@@ -9,6 +9,8 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentHandle;
 use crate::agent::id::AgentId;
+use crate::forward;
+use crate::llm::history::History;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
@@ -75,6 +77,10 @@ impl TabEntry<'_> {
 }
 
 impl Tab<'_> {
+    forward! {
+        history: History = self.agent.state.context.history;
+    }
+
     pub fn new(
         tx: Sender<AppEvent>,
         aid: AgentId,

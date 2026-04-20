@@ -7,9 +7,9 @@ use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolSchemas;
 use crate::config::ModelConfig;
-use crate::llm::delta::Delta;
-use crate::llm::message::AssistantItem;
-use crate::llm::message::Message;
+use crate::llm::history::delta::Delta;
+use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::Message;
 
 /// SLOP `chat_completions` module is vibecoded
 #[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
