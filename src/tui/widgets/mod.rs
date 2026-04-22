@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation)]
+
 pub mod cmdline;
 pub mod container;
 pub mod info;
