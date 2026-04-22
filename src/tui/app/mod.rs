@@ -1,6 +1,5 @@
 pub mod handle;
 pub mod keys;
-pub mod render;
 pub mod run;
 pub mod tabs;
 

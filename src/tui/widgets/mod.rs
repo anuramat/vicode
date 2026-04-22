@@ -1,5 +1,6 @@
 #![allow(clippy::cast_possible_truncation)]
 
+pub mod app;
 pub mod cmdline;
 pub mod container;
 pub mod info;
