@@ -13,13 +13,6 @@ pub struct SbeConfig {
     pub profile: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct SbeRunner {
-    pub bin: String,
-    pub args: Vec<String>,
-    pub cwd: std::path::PathBuf,
-}
-
 impl crate::sandbox::Sandbox for SbeConfig {
     fn runner(
         &self,

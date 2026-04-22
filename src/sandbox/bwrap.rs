@@ -60,12 +60,6 @@ pub struct Stage {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct BwrapRunner {
-    pub bin: String,
-    pub args: Vec<String>,
-}
-
 const WORKDIR_MOUNT_NAME: &str = "/workdir";
 
 impl SandboxRunner {
