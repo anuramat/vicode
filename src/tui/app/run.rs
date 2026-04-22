@@ -112,8 +112,9 @@ impl App<'_> {
 
     /// clean up on start / before exit
     async fn cleanup(&self) -> Result<()> {
-        // TODO delete unreachable agents, clear stale git worktrees/branches
+        // TODO delete unreachable agents
         self.project.unmount_all().await?;
+        crate::git::prune_stale_worktrees(&self.project)?;
         Ok(())
     }
 

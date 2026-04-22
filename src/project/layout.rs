@@ -72,6 +72,11 @@ pub trait LayoutTrait {
     }
 }
 
+pub fn worktree_name_to_agent_id(name: &str) -> Option<AgentId> {
+    name.strip_prefix(WORKTREE_NAME_PREFIX)
+        .map(|s| AgentId::from(s.to_string()))
+}
+
 #[async_trait::async_trait]
 impl LayoutTrait for Layout {
     fn root(&self) -> &Path {

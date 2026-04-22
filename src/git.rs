@@ -8,8 +8,12 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use anyhow::bail;
+use git2::BranchType;
+use git2::ErrorCode;
 use git2::Repository;
+use git2::StatusOptions;
 use git2::WorktreeAddOptions;
+use git2::WorktreePruneOptions;
 use libgit2_sys::git_error_last;
 use libgit2_sys::{self as raw};
 use tokio::fs::create_dir_all;
@@ -18,6 +22,7 @@ use crate::agent::AgentId;
 use crate::deps;
 use crate::project::Layout;
 use crate::project::layout::LayoutTrait;
+use crate::project::layout::worktree_name_to_agent_id;
 
 pub async fn worktree(
     layout: &Layout,
@@ -154,6 +159,60 @@ unsafe fn check(code: i32) -> Result<()> {
         }
     }
     bail!("libgit2 error: code={code}, klass={klass:#?}, message={message:#?}");
+}
+
+pub fn is_workdir_clean(workdir: &Path) -> Result<bool> {
+    let repo = Repository::open(workdir)?;
+    let mut opts = StatusOptions::new();
+    opts.include_ignored(false).include_untracked(true);
+    let statuses = repo.statuses(Some(&mut opts))?;
+    Ok(statuses.is_empty())
+}
+
+pub fn prune_stale_worktrees(layout: &impl LayoutTrait) -> Result<()> {
+    let repo = Repository::open(layout.root())?;
+    let names = repo.worktrees()?;
+    for name in names.iter().flatten() {
+        let Some(aid) = worktree_name_to_agent_id(name) else {
+            continue;
+        };
+        if layout.agent(&aid).exists() {
+            continue;
+        }
+        prune_worktree(&repo, name)?;
+    }
+    Ok(())
+}
+
+pub fn prune_worktree(
+    repo: &Repository,
+    name: &str,
+) -> Result<()> {
+    let worktree = match repo.find_worktree(name) {
+        Ok(w) => w,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut opts = WorktreePruneOptions::new();
+    worktree.prune(Some(&mut opts))?;
+    Ok(())
+}
+
+pub fn delete_branch_if_at(
+    repo: &Repository,
+    branch: &str,
+    commit: &str,
+) -> Result<()> {
+    let mut b = match repo.find_branch(branch, BranchType::Local) {
+        Ok(b) => b,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    if b.get().peel_to_commit()?.id().to_string() != commit {
+        return Ok(());
+    }
+    b.delete()?;
+    Ok(())
 }
 
 pub async fn checkout(

@@ -11,6 +11,7 @@ use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
+use crate::git::is_workdir_clean;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -145,11 +146,20 @@ impl<'a> App<'a> {
 
     /// delete selected tab and corresponding agent
     pub async fn delete_tab(&mut self) -> Result<()> {
-        if let Some(idx) = self.selected_tab_idx()
-            && let Some((_, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx)
-        {
-            tab.agent.send(ExternalEvent::Delete).await?;
-        }
+        let Some(idx) = self.selected_tab_idx() else {
+            return Ok(());
+        };
+        let Some((aid, TabEntry::Ready(_))) = self.tabs.get_index(idx) else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            is_workdir_clean(&self.project.agent_workdir(aid))?,
+            "workdir has uncommitted changes"
+        );
+        let Some((_, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx) else {
+            return Ok(());
+        };
+        tab.agent.send(ExternalEvent::Delete).await?;
         self.rebuild_tablist();
         Ok(())
     }
