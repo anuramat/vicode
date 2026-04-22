@@ -1,4 +1,5 @@
 use ansi_to_tui::IntoText;
+use anyhow::Context;
 use anyhow::Result;
 use ratatui::text::Text;
 use syntect::easy::HighlightLines;
@@ -9,12 +10,12 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 use syntect::util::as_24_bit_terminal_escaped;
 
-pub static HIGHLIGHTER: std::sync::LazyLock<Highlighter> =
-    std::sync::LazyLock::new(Highlighter::new);
+pub static HIGHLIGHTER: std::sync::LazyLock<Highlighter> = std::sync::LazyLock::new(|| {
+    Highlighter::new().expect("failed to initialize syntax highlighter")
+});
 
 pub struct Highlighter {
     set: SyntaxSet,
-    themeset: ThemeSet,
 
     theme: Theme,
 
@@ -24,24 +25,27 @@ pub struct Highlighter {
 }
 
 impl Highlighter {
-    fn new() -> Self {
+    fn new() -> Result<Self> {
         let set = SyntaxSet::load_defaults_newlines();
-        let diff = set.find_syntax_by_token("diff").unwrap().clone();
-        let bash = set.find_syntax_by_token("bash").unwrap().clone();
-        let markdown = set.find_syntax_by_token("markdown").unwrap().clone();
         let themeset = ThemeSet::load_defaults();
-        let theme = themeset.themes["base16-ocean.dark"].clone(); // TODO parameterize theme
-        // XXX
-        Self {
+        let theme = themeset.themes["base16-ocean.dark"].clone();
+        Ok(Self {
+            diff: set
+                .find_syntax_by_token("diff")
+                .context("diff syntax not found")?
+                .clone(),
+            bash: set
+                .find_syntax_by_token("bash")
+                .context("bash syntax not found")?
+                .clone(),
+            markdown: set
+                .find_syntax_by_token("markdown")
+                .context("markdown syntax not found")?
+                .clone(),
+
             set,
-            themeset,
-
             theme,
-
-            diff,
-            bash,
-            markdown,
-        }
+        })
     }
 
     pub fn highlight(

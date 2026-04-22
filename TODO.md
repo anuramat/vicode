@@ -65,6 +65,7 @@
 
 # backlog
 
+- customizable syntax highlighting colorscheme
 - let the user browse subagents like normal tabs, probably read-only though
   - if we let the user prompt subagents, main agents should be able to prompt them too
 - float window fzf-lua style
