@@ -9,4 +9,5 @@ pub mod markdown;
 pub mod message;
 pub mod paragraph;
 pub mod syntax;
+pub mod tab;
 pub mod tablist;

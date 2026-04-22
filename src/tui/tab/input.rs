@@ -9,9 +9,9 @@ use crate::llm::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
-use crate::tui::tab::MessageInput;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
+use crate::tui::widgets::tab::input::MessageInput;
 
 fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem> {
     paths
