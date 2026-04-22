@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
-#[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -11,24 +10,9 @@ use ignore::gitignore::Gitignore;
 use ignore::gitignore::GitignoreBuilder;
 use similar::TextDiff;
 
-use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::subagent::SubagentResult;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
-
-pub async fn collect(
-    project: &Project,
-    parent: &AgentId,
-    aid: &AgentId,
-) -> Result<SubagentResult> {
-    let serialized = tokio::fs::read_to_string(project.agent_state(aid)).await?;
-    let state: AgentState = serde_json::from_str(&serialized)?;
-    Ok(SubagentResult {
-        output: state.context.history.last_output()?,
-        diff: diff(project, parent, aid)?,
-    })
-}
 
 pub fn diff(
     project: &Project,
@@ -167,134 +151,5 @@ fn read_state(path: &Path) -> Result<FileState> {
     match String::from_utf8(bytes) {
         Ok(text) => Ok(FileState::Text(text)),
         Err(_) => Ok(FileState::Binary),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use similar_asserts::assert_eq;
-
-    use super::*;
-    use crate::agent::AgentContext;
-    use crate::agent::AgentStatus;
-    use crate::agent::AgentTopology;
-    use crate::config::Config;
-    use crate::llm::history::History;
-    use crate::llm::message::AssistantItem;
-    use crate::llm::message::AssistantMessage;
-    use crate::llm::message::AssistantMessageStatus;
-    use crate::llm::message::OutputContent;
-    use crate::llm::message::OutputItem;
-    use crate::llm::message::now_ms;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
-
-    fn config() -> Config {
-        Config::parse_with_defaults(
-            r#"
-            primary_assistant = ["test"]
-            shell_cmd = ["bash", "-c"]
-
-            [sandbox]
-            kind = "bwrap"
-            bin = "bwrap"
-            args = []
-            stages = []
-
-            [keymap.cmdline]
-
-            [keymap.normal]
-
-            [keymap.insert]
-
-            [providers.main]
-            api = "responses"
-            base_url = "https://api.example.com/v1"
-
-            [assistants.test]
-            provider = "main"
-            model = "gpt-test"
-            "#,
-        )
-        .unwrap()
-    }
-
-    async fn assistant() -> Assistant {
-        ASSISTANT_POOL
-            .get_or_init(|| async { AssistantPool::from_config(&config()).await.unwrap() })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn collect_reads_output_and_diff() {
-        let project = Project::new_test().unwrap();
-        let parent = AgentId::from("parent".to_string());
-        let child = AgentId::from("child".to_string());
-
-        tokio::fs::create_dir_all(project.agent_changes_dir(&parent))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(project.agent_changes_dir(&child))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(project.agent_workdir(&parent))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(project.agent_workdir(&child))
-            .await
-            .unwrap();
-
-        tokio::fs::write(project.agent_workdir(&parent).join("file.txt"), "before\n")
-            .await
-            .unwrap();
-        tokio::fs::write(project.agent_workdir(&child).join("file.txt"), "after\n")
-            .await
-            .unwrap();
-        tokio::fs::write(project.agent_changes_dir(&parent).join("file.txt"), "")
-            .await
-            .unwrap();
-        tokio::fs::write(project.agent_changes_dir(&child).join("file.txt"), "")
-            .await
-            .unwrap();
-
-        let mut history = History::with_instructions("rules".to_string());
-        history.push_message(crate::llm::message::Message::Assistant(AssistantMessage {
-            finish_reason: AssistantMessageStatus::Success,
-            content: indexmap::indexmap! {
-                "output".to_string() => AssistantItem::Output(OutputItem {
-                    id: "output".to_string(),
-                    timing: crate::llm::message::ItemTiming::with_start(now_ms()),
-                    content: vec![OutputContent::Text("done".to_string())],
-                })
-            },
-        }));
-        history.recount_tokens();
-
-        tokio::fs::create_dir_all(project.agent(&child))
-            .await
-            .unwrap();
-        AgentState {
-            status: AgentStatus::Idle,
-            assistant: assistant().await,
-            topology: AgentTopology::default(),
-            context: AgentContext {
-                commit: "deadbeef".to_string(),
-                history,
-            },
-        }
-        .save(&project, &child)
-        .await
-        .unwrap();
-
-        let output = collect(&project, &parent, &child).await.unwrap();
-
-        assert_eq!(output.output, "done");
-        assert!(output.diff.contains("--- a/file.txt"));
-        assert!(output.diff.contains("+++ b/file.txt"));
-        assert!(output.diff.contains("-before"));
-        assert!(output.diff.contains("+after"));
     }
 }
