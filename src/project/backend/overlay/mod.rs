@@ -105,14 +105,14 @@ impl Backend for Overlay {
         &self,
         layout: &Layout,
         src_id: &AgentId,
-        aid: &AgentId,
+        dst_aid: &AgentId,
         commit: &str,
         git: bool,
     ) -> Result<()> {
         let src = self.overlay_upper(layout, src_id);
-        let dst = self.overlay_upper(layout, aid);
+        let dst = self.overlay_upper(layout, dst_aid);
         crate::git::copy_without_dot_git(&src, dst).await?;
-        self.init_overlay(layout, commit, aid, git).await?;
+        self.init_overlay(layout, commit, dst_aid, git).await?;
         Ok(())
     }
 }

@@ -73,14 +73,14 @@ impl Backend for super::Copy {
         &self,
         layout: &Layout,
         src_id: &AgentId,
-        aid: &AgentId,
+        dst_aid: &AgentId,
         commit: &str,
         git: bool,
     ) -> Result<()> {
         let from = layout.agent_workdir(src_id);
-        let to = layout.agent_workdir(aid);
+        let to = layout.agent_workdir(dst_aid);
         if git {
-            git::worktree(layout, aid, commit, false).await?;
+            git::worktree(layout, dst_aid, commit, false).await?;
         } else {
             create_dir_all(to.clone()).await?;
         }

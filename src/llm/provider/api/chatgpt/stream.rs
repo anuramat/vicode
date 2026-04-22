@@ -112,7 +112,6 @@ mod tests {
     use std::time::Duration;
 
     use base64::Engine as _;
-    use similar_asserts::assert_eq;
 
     use super::super::CHATGPT_AUTH_TYPE;
     use super::super::OAUTH_CLIENT_ID;

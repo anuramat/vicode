@@ -91,7 +91,6 @@ impl Tab<'_> {
 #[cfg(test)]
 mod tests {
     use git2::Repository;
-    use similar_asserts::assert_eq;
 
     use crate::config::Config;
     use crate::llm::provider::assistant::Assistant;

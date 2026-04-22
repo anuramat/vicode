@@ -67,13 +67,7 @@ impl Function<SubagentContext, (), SubagentResult> for SubagentArguments {
         ctx: SubagentContext,
     ) -> Result<(SubagentResult, ())> {
         let result = ctx.handle.wait().await?;
-        Ok((
-            SubagentResult {
-                output: result.output,
-                diff: result.diff,
-            },
-            (),
-        ))
+        Ok((result, ()))
     }
 }
 

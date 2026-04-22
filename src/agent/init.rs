@@ -63,7 +63,7 @@ impl Agent {
         instructions: String,
     ) -> Result<Self> {
         project.new_agent_workdir(&commit, &id, true).await?;
-        let state = AgentState::new(commit, instructions).await?;
+        let state = AgentState::new(commit, instructions)?;
         state.save(&project, &id).await?;
         Ok(Self::from_state(project, parent, id, state))
     }
@@ -186,7 +186,7 @@ impl Agent {
 
 impl AgentState {
     /// init a primary agent from scratch
-    async fn new(
+    fn new(
         commit: String,
         instructions: String,
     ) -> Result<Self> {

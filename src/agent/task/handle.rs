@@ -32,7 +32,7 @@ impl Agent {
                 self.sync_status().await?;
                 if let AgentKind::Subagent { parent } = &self.state.topology.kind {
                     let output = self.state.context.history.last_output()?;
-                    let diff = diff(&self.project, &parent, &self.id)?;
+                    let diff = diff(&self.project, parent, &self.id)?;
                     self.parent
                         .send(ParentEvent::SubagentDone(
                             crate::agent::subagent::SubagentResult { output, diff },
@@ -47,7 +47,6 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
 
     use super::*;
