@@ -161,6 +161,8 @@ impl Element {
     }
 }
 
+// TODO make element implement heightcomputable?
+
 impl<T> From<T> for Element
 where T: HeightComputable + 'static
 {

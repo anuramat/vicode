@@ -1,87 +1,21 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
 use ratatui::text::Text;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
-use ratatui::widgets::block::Title;
 
 use super::BashCall;
 use super::BashResult;
-use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;
 use crate::tui::widgets::container::element::RenderContext;
+use crate::tui::widgets::container::sections::Section;
+use crate::tui::widgets::container::sections::SectionList;
 use crate::tui::widgets::message::toolcall::style;
 use crate::tui::widgets::syntax::HIGHLIGHTER;
 
-impl From<&BashCall> for Element {
-    fn from(value: &BashCall) -> Self {
-        let mut line = None;
-        let output = value.output.as_ref().map(|x| match x {
-            Ok(result) => {
-                let (x, y) = result_to_element(result);
-                line = y;
-                x
-            }
-            Err(err) => text_element("app error", err.clone()),
-        });
-        let widget = BashWidget {
-            // TODO push colored text to name
-            command: value.arguments.as_ref().map(|x| {
-                let str = x.command.trim().to_string();
-                CommandWrapped {
-                    no_newlines: !str.contains('\n'),
-                    element: bash_to_element(&str),
-                    str,
-                }
-            }),
-            output,
-            width: 0,
-            status_line: line,
-        };
-        widget.into()
-    }
-}
-
 #[derive(Debug)]
-struct CommandWrapped {
-    str: String,
-    no_newlines: bool,
-    element: Element,
-}
-
-#[derive(Debug)]
-struct BashWidget {
-    command: Option<CommandWrapped>,
-    output: Option<Element>,
-    width: u16,
-    status_line: Option<Line<'static>>,
-}
-
-impl BashWidget {
-    fn oneliner(
-        &self,
-        command: Option<&CommandWrapped>,
-    ) -> bool {
-        command
-            .as_ref()
-            .is_none_or(|x| x.no_newlines && (x.str.len() as u16) < self.width)
-    }
-
-    fn title(&self) -> Line<'static> {
-        if self.oneliner(self.command.as_ref())
-            && let Some(command) = self.command.as_ref()
-        {
-            bash_to_text(&command.str).lines[0].clone()
-        } else {
-            "bash".into()
-        }
-    }
-}
+struct BashWidget(SectionList);
 
 impl HeightComputable for BashWidget {
     fn height(
@@ -89,86 +23,10 @@ impl HeightComputable for BashWidget {
         width: u16,
         ctx: RenderContext,
     ) -> u16 {
-        self.width = width;
         if ctx.hide_tools {
             return 1;
         }
-        let mut height = 0;
-        if let Some(inner) = &mut self.output {
-            height += inner.height(width, ctx);
-        }
-        if !self.oneliner(self.command.as_ref())
-            && let Some(command) = &mut self.command
-        {
-            height += command.element.height(width, ctx);
-        }
-        height.max(1)
-    }
-
-    fn render(
-        &mut self,
-        mut area: Rect,
-        buf: &mut Buffer,
-        ctx: RenderContext,
-    ) {
-        self.width = area.width;
-        if ctx.hide_tools || self.height(self.width, ctx) == 1 {
-            return Paragraph::new(self.title()).render_ref(area, buf);
-        }
-        if !self.oneliner(self.command.as_ref())
-            && let Some(command) = &mut self.command
-        {
-            let height = command.element.height(self.width, ctx);
-            command.element.render(Rect { height, ..area }, buf, ctx);
-            area.height -= height;
-            area.y += height;
-        }
-        if let Some(element) = &mut self.output {
-            element.render(area, buf, ctx);
-        }
-    }
-
-    fn block(
-        &self,
-        ctx: RenderContext,
-    ) -> Option<Block<'_>> {
-        if ctx.hide_tools {
-            return None;
-        }
-        let mut title = self.title();
-        title.spans.insert(0, " ".into());
-        title.spans.push(" ".into());
-        let title = Title::from(title);
-        let mut block = ratatui::widgets::Block::bordered()
-            .border_set(ratatui::symbols::border::PLAIN)
-            .style(style())
-            .title(title);
-        if let Some(status_line) = &self.status_line {
-            block = block.title_top(status_line.clone().right_aligned());
-        }
-        block.into()
-    }
-}
-
-// TODO rename these, maybe move to widgets
-
-#[derive(Debug, Clone)]
-struct SectionElement<T>
-where T: HeightComputable + Clone
-{
-    title: String,
-    inner: T,
-}
-
-impl<T> HeightComputable for SectionElement<T>
-where T: HeightComputable + Clone
-{
-    fn height(
-        &mut self,
-        width: u16,
-        ctx: RenderContext,
-    ) -> u16 {
-        self.inner.height(width, ctx)
+        self.0.height(width, ctx)
     }
 
     fn render(
@@ -177,84 +35,96 @@ where T: HeightComputable + Clone
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        self.inner.render(area, buf, ctx);
-    }
-
-    fn block(
-        &self,
-        _ctx: RenderContext,
-    ) -> Option<Block<'_>> {
-        // TODO use vertical left/right symbols on the ends of the top line
-        Block::new()
-            .borders(Borders::TOP)
-            .border_set(ratatui::symbols::border::PLAIN)
-            .style(style())
-            .title(format!(
-                "{} {} ",
-                ratatui::symbols::line::HORIZONTAL,
-                self.title
-            ))
-            .into()
+        if ctx.hide_tools {
+            self.0.render_title(area, buf, ctx);
+        } else {
+            self.0.render(area, buf, ctx);
+        }
     }
 }
 
-fn text_element(
-    title: impl Into<String>,
-    text: impl Into<Text<'static>>,
-) -> Element {
-    let inner = Paragraph::new(text.into()).wrap(Wrap { trim: false });
-    SectionElement {
-        title: title.into(),
-        inner,
+impl From<&BashCall> for Element {
+    fn from(value: &BashCall) -> Self {
+        let (cmd, cmd_width) = value
+            .arguments
+            .as_ref()
+            .map(|x| command(&x.command))
+            .unzip();
+
+        let (output, status) = match value.output.as_ref() {
+            Some(Ok(result)) => (output(result), status(result)),
+            Some(Err(err)) => (vec![app_error(err.clone())], None),
+            None => (Vec::new(), None), // TODO show elapsed time
+        };
+
+        BashWidget(SectionList {
+            sections: cmd.into_iter().chain(output).collect(),
+            promote_at_width: cmd_width.flatten(),
+            skip_first_header: true,
+            title: "bash".into(),
+            _right_title: status,
+            style: style(),
+        })
+        .into()
     }
-    .into()
 }
 
-fn result_to_element(result: &BashResult) -> (Element, Option<Line<'static>>) {
-    let BashResult {
-        stdout,
-        stderr,
-        exit_status,
-        signal,
-    } = result;
+fn command(cmd: &str) -> (Section, Option<u16>) {
+    let highlighted = HIGHLIGHTER.highlight(cmd.trim(), &HIGHLIGHTER.bash);
 
-    let status_line = {
-        let mut parts = Vec::new();
-        if let Some(exit_status) = exit_status
-            && *exit_status != 0
-        {
-            parts.push(format!("exit status {exit_status}"));
-        }
-        if let Some(signal) = signal {
-            parts.push(format!("signal {signal}"));
-        }
-
-        (!parts.is_empty()).then(|| parts.join(",").into())
+    let width = if let [line] = highlighted.lines.as_slice() {
+        Some(line.width() as u16)
+    } else {
+        None
     };
 
-    let stdout_element = text_element("stdout", stdout.trim_end().to_string());
+    let element = Section::new("command", wrapped(highlighted), style());
 
-    let stderr = stderr.trim_end();
-    if stderr.trim().is_empty() {
-        return (stdout_element, status_line);
+    (element, width)
+}
+
+fn output(result: &BashResult) -> Vec<Section> {
+    let mut sections = Vec::new();
+
+    let stdout = Section::new(
+        "stdout",
+        wrapped(result.stdout.trim_end().to_string()),
+        style(),
+    );
+    sections.push(stdout);
+
+    let stderr_trimmed = result.stderr.trim_end();
+    if !stderr_trimmed.is_empty() {
+        sections.push(Section::new(
+            "stderr",
+            wrapped(stderr_trimmed.to_string()),
+            style(),
+        ));
     }
 
-    (
-        CompositeElement(vec![
-            stdout_element,
-            text_element("stderr", stderr.to_string()),
-        ])
-        .into(),
-        status_line,
-    )
+    sections
 }
 
-fn bash_to_text(script: &str) -> Text<'static> {
-    HIGHLIGHTER.highlight(script, &HIGHLIGHTER.bash)
+fn app_error(message: String) -> Section {
+    Section::new("app error", wrapped(message), style())
 }
 
-fn bash_to_element(script: &str) -> Element {
-    Paragraph::new(bash_to_text(script))
-        .wrap(Wrap { trim: false })
-        .into()
+fn status(result: &BashResult) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(code) = result.exit_status
+        && code != 0
+    {
+        parts.push(format!("exit status {code}"));
+    }
+
+    if let Some(sig) = result.signal {
+        parts.push(format!("signal {sig}"));
+    }
+
+    (!parts.is_empty()).then(|| parts.join(","))
+}
+
+fn wrapped(content: impl Into<Text<'static>>) -> Element {
+    Paragraph::new(content).wrap(Wrap { trim: false }).into()
 }
