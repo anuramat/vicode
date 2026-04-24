@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 
 use ratatui::prelude::*;
-use ratatui::widgets::Block;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,13 +23,6 @@ pub trait HeightComputable: Debug {
         buf: &mut Buffer,
         ctx: RenderContext,
     );
-
-    fn block(
-        &self,
-        _ctx: RenderContext,
-    ) -> Option<Block<'_>> {
-        None
-    }
 }
 
 #[derive(Debug)]
@@ -78,36 +70,9 @@ impl Element {
         if self.width != width || self.ctx != ctx {
             self.width = width;
             self.ctx = ctx;
-            self.height = self.compute_height(width, ctx);
+            self.height = self.widget.height(width, ctx);
         }
         self.height
-    }
-
-    fn compute_height(
-        &mut self,
-        width: u16,
-        ctx: RenderContext,
-    ) -> u16 {
-        if width == 0 {
-            return 0;
-        }
-        let Some(block) = self.widget.block(ctx) else {
-            return self.widget.height(width, ctx);
-        };
-        let outer = Rect {
-            x: 0,
-            y: 0,
-            width: u16::MAX / 2,
-            height: u16::MAX / 2,
-        };
-        let inner = block.inner(outer);
-        let v_thickness = outer.height - inner.height;
-        let h_thickness = outer.width - inner.width;
-        if width < h_thickness {
-            v_thickness
-        } else {
-            self.widget.height(width - h_thickness, ctx) + v_thickness
-        }
     }
 
     pub fn render(
@@ -116,15 +81,7 @@ impl Element {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        match &self.widget.block(ctx) {
-            Some(block) => {
-                block.render(area, buf);
-                self.widget.render(block.inner(area), buf, ctx);
-            }
-            None => {
-                self.widget.render(area, buf, ctx);
-            }
-        }
+        self.widget.render(area, buf, ctx);
     }
 
     pub fn partial_render(

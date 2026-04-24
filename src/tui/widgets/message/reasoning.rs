@@ -25,6 +25,12 @@ impl ReasoningWidget {
     fn title(&self) -> String {
         format!("reasoning: {} chars, {}", self.char_count, self.timing)
     }
+
+    fn block(&self) -> Block<'_> {
+        Block::bordered()
+            .title(format!(" {} ", self.title()))
+            .style(style())
+    }
 }
 
 impl HeightComputable for ReasoningWidget {
@@ -36,7 +42,7 @@ impl HeightComputable for ReasoningWidget {
         if ctx.hide_reasoning {
             return 1;
         }
-        self.widget.line_count(width) as u16
+        self.widget.line_count(width.saturating_sub(2)) as u16 + 2
     }
 
     fn render(
@@ -45,25 +51,15 @@ impl HeightComputable for ReasoningWidget {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        if !ctx.hide_reasoning {
-            return self.widget.render_ref(area, buf);
-        }
-        Paragraph::new(self.title())
-            .style(style().italic())
-            .render(area, buf);
-    }
-
-    fn block(
-        &self,
-        ctx: RenderContext,
-    ) -> Option<Block<'_>> {
         if ctx.hide_reasoning {
-            return None;
+            Paragraph::new(self.title())
+                .style(style().italic())
+                .render(area, buf);
+        } else {
+            let block = self.block();
+            block.render_ref(area, buf);
+            self.widget.render_ref(block.inner(area), buf);
         }
-        Block::bordered()
-            .title(format!(" {} ", self.title()))
-            .style(style())
-            .into()
     }
 }
 

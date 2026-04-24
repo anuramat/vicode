@@ -2,6 +2,7 @@ use derive_more::From;
 use ratatui::prelude::*;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::WidgetRef;
 
 use crate::llm::message::ToolCallItem;
 use crate::tui::colors::TOOLCALL_COLOR;
@@ -38,10 +39,7 @@ where T: HeightComputable + Clone
         if ctx.hide_tools {
             return 1;
         }
-        if let Some(inner) = &mut self.inner {
-            return inner.height(width, ctx);
-        }
-        1
+        2 + self.inner.as_mut().height(width.saturating_sub(2), ctx)
     }
 
     fn render(
@@ -50,29 +48,25 @@ where T: HeightComputable + Clone
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        if !ctx.hide_tools
-            && let Some(inner) = &mut self.inner
-        {
-            return inner.render(area, buf, ctx);
-        }
-        Paragraph::new(self.name.as_str())
-            .style(style().italic())
-            .render(area, buf);
-    }
-
-    // TODO make method &mut self, and recompute height on call. if height is 1, no block. maybe
-    // "collapsed" method, active when inner=None or tools hidden
-    fn block(
-        &self,
-        ctx: RenderContext,
-    ) -> Option<Block<'_>> {
         if ctx.hide_tools {
-            return None;
+            Paragraph::new(self.name.as_str())
+                .style(style().italic())
+                .render(area, buf);
+        } else {
+            let block = self.block();
+            block.render_ref(area, buf);
+            self.inner.as_mut().render(block.inner(area), buf, ctx);
         }
-        let block = ratatui::widgets::Block::bordered()
+    }
+}
+
+impl<T> ToolCallWidget<T>
+where T: HeightComputable + Clone
+{
+    fn block(&self) -> Block<'static> {
+        ratatui::widgets::Block::bordered()
             .border_set(ratatui::symbols::border::PLAIN)
             .style(style())
-            .title(format!(" {} ", self.name));
-        block.into()
+            .title(format!(" {} ", self.name))
     }
 }

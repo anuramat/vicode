@@ -22,6 +22,12 @@ struct DeveloperMessageWidget {
     char_count: usize,
 }
 
+fn block() -> Block<'static> {
+    Block::bordered()
+        .title(" developer message ")
+        .style(style())
+}
+
 impl HeightComputable for DeveloperMessageWidget {
     fn height(
         &mut self,
@@ -31,7 +37,7 @@ impl HeightComputable for DeveloperMessageWidget {
         if ctx.hide_developer {
             return 1;
         }
-        self.widget.line_count(width) as u16
+        self.widget.line_count(width.saturating_sub(2)) as u16 + 2
     }
 
     fn render(
@@ -40,26 +46,16 @@ impl HeightComputable for DeveloperMessageWidget {
         buf: &mut Buffer,
         ctx: RenderContext,
     ) {
-        if !ctx.hide_developer {
-            return self.widget.render_ref(area, buf);
-        }
-        let text = format!("developer: {} chars", self.char_count);
-        Paragraph::new(text)
-            .style(style().italic())
-            .render(area, buf);
-    }
-
-    fn block(
-        &self,
-        ctx: RenderContext,
-    ) -> Option<Block<'_>> {
         if ctx.hide_developer {
-            return None;
+            let text = format!("developer: {} chars", self.char_count);
+            Paragraph::new(text)
+                .style(style().italic())
+                .render(area, buf);
+        } else {
+            let block = block();
+            block.render_ref(area, buf);
+            self.widget.render_ref(block.inner(area), buf);
         }
-        Block::bordered()
-            .title(" developer message ")
-            .style(style())
-            .into()
     }
 }
 

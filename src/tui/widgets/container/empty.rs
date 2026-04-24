@@ -1,6 +1,5 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::Block;
 
 use crate::tui::widgets::container::element::HeightComputable;
 use crate::tui::widgets::container::element::RenderContext;
@@ -46,12 +45,5 @@ where T: HeightComputable
         if let Some(v) = self {
             v.render(area, buf, ctx);
         }
-    }
-
-    fn block(
-        &self,
-        ctx: RenderContext,
-    ) -> Option<Block<'_>> {
-        self.as_ref().and_then(|v| v.block(ctx))
     }
 }
