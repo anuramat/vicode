@@ -26,7 +26,8 @@ const DEFAULT_INSTRUCTIONS: &str =
 const DEFAULT_CONFIG: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default/config.toml"));
 const CONFIG_FILENAME: &str = "config.toml";
-const INSTRUCTIONS_FILENAME: &str = "AGENTS.md"; // in config dir
+/// global instructions in the config dir
+const INSTRUCTIONS_FILENAME: &str = "AGENTS.md";
 const XDG_DIRNAME: &str = "vicode";
 const SCHEMA_FILENAME: &str = "schema.json";
 
@@ -39,6 +40,17 @@ pub static INSTRUCTIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(
     }
     std::fs::read_to_string(filepath).unwrap()
 });
+
+#[derive(Deserialize, Debug, Clone, Copy, SmartDefault, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct LayoutConfig {
+    /// width of the info pane
+    #[default = 32]
+    pub info_pane_width: u16,
+    /// max width of the message history column
+    #[default = 80]
+    pub message_width: u16,
+}
 
 #[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 pub struct CompactConfig {
@@ -95,6 +107,9 @@ pub struct Config {
 
     /// rendering options; can be toggled at runtime
     pub render: RenderContext,
+
+    /// layout options
+    pub layout: LayoutConfig,
 
     pub providers: HashMap<String, ProviderConfig>,
 

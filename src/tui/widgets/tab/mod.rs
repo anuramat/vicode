@@ -10,12 +10,12 @@ use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
+use crate::config::LayoutConfig;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabEntry;
 use crate::tui::widgets::container::element::RenderContext;
 
 const INPUT_AREA_HEIGHT: u16 = 5;
-const INFO_PANE_WIDTH: u16 = 32;
 
 impl TabEntry<'_> {
     pub fn render(
@@ -23,10 +23,11 @@ impl TabEntry<'_> {
         area: Rect,
         buf: &mut Buffer,
         ctx: RenderContext,
+        layout: LayoutConfig,
     ) {
         match self {
             Self::Loading => render_loading(area, buf),
-            Self::Ready(tab) => tab.render(area, buf, ctx),
+            Self::Ready(tab) => tab.render(area, buf, ctx, layout),
         }
     }
 }
@@ -38,12 +39,17 @@ impl Tab<'_> {
         area: Rect,
         buf: &mut Buffer,
         ctx: RenderContext,
+        layout: LayoutConfig,
     ) {
-        let [body, info_area] = *Layout::default()
+        let info_width = layout.info_pane_width;
+        let body_width = layout.message_width;
+        let [_, body, _, info_area] = *Layout::default()
             .direction(Direction::Horizontal)
             .constraints(vec![
-                Constraint::Min(0),
-                Constraint::Length(INFO_PANE_WIDTH),
+                Constraint::Fill(1),
+                Constraint::Length(body_width),
+                Constraint::Fill(1),
+                Constraint::Length(info_width),
             ])
             .split(area)
         else {
