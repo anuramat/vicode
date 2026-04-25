@@ -60,11 +60,8 @@ impl Tab<'_> {
         self.update_input_title();
     }
 
-    pub fn refresh_file_completion(
-        &mut self,
-        project: &Project,
-    ) -> Result<()> {
-        let paths = tracked_files(project, &self.aid)?;
+    pub fn refresh_file_completion(&mut self) -> Result<()> {
+        let paths = tracked_files(&self.project, &self.aid)?;
         self.input
             .completion
             .source_mut()

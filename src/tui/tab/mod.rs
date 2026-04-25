@@ -34,6 +34,7 @@ pub struct Tab<'a> {
     pub tx: Sender<AppEvent>, // TODO we can ALMOST drop this
     pub aid: AgentId,
     pub agent: AgentHandle,
+    pub project: Project,
 
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
@@ -68,7 +69,7 @@ impl TabEntry<'_> {
     ) {
         match self {
             Self::Loading => set_osc7(project.root()),
-            Self::Ready(tab) => tab.set_osc7(project),
+            Self::Ready(tab) => tab.set_osc7(),
         }
     }
 }
@@ -84,6 +85,7 @@ impl Tab<'_> {
             tx,
             aid,
             agent,
+            project: project.clone(),
             scroll: ScrollElements::default(),
             input: MessageInput {
                 title: String::new(),
@@ -97,15 +99,12 @@ impl Tab<'_> {
             focus: Focus::default(),
             multiplier: 1,
         };
-        tab.refresh_file_completion(project)?;
+        tab.refresh_file_completion()?;
         Ok(tab)
     }
 
-    pub async fn refresh_info(
-        &mut self,
-        project: &Project,
-    ) -> Result<()> {
-        self.info = InfoWidget::new(project, &self.aid).await?;
+    pub async fn refresh_info(&mut self) -> Result<()> {
+        self.info = InfoWidget::new(&self.project, &self.aid).await?;
         Ok(())
     }
 

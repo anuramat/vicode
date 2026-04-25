@@ -7,7 +7,6 @@ use super::AppEvent;
 use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
 use crate::tui::app::NotificationKind;
-use crate::tui::widgets::info::InfoWidget;
 
 impl App<'_> {
     #[instrument(skip(self))]
@@ -61,8 +60,7 @@ impl App<'_> {
         match event {
             Started(agent) => {
                 self.handle_started(aid.clone(), *agent)?;
-                let project = self.project.clone();
-                self.tab_mut_by_aid(&aid)?.refresh_info(&project).await?;
+                self.tab_mut_by_aid(&aid)?.refresh_info().await?;
             }
             HistoryReset(history) => {
                 self.tab_mut_by_aid(&aid)?.replace_history(history);
@@ -75,13 +73,9 @@ impl App<'_> {
                 self.notify(NotificationKind::Error, msg);
             }
             StatusUpdate(status) => {
-                let project = self.project.clone();
-                if self
-                    .tab_mut_by_aid(&aid)?
-                    .set_state(status, &project)
-                    .await?
-                {
-                    self.tab_mut_by_aid(&aid)?.refresh_info(&project).await?;
+                let tab = self.tab_mut_by_aid(&aid)?;
+                if tab.set_state(status).await? {
+                    tab.refresh_info().await?;
                 }
             }
             SubagentDone(out) => {

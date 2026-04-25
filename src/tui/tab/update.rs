@@ -7,7 +7,6 @@ use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::message::Message;
 use crate::llm::message::UserMessage;
-use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
@@ -15,11 +14,8 @@ use crate::tui::tab::Tab;
 use crate::tui::widgets::container::scroll::ScrollElements;
 
 impl Tab<'_> {
-    pub fn set_osc7(
-        &self,
-        project: &Project,
-    ) {
-        let path = project.agent_workdir(&self.aid);
+    pub fn set_osc7(&self) {
+        let path = self.project.agent_workdir(&self.aid);
         set_osc7(&path);
     }
 
@@ -59,13 +55,12 @@ impl Tab<'_> {
     pub async fn set_state(
         &mut self,
         status: AgentStatus,
-        project: &Project,
     ) -> Result<bool> {
         if self.agent.state.status == status {
             return Ok(false);
         }
         self.agent.state.status = status;
-        self.refresh_file_completion(project)?;
+        self.refresh_file_completion()?;
         self.tx
             .send(AppEvent::TabStatusChanged(self.aid.clone()))
             .await?;
