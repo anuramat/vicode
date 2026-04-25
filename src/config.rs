@@ -45,10 +45,10 @@ pub static INSTRUCTIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(
 #[serde(default)]
 pub struct LayoutConfig {
     /// width of the info pane
-    #[default = 32]
+    #[default = 40]
     pub info_pane_width: u16,
     /// max width of the message history column
-    #[default = 80]
+    #[default = 120]
     pub message_width: u16,
 }
 
@@ -126,6 +126,8 @@ pub struct Config {
 
     pub keymap: Keymap,
 
+    #[default("git -c color.status=always status --short")]
+    pub info_cmd: String,
     pub compact: CompactConfig,
 }
 

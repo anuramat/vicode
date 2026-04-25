@@ -23,9 +23,8 @@ impl InfoWidget {
         project: &Project,
         aid: &AgentId,
     ) -> Result<Self> {
-        // TODO move command to config
-        let args = vec!["-c", "color.status=always", "status", "--short"];
-        let output = Command::new(deps::GIT)
+        let args = vec!["-c".to_string(), project.config().info_cmd.clone()];
+        let output = Command::new(deps::BASH)
             .current_dir(project.agent_workdir(aid))
             .args(args)
             .output()

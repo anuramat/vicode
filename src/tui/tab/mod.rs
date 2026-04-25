@@ -22,6 +22,13 @@ use crate::tui::widgets::tab::input::MessageInput;
 
 const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Body,
+    Info,
+}
+
 #[derive(Debug)]
 pub struct Tab<'a> {
     pub tx: Sender<AppEvent>, // TODO we can ALMOST drop this
@@ -31,6 +38,7 @@ pub struct Tab<'a> {
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
     pub info: InfoWidget,
+    pub focus: Focus,
 
     pub multiplier: usize,
 }
@@ -86,10 +94,19 @@ impl Tab<'_> {
                 }),
             },
             info: InfoWidget::default(),
+            focus: Focus::default(),
             multiplier: 1,
         };
         tab.refresh_file_completion(project)?;
         Ok(tab)
+    }
+
+    pub async fn refresh_info(
+        &mut self,
+        project: &Project,
+    ) -> Result<()> {
+        self.info = InfoWidget::new(project, &self.aid).await?;
+        Ok(())
     }
 
     pub fn label(&self) -> String {

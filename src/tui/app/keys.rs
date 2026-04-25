@@ -8,6 +8,7 @@ use crate::tui::app::App;
 use crate::tui::app::NotificationKind;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
+use crate::tui::tab::Focus;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::Input;
 
@@ -16,6 +17,13 @@ const fn show_hide(hidden: bool) -> &'static str {
 }
 
 impl Tab<'_> {
+    const fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Body => Focus::Info,
+            Focus::Info => Focus::Body,
+        };
+    }
+
     fn set_multiplier(
         &mut self,
         value: Option<&str>,
@@ -154,6 +162,7 @@ impl Command {
         self,
         app: &mut App<'_>,
     ) -> Result<()> {
+        let project = app.project.clone();
         match self.name {
             CommandName::AssistantNext => app.selected_tab_mut()?.cycle_assistant(false).await?,
             CommandName::AssistantPrev => app.selected_tab_mut()?.cycle_assistant(true).await?,
@@ -182,6 +191,7 @@ impl Command {
             CommandName::MsgUndo => app.selected_tab_mut()?.undo(1).await?,
             CommandName::MsgUndoUser => app.selected_tab_mut()?.undo_user().await?,
             CommandName::Quit => app.should_exit = true,
+            CommandName::RefreshInfo => app.selected_tab_mut()?.refresh_info(&project).await?,
             CommandName::ScrollBottom => app.selected_tab_mut()?.scroll_bottom(),
             CommandName::ScrollHalfPageDown => app.selected_tab_mut()?.scroll_half_page_down(),
             CommandName::ScrollHalfPageUp => app.selected_tab_mut()?.scroll_half_page_up(),
@@ -202,6 +212,7 @@ impl Command {
             CommandName::TabPrev => app.prev_tab(),
             CommandName::TabSelect => app.select_tab_arg(self.args.as_deref())?,
             CommandName::ToggleDeveloper => app.toggle_developer(),
+            CommandName::ToggleInfo => app.selected_tab_mut()?.toggle_focus(),
             CommandName::ToggleMarkdown => app.toggle_markdown(),
             CommandName::ToggleReasoning => app.toggle_reasoning(),
             CommandName::ToggleTabs => app.toggle_tabs(),

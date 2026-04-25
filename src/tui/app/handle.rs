@@ -60,7 +60,9 @@ impl App<'_> {
 
         match event {
             Started(agent) => {
-                self.handle_started(aid, *agent)?;
+                self.handle_started(aid.clone(), *agent)?;
+                let project = self.project.clone();
+                self.tab_mut_by_aid(&aid)?.refresh_info(&project).await?;
             }
             HistoryReset(history) => {
                 self.tab_mut_by_aid(&aid)?.replace_history(history);
@@ -79,7 +81,7 @@ impl App<'_> {
                     .set_state(status, &project)
                     .await?
                 {
-                    self.tab_mut_by_aid(&aid)?.info = InfoWidget::new(&self.project, &aid).await?;
+                    self.tab_mut_by_aid(&aid)?.refresh_info(&project).await?;
                 }
             }
             SubagentDone(out) => {

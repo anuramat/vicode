@@ -16,7 +16,6 @@ use tokio::time::Instant;
 
 use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
-use crate::config::LayoutConfig;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;

@@ -48,6 +48,8 @@ pub enum CommandName {
     MsgUndoUser,
     /// quit the app
     Quit,
+    /// refresh the info pane
+    RefreshInfo,
     ScrollBottom,
     ScrollHalfPageDown,
     ScrollHalfPageUp,
@@ -74,6 +76,8 @@ pub enum CommandName {
     TabSelect,
     /// show/hide developer messages
     ToggleDeveloper,
+    /// toggle focus/visibility of the info pane
+    ToggleInfo,
     /// toggle markdown rendering
     ToggleMarkdown,
     /// show/hide reasoning
@@ -275,6 +279,8 @@ impl Default for Keymap {
         ];
 
         let normal = [
+            ("\\", "toggle_info"),
+            ("r", "refresh_info"),
             (":", "cmdline_enter"),
             ("j", "tab_next"),
             ("k", "tab_prev"),
