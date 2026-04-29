@@ -25,7 +25,7 @@ impl History {
         if let Some(Message::Assistant(msg)) = messages.last_mut() {
             msg.content
                 .retain(|_, content| !matches!(content, AssistantItem::ToolCall(_)));
-            msg.recount();
+            msg.recount_shallow();
         }
         messages.push(Message::Developer(DeveloperMessage::misc(
             SUBAGENT_HEADER.to_string(),
