@@ -14,6 +14,7 @@ mod tokens;
 use anyhow::Result;
 use anyhow::bail;
 use archive::ArchivedHistory;
+use archive::ArchivedHistoryReason;
 pub use compact::Activity;
 use compact::CompactState;
 pub use event::AssistantEvent;
@@ -115,10 +116,39 @@ impl History {
                     .push(Message::User(UserMessage::new(text)));
             }
             HistoryUpdate::Pop(n) => {
+                // TODO this condition should be computed smarter I think;
+                // don't care about false positives, but as it is now, we might skip archiving when we should;
+                // e.g. if we pop, then set history to an older version from the archive, and then pop again;
+                // not a problem for now, since we don't have a way to set history to an older version.
+                let should_archive = if let Some(archived) = self.archive.last()
+                    && matches!(archived.reason, ArchivedHistoryReason::Undo)
+                {
+                    false
+                } else {
+                    true
+                };
                 let state = self.normal_mut()?;
-                let keep = state.messages.len().saturating_sub(n);
+                let len = state.messages.len();
+
+                let keep = len.saturating_sub(n);
+                if keep == len {
+                    return Ok(());
+                }
+
+                let archived = if should_archive {
+                    Some(ArchivedHistory {
+                        state: state.clone(),
+                        reason: ArchivedHistoryReason::Undo,
+                    })
+                } else {
+                    None
+                };
+
                 state.messages.truncate(keep);
                 state.recount_shallow();
+                if let Some(archived) = archived {
+                    self.archive.push(archived);
+                }
             }
             HistoryUpdate::TurnResponse(event) => {
                 self.normal_mut()?.handle_response(event)?;
@@ -213,6 +243,36 @@ mod tests {
         history.increment();
         assert!(history.handle(0, HistoryUpdate::Pop(1)).is_err());
         assert_eq!(history.state().messages.len(), 1);
+    }
+
+    #[test]
+    fn pop_archives_dropped_tail() {
+        let mut history = History::new(String::new());
+        history
+            .handle(0, HistoryUpdate::UserMessage("first".into()))
+            .unwrap();
+        history
+            .handle(0, HistoryUpdate::UserMessage("second".into()))
+            .unwrap();
+        history.handle(0, HistoryUpdate::Pop(1)).unwrap();
+
+        assert_eq!(history.state().messages.len(), 1);
+        assert_eq!(history.archive.len(), 1);
+        assert_eq!(history.archive[0].state.messages.len(), 1);
+        assert!(matches!(
+            &history.archive[0].state.messages[0],
+            Message::User(UserMessage { text, .. }) if text == "second"
+        ));
+    }
+
+    #[test]
+    fn pop_zero_does_not_archive() {
+        let mut history = History::new(String::new());
+        history
+            .handle(0, HistoryUpdate::UserMessage("only".into()))
+            .unwrap();
+        history.handle(0, HistoryUpdate::Pop(0)).unwrap();
+        assert!(history.archive.is_empty());
     }
 
     #[test]
