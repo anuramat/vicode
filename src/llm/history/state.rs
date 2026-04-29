@@ -129,8 +129,12 @@ impl HistoryState {
         }
         self.status()
             .map_or(TurnStatus::Idle, |status| match status {
-                AssistantStatus::Queued => todo!(),
-                AssistantStatus::InProgress => todo!(),
+                AssistantStatus::Queued => TurnStatus::Failed(
+                    "last assistant message is queued but no tasks are running".into(),
+                ),
+                AssistantStatus::InProgress => TurnStatus::Failed(
+                    "last assistant message is in progress but no tasks are running".into(),
+                ),
                 AssistantStatus::Success => TurnStatus::Idle,
                 AssistantStatus::Error(e) => TurnStatus::Failed(e),
             })
