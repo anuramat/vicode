@@ -3,7 +3,6 @@ use ratatui::prelude::*;
 use ratatui::text::Line;
 use ratatui::widgets::Clear;
 
-use crate::llm::history::TokenCount;
 use crate::tui::app::App;
 use crate::tui::app::NotificationKind::Error;
 use crate::tui::app::NotificationKind::Info;
@@ -114,7 +113,7 @@ impl<'a> App<'a> {
                     .unwrap_or_default();
                 format!(
                     "{:.1}{} kT",
-                    tab.history().state().token_count() as f64 / 1000.0,
+                    tab.history().token_count() as f64 / 1000.0,
                     window
                 )
             };

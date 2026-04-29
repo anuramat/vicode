@@ -72,7 +72,7 @@ impl History {
         target_percentage: usize,
     ) -> usize {
         let target = window.saturating_mul(target_percentage) / 100;
-        let mut kept = self.state().token_count();
+        let mut kept = self.token_count();
         for (idx, msg) in self.state().iter().enumerate() {
             if kept < target {
                 return idx;
@@ -80,6 +80,10 @@ impl History {
             kept -= msg.token_count();
         }
         self.state().messages.len()
+    }
+
+    pub fn token_count(&self) -> usize {
+        self.instructions.token_count() + self.state().token_count()
     }
 
     const fn increment(&mut self) {
