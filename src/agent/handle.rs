@@ -224,10 +224,7 @@ impl Agent {
         self.parent
             .send(ParentEvent::HistoryUpdate(generation, event.clone()))
             .await?;
-        self.state
-            .context
-            .history
-            .handle(generation, event.clone())?;
+        self.history_mut().handle(generation, event.clone())?;
         match event {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
                 self.execute_tool_calls(item).await?;

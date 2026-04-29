@@ -28,7 +28,7 @@ impl Tab<'_> {
         } else {
             None
         };
-        self.agent.state.context.history.handle(generation, event)?;
+        self.history_mut().handle(generation, event)?;
 
         // XXX proper handling -- resync and show error notification
         if let Some(input) = input {
