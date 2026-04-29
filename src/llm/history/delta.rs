@@ -100,6 +100,7 @@ impl HistoryState {
         };
         msg.recount_shallow();
         msg.touch_ended_at(ended_at);
+        self.recount_shallow();
         Ok(())
     }
 }

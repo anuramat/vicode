@@ -37,7 +37,6 @@ impl HistoryState {
                 self.fail_response(msg)?;
             }
         }
-        self.recount_shallow();
         Ok(())
     }
 
@@ -69,6 +68,7 @@ impl HistoryState {
 
         _ = msg.content.insert(new_item.id(), new_item);
         msg.recount_shallow();
+        self.recount_shallow();
         Ok(())
     }
 
