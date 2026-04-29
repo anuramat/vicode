@@ -285,26 +285,29 @@ impl Agent {
         &mut self,
         item: &AssistantItem,
     ) -> Result<()> {
-        if let AssistantItem::ToolCall(mut call) = item.clone()
-            && call.task.output().is_none()
-        {
-            let generation = self.history().generation();
-            call.task.prepare(self).await?;
-            self.tskmgr
-                .spawn(self.tx.clone(), generation, move |task| async move {
-                    let handle = TurnHandle {
-                        task,
-                        turn_type: TurnType::Default,
-                    };
-                    call.task.run().await;
-                    call.touch_ready_at_now();
-                    handle
-                        .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
-                            call,
-                        ))))
-                        .await
-                });
+        let AssistantItem::ToolCall(call) = item else {
+            return Ok(());
+        };
+        if call.task.output().is_some() {
+            return Ok(());
         }
+        let mut call = call.clone();
+        let generation = self.history().generation();
+        call.task.prepare(self).await?;
+        self.tskmgr
+            .spawn(self.tx.clone(), generation, move |task| async move {
+                let handle = TurnHandle {
+                    task,
+                    turn_type: TurnType::Default,
+                };
+                call.task.run().await;
+                call.touch_ready_at_now();
+                handle
+                    .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+                        call,
+                    ))))
+                    .await
+            });
         Ok(())
     }
 }
