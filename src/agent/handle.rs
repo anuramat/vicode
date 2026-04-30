@@ -163,11 +163,22 @@ impl Agent {
                 self.tskmgr.abort().await;
                 let g = self.increment_generation().await?;
                 let event = if self.history().compacting() {
-                    HistoryUpdate::CompactResponse(AssistantEvent::Failed(ABORTED_BY_USER.into()))
+                    Some(HistoryUpdate::CompactAbort)
+                } else if self
+                    .history()
+                    .state()
+                    .status()
+                    .is_some_and(|s| s.failable())
+                {
+                    Some(HistoryUpdate::TurnResponse(AssistantEvent::Failed(
+                        ABORTED_BY_USER.into(),
+                    )))
                 } else {
-                    HistoryUpdate::TurnResponse(AssistantEvent::Failed(ABORTED_BY_USER.into()))
+                    None
                 };
-                self.handle_history(g, event).await?;
+                if let Some(event) = event {
+                    self.handle_history(g, event).await?;
+                }
             }
             Delete => {
                 self.tskmgr.abort().await;

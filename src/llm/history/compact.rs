@@ -93,6 +93,16 @@ impl History {
         matches!(self.activity, Activity::Compacting { .. })
     }
 
+    pub fn abort_compact(&mut self) -> Result<()> {
+        let state = if let Activity::Compacting { state, .. } = &self.activity {
+            state.clone()
+        } else {
+            bail!("no compact in progress");
+        };
+        self.activity = Activity::Normal { state };
+        Ok(())
+    }
+
     pub fn apply_compact(&mut self) -> Result<()> {
         let (old_state, compact) = {
             let Activity::Compacting { state, compact } = &mut self.activity else {
@@ -409,6 +419,48 @@ mod tests {
                 status: AssistantStatus::Success,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn compact_abort_restores_original_history() {
+        let mut history = History::new(String::new());
+        push(
+            &mut history,
+            Message::User(UserMessage::new("first".into())),
+        );
+        push(&mut history, compact_summary("old reply"));
+        push(&mut history, Message::User(UserMessage::new("last".into())));
+        let generation = history.generation();
+
+        history
+            .handle(generation, HistoryUpdate::CompactStart { n_drop: 2 })
+            .unwrap();
+        history
+            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .unwrap();
+        history
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Item(Box::new(output_item(
+                    "out",
+                    Some("partial summary"),
+                )))),
+            )
+            .unwrap();
+        history
+            .handle(generation, HistoryUpdate::CompactAbort)
+            .unwrap();
+
+        assert!(!history.compacting());
+        assert_eq!(history.state().messages.len(), 3);
+        assert!(matches!(
+            &history.state().messages[0],
+            Message::User(UserMessage { text, .. }) if text == "first"
+        ));
+        assert!(matches!(
+            &history.state().messages[2],
+            Message::User(UserMessage { text, .. }) if text == "last"
         ));
     }
 }

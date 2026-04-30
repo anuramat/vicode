@@ -18,6 +18,7 @@ pub enum AssistantEvent {
 #[derive(Debug, Clone)]
 pub enum HistoryUpdate {
     CompactStart { n_drop: usize },
+    CompactAbort,
     CompactResponse(AssistantEvent),
     GenerationIncremented,
     TurnResponse(AssistantEvent),

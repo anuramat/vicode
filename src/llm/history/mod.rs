@@ -107,6 +107,9 @@ impl History {
             self.generation,
         );
         match event {
+            HistoryUpdate::CompactAbort => {
+                self.abort_compact()?;
+            }
             HistoryUpdate::GenerationIncremented => self.increment(),
             HistoryUpdate::DeveloperMessage(msg) => {
                 self.normal_mut()?.push(Message::Developer(msg));
