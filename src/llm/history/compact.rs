@@ -94,53 +94,50 @@ impl History {
     }
 
     pub fn apply_compact(&mut self) -> Result<()> {
-        let Activity::Compacting { state, compact } = mem::take(&mut self.activity) else {
-            bail!("no compact in progress");
+        let (old_state, compact) = {
+            let Activity::Compacting { state, compact } = &mut self.activity else {
+                bail!("no compact in progress");
+            };
+            (state.clone(), compact)
         };
-        match build_compacted(&state, compact) {
-            Ok(new_state) => {
-                self.activity = Activity::Normal { state: new_state };
-                self.archive.push(ArchivedHistory {
-                    state,
-                    reason: ArchivedHistoryReason::Compact,
-                });
-                Ok(())
-            }
-            Err(e) => {
-                self.activity = Activity::Normal { state };
-                Err(e)
-            }
-        }
+        let new_state = build_compacted(&old_state, compact)?;
+
+        self.activity = Activity::Normal { state: new_state };
+        self.archive.push(ArchivedHistory {
+            state: old_state,
+            reason: ArchivedHistoryReason::Compact,
+        });
+        Ok(())
     }
 }
 
 fn build_compacted(
     old_state: &HistoryState,
-    compact: CompactState,
+    compact: &CompactState,
 ) -> Result<HistoryState> {
-    let CompactState {
-        state: compact_state,
-        n_drop,
-        needs_another_turn,
-        started_at,
-        created_at,
-    } = compact;
-
-    let summary = compact_state.text_outputs_after(n_drop).trim().to_string();
+    let summary = compact
+        .state
+        .text_outputs_after(compact.n_drop)
+        .trim()
+        .to_string();
 
     {
         if summary.is_empty() {
             bail!("compact summary is empty");
         }
         let len = old_state.messages.len();
-        if n_drop > len {
-            bail!("cannot compact first {n_drop} messages from history of length {len}");
+        if compact.n_drop > len {
+            bail!(
+                "cannot compact first {} messages from history of length {len}",
+                compact.n_drop
+            );
         }
     }
 
     // TODO emit warning when unwrapping?
-    let started_at = started_at.unwrap_or(created_at);
-    let ended_at = compact_state
+    let started_at = compact.started_at.unwrap_or(compact.created_at);
+    let ended_at = compact
+        .state
         .last()
         .and_then(super::timing::Timing::ended_at)
         .unwrap_or_else(now);
@@ -148,8 +145,8 @@ fn build_compacted(
     let compact_msg = {
         let mut msg: Message = DeveloperMessage::Compact(CompactMessage {
             text: summary,
-            needs_another_turn,
-            created_at,
+            needs_another_turn: compact.needs_another_turn,
+            created_at: compact.created_at,
             started_at,
             ready_at: ended_at,
             token_count: 0,
@@ -160,7 +157,7 @@ fn build_compacted(
     };
 
     Ok(iter::once(compact_msg)
-        .chain(old_state.messages.iter().skip(n_drop).cloned())
+        .chain(old_state.messages.iter().skip(compact.n_drop).cloned())
         .collect::<Vec<_>>()
         .into())
 }
