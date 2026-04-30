@@ -94,8 +94,8 @@ impl History {
     }
 
     pub fn abort_compact(&mut self) -> Result<()> {
-        let state = if let Activity::Compacting { state, .. } = &self.activity {
-            state.clone()
+        let state = if let Activity::Compacting { state, .. } = &mut self.activity {
+            mem::take(state)
         } else {
             bail!("no compact in progress");
         };
@@ -104,14 +104,15 @@ impl History {
     }
 
     pub fn apply_compact(&mut self) -> Result<()> {
-        let (old_state, compact) = {
-            let Activity::Compacting { state, compact } = &mut self.activity else {
-                bail!("no compact in progress");
-            };
-            (state.clone(), compact)
+        let Activity::Compacting {
+            state: old_state,
+            compact,
+        } = &mut self.activity
+        else {
+            bail!("no compact in progress");
         };
-        let new_state = build_compacted(&old_state, compact)?;
-
+        let new_state = build_compacted(old_state, compact)?;
+        let old_state = mem::take(old_state);
         self.activity = Activity::Normal { state: new_state };
         self.archive.push(ArchivedHistory {
             state: old_state,
