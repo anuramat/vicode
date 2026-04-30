@@ -15,7 +15,7 @@ pub fn reasoning_to_output(
         reasoning_item: &ReasoningItem,
     ) -> OutputItem {
         let mut item = OutputItem {
-            id: String::new(), // WARN empty id might be a problem
+            id: String::new(),
             started_at: reasoning_item.started_at,
             ended_at: reasoning_item.ended_at,
             token_count: reasoning_item.token_count,

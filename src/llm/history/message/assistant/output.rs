@@ -9,7 +9,7 @@ use crate::llm::history::tokens::count_text_tokens;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OutputItem {
     pub id: String,
-    pub content: Vec<OutputContent>,
+    pub content: Vec<OutputContent>, // TODO when pushing, append to last item if the variant is the same
 
     pub token_count: usize,
 
