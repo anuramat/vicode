@@ -3,7 +3,6 @@ use crate::llm::history::History;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::Message;
-use crate::llm::history::tokens::TokenCount;
 
 const SUBAGENT_HEADER: &str = r"
 You are a subagent, assisting your parent agent.

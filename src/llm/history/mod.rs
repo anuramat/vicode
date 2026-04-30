@@ -120,13 +120,11 @@ impl History {
                 // don't care about false positives, but as it is now, we might skip archiving when we should;
                 // e.g. if we pop, then set history to an older version from the archive, and then pop again;
                 // not a problem for now, since we don't have a way to set history to an older version.
-                let should_archive = if let Some(archived) = self.archive.last()
-                    && matches!(archived.reason, ArchivedHistoryReason::Undo)
-                {
-                    false
-                } else {
-                    true
-                };
+                let should_archive = self
+                    .archive
+                    .last()
+                    .is_some_and(|v| !matches!(v.reason, ArchivedHistoryReason::Undo));
+
                 let state = self.normal_mut()?;
                 let len = state.messages.len();
 
