@@ -26,6 +26,7 @@ pub struct StartedAssistantStream {
     pub stream: AssistantStream,
 }
 
+// TODO would these work with references? specifically the messages
 #[async_trait]
 pub trait Api: Send + Sync + std::fmt::Debug {
     async fn stream(
