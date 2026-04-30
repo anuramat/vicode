@@ -2,7 +2,7 @@ use ambassador::delegatable_trait;
 
 pub use crate::utils::now;
 
-/// invariant: `created_at < started_at <= ended_at <= ready_at`
+/// invariant: `created_at <= started_at <= ended_at <= ready_at`
 #[delegatable_trait]
 pub trait Timing {
     /// local initialization

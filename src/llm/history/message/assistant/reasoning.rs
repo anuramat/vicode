@@ -49,6 +49,7 @@ impl Timing for ReasoningItem {
 
 impl TokenCount for ReasoningItem {
     fn recount(&mut self) {
+        // NOTE summary is ignored intentionally
         self.token_count = self
             .content
             .as_ref()
