@@ -98,3 +98,7 @@ unused_must_use = "forbid"
 
 [patch.crates-io]
 async-openai = { git = "https://github.com/anuramat/async-openai" }
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
