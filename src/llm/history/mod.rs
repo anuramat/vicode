@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn pop_archives_dropped_tail() {
+    fn pop_snapshots_pre_pop_state_for_undo() {
         let mut history = History::new(String::new());
         history
             .handle(0, HistoryUpdate::UserMessage("first".into()))
@@ -259,9 +259,13 @@ mod tests {
 
         assert_eq!(history.state().messages.len(), 1);
         assert_eq!(history.archive.len(), 1);
-        assert_eq!(history.archive[0].state.messages.len(), 1);
+        assert_eq!(history.archive[0].state.messages.len(), 2);
         assert!(matches!(
             &history.archive[0].state.messages[0],
+            Message::User(UserMessage { text, .. }) if text == "first"
+        ));
+        assert!(matches!(
+            &history.archive[0].state.messages[1],
             Message::User(UserMessage { text, .. }) if text == "second"
         ));
     }

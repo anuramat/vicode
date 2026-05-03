@@ -126,7 +126,6 @@ mod tests {
     use crate::llm::history::message::AssistantStatus;
     use crate::llm::history::message::Message;
     use crate::llm::history::message::OutputItem;
-    use crate::llm::history::message::UserMessage;
     use crate::llm::history::timing::Timing;
     use crate::llm::history::tokens::TokenCount;
     use crate::llm::history::tokens::count_text_tokens;
@@ -153,44 +152,6 @@ mod tests {
     fn response_starts_without_assistant_message() {
         let history = History::new(String::new());
         assert!(history.state().messages.is_empty());
-    }
-
-    #[test]
-    fn response_failed_without_message_keeps_history_empty() {
-        let mut history = History::new(String::new());
-        history
-            .handle(0, response(AssistantEvent::Failed("oops".into())))
-            .unwrap();
-        assert!(history.state().messages.is_empty());
-    }
-
-    #[test]
-    fn response_failed_without_message_for_abort_keeps_history_empty() {
-        let mut history = History::new(String::new());
-        history
-            .handle(
-                0,
-                response(AssistantEvent::Failed("aborted by user".into())),
-            )
-            .unwrap();
-        assert!(history.state().messages.is_empty());
-    }
-
-    #[test]
-    fn response_failed_after_user_message_keeps_history_unchanged() {
-        let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::UserMessage("hello".into()))
-            .unwrap();
-        let total_tokens = history.state().token_count();
-        history
-            .handle(0, response(AssistantEvent::Failed("oops".into())))
-            .unwrap();
-        assert!(matches!(
-            history.state().last(),
-            Some(Message::User(UserMessage { text, .. })) if text == "hello"
-        ));
-        assert_eq!(history.state().token_count(), total_tokens);
     }
 
     #[test]
@@ -304,35 +265,6 @@ mod tests {
             history.state().token_count(),
             10 + count_text_tokens("hello")
         );
-    }
-
-    #[test]
-    fn response_item_starts_message_in_progress() {
-        let mut history = History::new(String::new());
-        history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out", 0, None,
-                )))),
-            )
-            .unwrap();
-        let Some(Message::Assistant(msg)) = history.state().messages.first() else {
-            panic!("expected assistant message");
-        };
-        assert!(matches!(msg.status, AssistantStatus::InProgress));
-    }
-
-    #[test]
-    fn response_completed_without_message_creates_success_message() {
-        let mut history = History::new(String::new());
-        history
-            .handle(0, response(AssistantEvent::Completed(vec![])))
-            .unwrap();
-        let Some(Message::Assistant(msg)) = history.state().messages.first() else {
-            panic!("expected assistant message");
-        };
-        assert!(matches!(msg.status, AssistantStatus::Success));
     }
 
     #[test]

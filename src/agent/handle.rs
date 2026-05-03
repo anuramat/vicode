@@ -421,7 +421,10 @@ mod tests {
             pending::<Result<()>>().await
         });
 
-        let _ = agent.handle_external(ExternalEvent::Abort).await.unwrap();
+        let _ = agent
+            .handle(AgentEvent::External(ExternalEvent::Abort))
+            .await
+            .unwrap();
 
         let events = [
             recv(&mut parent_rx, "parent event").await,
@@ -488,6 +491,13 @@ mod tests {
             .unwrap();
         history
             .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
+            .unwrap();
+        agent
+            .handle_history(
+                0,
+                HistoryUpdate::CompactResponse(AssistantEvent::Created(0)),
+            )
+            .await
             .unwrap();
         agent
             .handle_history(

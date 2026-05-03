@@ -293,6 +293,9 @@ mod tests {
             .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
             .unwrap();
         history
+            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .unwrap();
+        history
             .handle(
                 generation,
                 compact_response(AssistantEvent::Failed("oops".into())),
@@ -399,14 +402,13 @@ mod tests {
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();
 
-        let err = history
+        history
             .handle(
                 generation,
                 compact_response(AssistantEvent::Completed(vec![])),
             )
-            .unwrap_err();
+            .unwrap();
 
-        assert_eq!(err.to_string(), "compact summary is empty");
         assert!(!history.compacting());
         assert_eq!(history.archive.len(), 0);
         assert_eq!(history.state().messages.len(), 2);

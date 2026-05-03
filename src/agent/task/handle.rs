@@ -171,11 +171,10 @@ mod tests {
         agent
             .tskmgr
             .spawn(agent.tx.clone(), 0, |_| async { Ok(()) });
-        let AgentEvent::TaskDone(tid, result) = recv(&mut agent.rx, "task completion").await else {
-            panic!("expected task completion");
-        };
+        let event = recv(&mut agent.rx, "task completion").await;
+        assert!(matches!(event, AgentEvent::TaskDone(..)));
 
-        agent.handle_task_result(tid, result).await.unwrap();
+        let _ = agent.handle(event).await.unwrap();
 
         assert!(agent.tskmgr.idle());
         assert!(agent.state.context.history.compacting());
@@ -233,6 +232,10 @@ mod tests {
             .handle(0, HistoryUpdate::UserMessage("first".into()))
             .unwrap();
         agent
+            .handle_history(0, HistoryUpdate::TurnResponse(AssistantEvent::Created(0)))
+            .await
+            .unwrap();
+        agent
             .handle_history(
                 0,
                 HistoryUpdate::TurnResponse(AssistantEvent::Failed("oops".into())),
@@ -242,11 +245,10 @@ mod tests {
         agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async {
             Err(anyhow::anyhow!("oops"))
         });
-        let AgentEvent::TaskDone(tid, result) = recv(&mut agent.rx, "task completion").await else {
-            panic!("expected task completion");
-        };
+        let event = recv(&mut agent.rx, "task completion").await;
+        assert!(matches!(event, AgentEvent::TaskDone(..)));
 
-        agent.handle_task_result(tid, result).await.unwrap();
+        let _ = agent.handle(event).await.unwrap();
 
         assert!(matches!(
             agent.state.status,
@@ -255,9 +257,13 @@ mod tests {
         ));
         assert!(matches!(
             agent.state.context.history.state().last(),
-            Some(crate::llm::history::message::Message::User(crate::llm::history::message::UserMessage { text, .. })) if text == "first"
+            Some(crate::llm::history::message::Message::Assistant(crate::llm::history::message::AssistantMessage {
+                status: crate::llm::history::message::AssistantStatus::Error(msg),
+                ..
+            })) if msg == "oops"
         ));
         let events = [
+            recv(&mut parent_rx, "parent event").await,
             recv(&mut parent_rx, "parent event").await,
             recv(&mut parent_rx, "parent event").await,
             recv(&mut parent_rx, "parent event").await,
@@ -266,6 +272,10 @@ mod tests {
             matches!(
                 events.as_slice(),
                 [
+                    ParentEvent::HistoryUpdate(
+                        _,
+                        HistoryUpdate::TurnResponse(AssistantEvent::Created(_))
+                    ),
                     ParentEvent::HistoryUpdate(
                         _,
                         HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))

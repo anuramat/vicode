@@ -175,11 +175,13 @@ mod tests {
 
         let entries = &agent.history().compact_turn_input().unwrap();
 
-        insta::assert_yaml_snapshot!(entries, @r#"
+        insta::assert_yaml_snapshot!(entries,
+        { "[0].created_at" => "[created_at]" },
+        @r#"
         - role: user
           text: "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only."
           token_count: 35
-          created_at: 1777264279001
+          created_at: "[created_at]"
         "#);
 
         tokio::fs::remove_dir_all(project.agent(&aid))
