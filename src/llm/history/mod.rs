@@ -158,8 +158,8 @@ impl History {
             HistoryUpdate::CompactResponse(event) => {
                 let completed = matches!(event, AssistantEvent::Completed(_));
                 self.compact_mut()?.state.handle_response(event)?;
-                if completed {
-                    self.apply_compact()?;
+                if completed && self.apply_compact().is_err() {
+                    self.abort_compact()?;
                 }
             }
         }
