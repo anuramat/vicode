@@ -126,7 +126,7 @@ impl History {
                 let should_archive = self
                     .archive
                     .last()
-                    .is_some_and(|v| !matches!(v.reason, ArchivedHistoryReason::Undo));
+                    .is_none_or(|v| !matches!(v.reason, ArchivedHistoryReason::Undo));
 
                 let state = self.normal_mut()?;
                 let len = state.messages.len();
