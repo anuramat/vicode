@@ -124,6 +124,7 @@ pub struct Config {
     /// if empty, inherits from its parent
     pub subagent_assistant: Vec<String>,
 
+    #[serde(default)]
     pub keymap: Keymap,
 
     #[default("git -c color.status=always status --short")]
@@ -173,8 +174,8 @@ impl Config {
 
     pub fn parse_with_defaults(s: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(s)?;
-        config.keymap = config.keymap.maybe_with_defaults();
-        config.sandbox.maybe_with_defaults();
+        config.keymap.merge_default();
+        config.sandbox.merge_default();
         config.validate()?;
         Ok(config)
     }
@@ -319,12 +320,6 @@ mod tests {
             args = []
             stages = []
 
-            [keymap.cmdline]
-
-            [keymap.normal]
-
-            [keymap.insert]
-
             [providers.main]
             api = "chatgpt"
             concurrency = 1
@@ -363,10 +358,6 @@ mod tests {
                 args = []
                 stages = []
 
-                [keymap.cmdline]
-                [keymap.normal]
-                [keymap.insert]
-
                 [providers.main]
                 api = "chatgpt"
                 {extra}
@@ -395,10 +386,6 @@ mod tests {
             bin = "bwrap"
             args = []
             stages = []
-
-            [keymap.cmdline]
-            [keymap.normal]
-            [keymap.insert]
 
             [providers.chatgpt1]
             api = "chatgpt"

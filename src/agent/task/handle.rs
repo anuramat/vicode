@@ -86,12 +86,6 @@ mod tests {
                 args = []
                 stages = []
 
-                [keymap.cmdline]
-
-                [keymap.normal]
-
-                [keymap.insert]
-
                 [providers.main]
                 api = "responses"
                 base_url = "https://api.example.com/v1"

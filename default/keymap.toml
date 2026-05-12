@@ -1,0 +1,50 @@
+[insert]
+"enter" = "input_submit"
+"esc" = "input_exit"
+"c-c" = "input_exit"
+"c-n" = "completion_next"
+"c-p" = "completion_prev"
+"c-e" = "completion_cancel"
+
+[cmdline]
+"enter" = "input_submit"
+"esc" = "input_exit"
+"c-c" = "input_exit"
+"c-n" = "completion_next"
+"c-p" = "completion_prev"
+"c-e" = "completion_cancel"
+
+[normal]
+":" = "cmdline_enter"
+"i" = "insert_enter"
+
+"|" = "toggle_info"
+"r" = "refresh_info"
+
+"o" = "tab_new"
+"j" = "tab_next"
+"k" = "tab_prev"
+"s-d" = "tab_delete"
+"s-y" = "tab_duplicate"
+
+"s-r" = "turn_retry"
+"s-s" = "turn_abort"
+
+"s-u" = "msg_undo_user"
+"tab" = "assistant_next"
+"s-tab" = "assistant_prev"
+
+"up" = "scroll_line_up"
+"down" = "scroll_line_down"
+"c-y" = "scroll_line_up"
+"c-e" = "scroll_line_down"
+
+"c-u" = "scroll_half_page_up"
+"c-d" = "scroll_half_page_down"
+"c-b" = "scroll_page_up"
+"c-f" = "scroll_page_down"
+
+"[" = "scroll_prev_element"
+"]" = "scroll_next_element"
+"g" = "scroll_top"
+"s-g" = "scroll_bottom"

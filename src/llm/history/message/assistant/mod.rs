@@ -205,6 +205,6 @@ impl TokenCount for AssistantMessage {
 
 impl AssistantStatus {
     pub fn failable(&self) -> bool {
-        matches!(self, AssistantStatus::InProgress | AssistantStatus::Queued)
+        matches!(self, Self::InProgress | Self::Queued)
     }
 }

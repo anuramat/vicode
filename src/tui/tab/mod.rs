@@ -14,6 +14,7 @@ use crate::llm::history::History;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
+use crate::tui::command::parse_arg;
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
@@ -114,7 +115,21 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub fn label(&self) -> String {
-        format!("[{}]{}", self.agent.state.status.label(), self.aid)
+    pub const fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::Body => Focus::Info,
+            Focus::Info => Focus::Body,
+        };
+    }
+
+    pub fn set_multiplier(
+        &mut self,
+        value: Option<&str>,
+    ) -> Result<()> {
+        let value: u8 = parse_arg(value)?.unwrap_or(1);
+        anyhow::ensure!(value > 0, "multiplier must be positive");
+        self.multiplier = value as usize;
+        self.update_input_title();
+        Ok(())
     }
 }

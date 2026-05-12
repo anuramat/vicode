@@ -52,14 +52,6 @@ impl<'a> Input<'a> {
         }
     }
 
-    pub fn get_mut(&mut self) -> Result<&mut Self> {
-        if self.focused {
-            Ok(self)
-        } else {
-            anyhow::bail!("cannot get textarea when input is not focused")
-        }
-    }
-
     pub fn set_focus(
         &mut self,
         focus: bool,

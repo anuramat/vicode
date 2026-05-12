@@ -142,7 +142,7 @@ impl Sandbox for BwrapConfig {
 }
 
 impl BwrapConfig {
-    pub fn with_defaults(&mut self) {
+    pub fn merge_default(&mut self) {
         let mut stages = Vec::new();
 
         stages.extend(default_stages());

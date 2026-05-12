@@ -1,5 +1,6 @@
+pub mod command;
 pub mod handle;
-pub mod keys;
+pub mod key;
 pub mod run;
 pub mod tabs;
 

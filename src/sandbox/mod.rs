@@ -24,9 +24,9 @@ pub struct SandboxConfig {
 }
 
 impl SandboxConfig {
-    pub fn maybe_with_defaults(&mut self) {
+    pub fn merge_default(&mut self) {
         if !self.clear_defaults {
-            self.bwrap.with_defaults();
+            self.bwrap.merge_default();
         }
     }
 }
