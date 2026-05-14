@@ -220,7 +220,6 @@ impl StreamState {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use std::collections::VecDeque;

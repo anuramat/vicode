@@ -94,11 +94,8 @@ impl SectionList {
         &self,
         width: u16,
     ) -> bool {
-        if let Some(w) = self.promote_at_width {
-            w <= width.saturating_sub(4) // 2 from borders, 2 from padding
-        } else {
-            false
-        }
+        self.promote_at_width
+            .is_some_and(|w| w <= width.saturating_sub(4)) // 2 from borders, 2 from padding
     }
 
     /// renders title/promoted section;

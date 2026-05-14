@@ -41,11 +41,7 @@ impl ToolCallItem {
         // HACK -- openai always has an actual id, but openrouter reuses call_id for id, and only sends it when creating the item;
         // regardless, it's a good enough heuristic -- we need *some* way to match calls and results;
         // I guess we could create a fake UUID on call creation, if this fails at some point?
-        if let Some(id) = &self.id {
-            id
-        } else {
-            &self.call_id
-        }
+        self.id.as_ref().unwrap_or(&self.call_id)
     }
 
     pub fn touch_ready_at_now(&mut self) {

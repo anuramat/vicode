@@ -136,7 +136,7 @@ impl<'a> App<'a> {
         if self.cmdline.input.focused() {
             return Ok(&mut self.cmdline.input);
         }
-        let input: &mut Input = &mut self.selected_tab_mut()?.input;
+        let input: &mut Input<'_> = &mut self.selected_tab_mut()?.input;
         anyhow::ensure!(input.focused(), "no focused input");
         Ok(input)
     }
