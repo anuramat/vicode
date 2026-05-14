@@ -142,7 +142,7 @@ impl Completion {
         }
     }
 
-    pub const fn source_mut(&mut self) -> &mut CompletionSource {
+    pub fn source_mut(&mut self) -> &mut CompletionSource {
         &mut self.source
     }
 

@@ -38,7 +38,7 @@ pub struct Layout {
 }
 
 impl Project {
-    const fn backend(config: &Config) -> BackendKind {
+    fn backend(config: &Config) -> BackendKind {
         if config.disable_overlay {
             BackendKind::Copy(Copy)
         } else {
@@ -84,7 +84,7 @@ impl Project {
         })
     }
 
-    pub const fn config(&self) -> &Config {
+    pub fn config(&self) -> &Config {
         &self.config
     }
 

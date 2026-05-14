@@ -51,13 +51,13 @@ impl History {
         }
     }
 
-    pub const fn state(&self) -> &HistoryState {
+    pub fn state(&self) -> &HistoryState {
         match &self.activity {
             Activity::Normal { state } | Activity::Compacting { state, .. } => state,
         }
     }
 
-    pub const fn activity(&self) -> &Activity {
+    pub fn activity(&self) -> &Activity {
         &self.activity
     }
 
@@ -87,11 +87,11 @@ impl History {
         self.instructions.token_count() + self.state().token_count()
     }
 
-    const fn increment(&mut self) {
+    fn increment(&mut self) {
         self.generation += 1;
     }
 
-    pub const fn generation(&self) -> HistoryGeneration {
+    pub fn generation(&self) -> HistoryGeneration {
         self.generation
     }
 

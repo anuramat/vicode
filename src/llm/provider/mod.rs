@@ -94,14 +94,14 @@ pub struct ApiCompatConfig {
 }
 
 impl ProviderConfig {
-    pub const fn limits(&self) -> &RateLimits {
+    pub fn limits(&self) -> &RateLimits {
         match self {
             Self::Responses(p) | Self::ChatCompletions(p) => &p.limits,
             Self::Chatgpt(p) => &p.limits,
         }
     }
 
-    pub const fn is_chatgpt(&self) -> bool {
+    pub fn is_chatgpt(&self) -> bool {
         matches!(self, Self::Chatgpt(_))
     }
 }

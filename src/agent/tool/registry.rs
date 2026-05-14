@@ -28,7 +28,7 @@ impl Default for ToolSchemas {
 }
 
 impl ToolSchemas {
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self(Vec::new())
     }
 

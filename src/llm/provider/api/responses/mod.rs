@@ -37,7 +37,7 @@ pub struct ResponsesApi {
 }
 
 impl ResponsesApi {
-    pub const fn new(
+    pub fn new(
         client: Client<OpenAIConfig>,
         compat: ApiCompatConfig,
     ) -> Self {

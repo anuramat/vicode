@@ -82,14 +82,14 @@ impl AssistantMessage {
         Ok(())
     }
 
-    pub const fn touch_ended_at(
+    pub fn touch_ended_at(
         &mut self,
         ms: u64,
     ) {
         touch(&mut self.ended_at, ms);
     }
 
-    pub const fn touch_ready_at(
+    pub fn touch_ready_at(
         &mut self,
         ms: u64,
     ) {
@@ -152,14 +152,14 @@ impl AssistantItem {
         .clone()
     }
 
-    const fn touch_ended_at(
+    fn touch_ended_at(
         &mut self,
         ms: u64,
     ) {
         touch(self.ended_at_mut(), ms);
     }
 
-    const fn ended_at_mut(&mut self) -> &mut Option<u64> {
+    fn ended_at_mut(&mut self) -> &mut Option<u64> {
         match self {
             Self::Output(item) => &mut item.ended_at,
             Self::Reasoning(item) => &mut item.ended_at,
@@ -173,7 +173,7 @@ impl AssistantItem {
         now
     }
 
-    pub const fn set_started_at(
+    pub fn set_started_at(
         &mut self,
         ms: u64,
     ) {
@@ -184,7 +184,7 @@ impl AssistantItem {
         }
     }
 
-    pub const fn set_ended_at(
+    pub fn set_ended_at(
         &mut self,
         ms: u64,
     ) {

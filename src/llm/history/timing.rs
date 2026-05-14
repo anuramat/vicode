@@ -34,7 +34,7 @@ pub trait Timing {
     }
 }
 
-pub const fn touch(
+pub fn touch(
     dest: &mut Option<u64>,
     at_ms: u64,
 ) {

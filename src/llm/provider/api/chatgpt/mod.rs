@@ -37,7 +37,7 @@ pub struct ChatgptApi {
 }
 
 impl ChatgptApi {
-    pub const fn new(auth: ChatgptAuthManager) -> Self {
+    pub fn new(auth: ChatgptAuthManager) -> Self {
         Self { auth }
     }
 }

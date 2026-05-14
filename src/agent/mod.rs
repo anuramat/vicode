@@ -84,17 +84,17 @@ impl Default for AgentStatus {
 }
 
 impl AgentStatus {
-    pub const fn turn(&self) -> &TurnStatus {
+    pub fn turn(&self) -> &TurnStatus {
         match self {
             Self::Normal(t) | Self::Compact(t) => t,
         }
     }
 
-    pub const fn idle(&self) -> bool {
+    pub fn idle(&self) -> bool {
         !matches!(self.turn(), TurnStatus::InProgress)
     }
 
-    pub const fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self.turn() {
             TurnStatus::InProgress => "+",
             TurnStatus::Idle => " ",

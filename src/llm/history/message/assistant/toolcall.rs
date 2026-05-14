@@ -37,7 +37,7 @@ impl TokenCount for ToolCallItem {
 }
 
 impl ToolCallItem {
-    pub const fn id(&self) -> &String {
+    pub fn id(&self) -> &String {
         // HACK -- openai always has an actual id, but openrouter reuses call_id for id, and only sends it when creating the item;
         // regardless, it's a good enough heuristic -- we need *some* way to match calls and results;
         // I guess we could create a fake UUID on call creation, if this fails at some point?

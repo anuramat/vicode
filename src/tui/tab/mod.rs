@@ -115,7 +115,7 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub const fn toggle_focus(&mut self) {
+    pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
             Focus::Body => Focus::Info,
             Focus::Info => Focus::Body,

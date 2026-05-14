@@ -89,7 +89,7 @@ impl History {
         }
     }
 
-    pub const fn compacting(&self) -> bool {
+    pub fn compacting(&self) -> bool {
         matches!(self.activity, Activity::Compacting { .. })
     }
 

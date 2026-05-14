@@ -90,7 +90,7 @@ impl Section {
 }
 
 impl SectionList {
-    const fn should_promote(
+    fn should_promote(
         &self,
         width: u16,
     ) -> bool {
