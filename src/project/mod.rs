@@ -170,6 +170,20 @@ impl Project {
         self.backend.unmount_agent(&self.layout, aid).await
     }
 
+    pub async fn delete_agent(
+        &self,
+        aid: &AgentId,
+        commit: &str,
+    ) -> Result<()> {
+        self.unmount_agent(aid).await?;
+        tokio::fs::remove_dir_all(self.agent(aid)).await?;
+        let repo = Repository::open(self.root())?;
+        let name = self.worktree_name(aid);
+        crate::git::prune_worktree(&repo, &name)?;
+        crate::git::delete_branch_if_at(&repo, &name, commit)?;
+        Ok(())
+    }
+
     pub async fn new_agent_workdir(
         &self,
         commit: &str,

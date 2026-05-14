@@ -11,6 +11,16 @@ impl Agent {
     pub async fn run(
         mut self,
         abort: AbortHandle,
+    ) {
+        if let Err(e) = self.run_inner(abort).await {
+            tracing::error!("fatal error in agent {}: {:?}", self.id, e);
+            drop(self.parent.send(ParentEvent::Error(e.to_string())).await);
+        }
+    }
+
+    async fn run_inner(
+        &mut self,
+        abort: AbortHandle,
     ) -> Result<()> {
         self.project
             .mount_agent(&self.state.context.commit, &self.id)

@@ -1,7 +1,6 @@
 use anyhow::Context;
 use anyhow::Result;
 use futures::future::Abortable;
-use git2::Repository;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
 
@@ -17,8 +16,6 @@ use crate::agent::handle::ParentEvent;
 use crate::agent::handle::ParentHandle;
 use crate::agent::handle::ParentSink;
 use crate::agent::task::manager::AgentTaskManager;
-use crate::git::delete_branch_if_at;
-use crate::git::prune_worktree;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
@@ -113,7 +110,6 @@ impl Agent {
     }
 
     pub fn spawn(self) {
-        // XXX make sure this works fine
         let (abort, reg) = futures::future::AbortHandle::new_pair();
         tokio::spawn(async move {
             let _ = Abortable::new(self.run(abort), reg).await;
@@ -140,17 +136,6 @@ impl Agent {
         );
         agent.save().await?;
         agent.spawn();
-        Ok(())
-    }
-
-    pub async fn delete_agent(&self) -> Result<()> {
-        let aid = &self.id;
-        self.project.unmount_agent(aid).await?;
-        tokio::fs::remove_dir_all(self.project.agent(aid)).await?;
-        let repo = Repository::open(self.project.root())?;
-        let name = self.project.worktree_name(aid);
-        prune_worktree(&repo, &name)?;
-        delete_branch_if_at(&repo, &name, &self.state.context.commit)?;
         Ok(())
     }
 

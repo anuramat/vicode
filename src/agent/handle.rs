@@ -53,7 +53,6 @@ pub enum ParentEvent {
 pub enum ExternalEvent {
     /// Compact the first n messages
     Compact(usize),
-    Delete,
     Retry,
     Abort,
     Undo(usize), // TODO maybe this should send generation or whatever
@@ -179,11 +178,6 @@ impl Agent {
                 if let Some(event) = event {
                     self.handle_history(g, event).await?;
                 }
-            }
-            Delete => {
-                self.tskmgr.abort().await;
-                self.delete_agent().await?; // TODO maybe some special handling for failed deletes
-                return Ok(ControlFlow::Break(()));
             }
             DuplicateRequest(aid) => {
                 self.idle()?;

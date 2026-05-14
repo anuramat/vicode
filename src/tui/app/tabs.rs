@@ -156,10 +156,12 @@ impl<'a> App<'a> {
             is_workdir_clean(&self.project.agent_workdir(aid))?,
             "workdir has uncommitted changes"
         );
-        let Some((_, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx) else {
+        let Some((aid, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx) else {
             return Ok(());
         };
-        tab.agent.send(ExternalEvent::Delete).await?;
+        let commit = tab.agent.state.context.commit.clone();
+        tab.agent.abort.abort();
+        self.project.delete_agent(&aid, &commit).await?;
         self.rebuild_tablist();
         Ok(())
     }

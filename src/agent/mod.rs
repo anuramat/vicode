@@ -32,7 +32,7 @@ use crate::project::Project;
 pub struct AgentHandle {
     pub tx: Sender<AgentEvent>,
     pub state: AgentState,
-    pub abort: AbortHandle, // TODO should we use tokio abort handle instead?
+    pub abort: AbortHandle,
 }
 
 impl AgentHandle {
