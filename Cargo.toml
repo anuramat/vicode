@@ -76,25 +76,30 @@ xdg = "3.0.0"
 insta = { version = "1.47.1", features = ["json", "redactions", "yaml"] }
 similar-asserts = { version = "1.7.0" }
 
-# tombi: format.rules.table-keys-order.disabled = true
 [lints.clippy]
 complexity = { level = "deny", priority = -1 }
 correctness = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
-# cargo = { level = "warn", priority = -1 } # TODO fix
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+perf = { level = "deny", priority = -1 }
 style = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
-restriction = { level = "allow", priority = -1 }
+# cargo = { level = "warn", priority = -1 } # TODO fix
+
 future_not_send = "allow"
-unused_self = "allow"  # TODO maybe disallow later
+missing_const_for_fn = "allow"
+pub_use = "allow"  # TODO maybe warn
 renamed_function_params = "warn"
-# pub_use = "warn"
+unused_self = "allow"  # TODO maybe warn
 
 [lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = [] }
-unused_must_use = "forbid"
+keyword-idents = { level = "warn", priority = -1 }
+let-underscore = { level = "warn", priority = -1 }
+nonstandard-style = { level = "warn", priority = -1 }
+refining-impl-trait = { level = "warn", priority = -1 }
+rust-2018-idioms = { level = "warn", priority = -1 }
+unknown-or-malformed-diagnostic-attributes = { level = "warn", priority = -1 }
+unused = { level = "warn", priority = -1 }
 
 [patch.crates-io]
 async-openai = { git = "https://github.com/anuramat/async-openai" }
