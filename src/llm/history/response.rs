@@ -66,7 +66,7 @@ impl HistoryState {
             msg.touch_ready_at(ready_at);
         }
 
-        _ = msg.content.insert(new_item.id(), new_item);
+        drop(msg.content.insert(new_item.id(), new_item));
         msg.recount_shallow();
         self.recount_shallow();
         Ok(())

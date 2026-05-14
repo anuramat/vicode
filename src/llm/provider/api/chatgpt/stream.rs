@@ -89,9 +89,9 @@ async fn send_once(
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(Err(async_openai::error::OpenAIError::StreamError(
+                    drop(tx.send(Err(async_openai::error::OpenAIError::StreamError(
                         Box::new(async_openai::error::StreamError::EventStream(e.to_string())),
-                    )));
+                    ))));
                     break;
                 }
             }

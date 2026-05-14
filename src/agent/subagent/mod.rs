@@ -59,7 +59,7 @@ pub async fn spawn(
     let (output_tx, output) = oneshot::channel();
     tokio::spawn(async move {
         let result = run_child(generation, prompt, child_tx, parent_rx).await;
-        _ = output_tx.send(result);
+        drop(output_tx.send(result));
     });
     Ok(SubagentHandle { id: aid, output })
 }
