@@ -18,6 +18,8 @@
 
 # UI
 
+- tab pane rework: hideable/scrollable just like the info pane
+- j/k by default scroll by user supplied percent of height
 - message spacing
 - `:help` and cmdline completions with command:description:key
 - sidebar
@@ -33,6 +35,7 @@
       - I guess we could show more data, compared to history
 - markdown rendering in input field
 - streaming subagent progress/tool outputs
+- add steering submit mode -- queue prompt after tool call finishes
 
 # core features & QoL
 
@@ -54,14 +57,6 @@
 - autocompact on threshold
 - alternative argument schemas for user compact command
 - retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
-
-# new features
-
-- mcp
-- acp
-- skills
-  - with `$` completion
-  - reusable for subagents
 
 # backlog
 
