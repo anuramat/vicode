@@ -49,9 +49,7 @@ impl AgentRouter {
             tracing::error!("forward: unknown agent {aid}");
             return;
         };
-        // clone tx so we don't hold &self.runtimes across the await
-        let tx = runtime.tx.clone();
-        if let Err(e) = tx.send(AgentEvent::External(event)).await {
+        if let Err(e) = runtime.tx.send(AgentEvent::External(event)).await {
             self.runtimes.remove(&aid);
             tracing::error!("forward to {aid} failed: {e}");
         }
@@ -67,9 +65,8 @@ impl AgentRouter {
             drop(done.send(TurnResult::Failed(format!("unknown agent {aid}"))));
             return;
         };
-        // clone tx so we don't hold &self.runtimes across the await
-        let tx = runtime.tx.clone();
-        let send = tx
+        let send = runtime
+            .tx
             .send(AgentEvent::External(ExternalEvent::Submit(
                 prompt,
                 Some(done),
