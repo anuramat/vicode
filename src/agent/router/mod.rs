@@ -95,8 +95,8 @@ impl AgentRouterHandle {
     ) -> Result<()> {
         self.tx
             .send(RouterCommand::Register { aid, runtime })
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .await?;
+        Ok(())
     }
 
     pub async fn forward(
@@ -104,10 +104,8 @@ impl AgentRouterHandle {
         aid: AgentId,
         event: ExternalEvent,
     ) -> Result<()> {
-        self.tx
-            .send(RouterCommand::Forward { aid, event })
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+        self.tx.send(RouterCommand::Forward { aid, event }).await?;
+        Ok(())
     }
 
     /// Snapshot `parent` and create a hidden subagent under it. The router
@@ -126,9 +124,8 @@ impl AgentRouterHandle {
                 inherit_context,
                 reply,
             })
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .await?;
+        rx.await?
     }
 
     /// Submit a prompt and get a oneshot receiver for the turn result.
@@ -140,8 +137,7 @@ impl AgentRouterHandle {
         let (done, rx) = oneshot::channel();
         self.tx
             .send(RouterCommand::Submit { aid, prompt, done })
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .await?;
         Ok(rx)
     }
 
@@ -150,11 +146,8 @@ impl AgentRouterHandle {
         aid: AgentId,
     ) -> Result<()> {
         let (done, rx) = oneshot::channel();
-        self.tx
-            .send(RouterCommand::Delete { aid, done })
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
+        self.tx.send(RouterCommand::Delete { aid, done }).await?;
+        rx.await?
     }
 }
 
