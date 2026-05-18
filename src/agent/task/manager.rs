@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use anyhow::Result;
-use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
 use tokio::task::AbortHandle;
 use tokio::task::JoinSet;
@@ -20,8 +19,6 @@ pub struct AgentTaskManager {
     tasks: JoinSet<()>,
     /// if a task is not in pending, we should ignore the results
     pending: HashMap<TaskId, AbortHandle>,
-    /// lock to ensure that state/files are not modified while we're cloning the agent
-    pub lock: RwLock<()>,
 }
 
 impl AgentTaskManager {
@@ -29,7 +26,6 @@ impl AgentTaskManager {
         Self {
             tasks: JoinSet::new(),
             pending: HashMap::new(),
-            lock: RwLock::default(),
         }
     }
 

@@ -1,9 +1,7 @@
 use anyhow::Result;
 
 use crate::agent::Agent;
-use crate::agent::AgentKind;
 use crate::agent::handle::ParentEvent;
-use crate::agent::subagent::result::diff;
 use crate::agent::task::manager::TaskId;
 
 impl Agent {
@@ -13,9 +11,7 @@ impl Agent {
         event: Result<()>,
     ) -> Result<()> {
         if let Err(ref err) = event {
-            self.parent
-                .send(ParentEvent::Error(err.to_string()))
-                .await?;
+            self.emit(ParentEvent::Error(err.to_string())).await?;
         }
         let applied = self.tskmgr.finish_task(&id);
         if !applied {
@@ -24,14 +20,8 @@ impl Agent {
         if self.tskmgr.idle() {
             if self.history().state().needs_another_turn() && !self.history().compacting() {
                 self.start_turn().await?;
-            } else if let AgentKind::Subagent { parent } = &self.state.topology.kind {
-                let output = self.history().state().last_text_output()?;
-                let diff = diff(&self.project, parent, &self.id)?;
-                self.parent
-                    .send(ParentEvent::SubagentDone(
-                        crate::agent::subagent::SubagentResult { output, diff },
-                    ))
-                    .await?;
+            } else {
+                self.fire_pending_done();
             }
         }
         Ok(())

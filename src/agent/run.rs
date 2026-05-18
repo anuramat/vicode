@@ -1,39 +1,23 @@
 use std::ops::ControlFlow;
 
 use anyhow::Result;
-use futures::stream::AbortHandle;
 
 use crate::agent::Agent;
-use crate::agent::AgentHandle;
 use crate::agent::handle::ParentEvent;
 
 impl Agent {
-    pub async fn run(
-        mut self,
-        abort: AbortHandle,
-    ) {
-        if let Err(e) = self.run_inner(abort).await {
+    pub async fn run(mut self) {
+        if let Err(e) = self.run_inner().await {
             tracing::error!("fatal error in agent {}: {:?}", self.id, e);
-            drop(self.parent.send(ParentEvent::Error(e.to_string())).await);
+            drop(self.emit(ParentEvent::Error(e.to_string())).await);
         }
     }
 
-    async fn run_inner(
-        &mut self,
-        abort: AbortHandle,
-    ) -> Result<()> {
+    async fn run_inner(&mut self) -> Result<()> {
         self.project
             .mount_agent(&self.state.context.commit, &self.id)
             .await?;
-        self.parent
-            .send(ParentEvent::Started(
-                AgentHandle {
-                    tx: self.tx.clone(),
-                    state: self.state.clone(),
-                    abort,
-                }
-                .into(),
-            ))
+        self.emit(ParentEvent::Started(Box::new(self.state.clone())))
             .await?;
         while let Some(event) = self.rx.recv().await {
             match self.handle(event).await {
@@ -41,7 +25,7 @@ impl Agent {
                 Ok(ControlFlow::Break(())) => break,
                 Err(e) => {
                     tracing::error!("error in agent {}: {:?}", self.id, e);
-                    self.parent.send(ParentEvent::Error(e.to_string())).await?;
+                    self.emit(ParentEvent::Error(e.to_string())).await?;
                 }
             }
         }

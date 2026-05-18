@@ -6,14 +6,6 @@ use crate::agent::tool::registry::ToolSchemas;
 use crate::llm::history::HistoryUpdate;
 
 impl Agent {
-    pub fn dropped(&self) -> usize {
-        let window = self.state.assistant.config.window.unwrap_or_default();
-        self.state
-            .context
-            .history
-            .window_percentage_to_n_msg(window, self.project.config().compact.target)
-    }
-
     pub async fn init_compact(
         &mut self,
         n_drop: usize,

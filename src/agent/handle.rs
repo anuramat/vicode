@@ -1,20 +1,18 @@
-use std::fmt::Debug;
 use std::ops::ControlFlow;
 
 use anyhow::Result;
 use futures::StreamExt;
-use futures::TryStreamExt;
 use futures::stream;
+use tokio::sync::oneshot;
 use tracing::debug;
 use tracing::error;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::AgentHandle;
 use crate::agent::AgentStatus;
 use crate::agent::id::AgentId;
+use crate::agent::router::SubagentSpawnSnapshot;
 use crate::agent::subagent;
-use crate::agent::subagent::SubagentResult;
 use crate::agent::subagent::replica;
 use crate::agent::task::manager::TaskId;
 use crate::agent::task::sink::TurnHandle;
@@ -22,12 +20,13 @@ use crate::agent::task::sink::TurnType;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::llm::history;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
+use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
 
 const ABORTED_BY_USER: &str = "aborted by user";
@@ -37,16 +36,17 @@ pub enum AgentEvent {
     TaskDone(TaskId, Result<()>),
     TaskEvent(TaskId, HistoryGeneration, HistoryUpdate),
     External(ExternalEvent),
+    /// Router asks for a snapshot of agent state to seed a hidden subagent.
+    SnapshotRequest(oneshot::Sender<SubagentSpawnSnapshot>),
 }
 
 #[derive(Debug)]
 pub enum ParentEvent {
-    Started(Box<AgentHandle>),
-    HistoryReset(History),
+    Started(Box<crate::agent::AgentState>),
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
-    SubagentDone(SubagentResult),
     // XXX maybe status update should be a variant of history update?
     StatusUpdate(AgentStatus),
+    AssistantSet(Assistant),
     Error(String),
 }
 
@@ -59,23 +59,16 @@ pub enum ExternalEvent {
     Undo(usize), // TODO maybe this should send generation or whatever
     SetAssistant(String),
     Submit(UserPrompt),
+    SubmitWithCompletion(UserPrompt, oneshot::Sender<TurnResult>),
     DuplicateRequest(AgentId),
 }
 
-#[async_trait::async_trait]
-pub trait ParentSink: Send + Sync + Debug {
-    async fn send(
-        &self,
-        event: ParentEvent,
-    ) -> Result<()>;
-
-    fn sibling(
-        &self,
-        aid: AgentId,
-    ) -> ParentHandle;
+#[derive(Debug)]
+pub enum TurnResult {
+    Success { last_text: Option<String> },
+    Failed(String),
+    Aborted,
 }
-
-pub type ParentHandle = Box<dyn ParentSink>;
 
 #[derive(Debug)]
 pub struct UserPrompt {
@@ -101,9 +94,7 @@ impl Agent {
             return Ok(());
         }
         self.state.status = new_status.clone();
-        self.parent
-            .send(ParentEvent::StatusUpdate(new_status))
-            .await?;
+        self.emit(ParentEvent::StatusUpdate(new_status)).await?;
         Ok(())
     }
 
@@ -129,6 +120,14 @@ impl Agent {
                 ControlFlow::Continue(())
             }
             External(event) => self.handle_external(event).await?,
+            SnapshotRequest(reply) => {
+                drop(reply.send(SubagentSpawnSnapshot {
+                    commit: self.state.context.commit.clone(),
+                    assistant_id: self.state.assistant.id.clone(),
+                    history: self.state.context.history.clone(),
+                }));
+                ControlFlow::Continue(())
+            }
         };
         self.sync_status().await?;
         Ok(result)
@@ -160,6 +159,7 @@ impl Agent {
                 self.handle_history(g, HistoryUpdate::Pop(n)).await?;
             }
             Abort => {
+                let done = self.pending_done.take();
                 self.tskmgr.abort().await;
                 let g = self.increment_generation().await?;
                 let event = if self.history().compacting() {
@@ -179,26 +179,19 @@ impl Agent {
                 if let Some(event) = event {
                     self.handle_history(g, event).await?;
                 }
+                if let Some(done) = done {
+                    drop(done.send(TurnResult::Aborted));
+                }
             }
             DuplicateRequest(aid) => {
                 self.idle()?;
                 self.try_duplicate(aid).await?;
             }
-            Submit(UserPrompt {
-                text,
-                multiplier,
-                generation,
-            }) => {
-                // XXX verify generation logic
-                self.idle()?;
-                self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
-                    .await?;
-                self.increment_generation().await?;
-                if multiplier <= 1 {
-                    self.start_turn().await?;
-                } else {
-                    self.start_replica_turns(multiplier).await?;
-                }
+            Submit(prompt) => {
+                self.start_submit(prompt, None).await?;
+            }
+            SubmitWithCompletion(prompt, done) => {
+                self.start_submit(prompt, Some(done)).await?;
             }
             Compact(n) => {
                 self.idle()?;
@@ -221,16 +214,52 @@ impl Agent {
         Ok(ControlFlow::Continue(()))
     }
 
+    async fn start_submit(
+        &mut self,
+        prompt: UserPrompt,
+        done: Option<oneshot::Sender<TurnResult>>,
+    ) -> Result<()> {
+        self.idle()?;
+        if let Some(prev) = self.pending_done.take() {
+            drop(prev.send(TurnResult::Aborted));
+        }
+        self.pending_done = done;
+        if let Err(e) = self.start_submit_inner(prompt).await {
+            if let Some(done) = self.pending_done.take() {
+                drop(done.send(TurnResult::Failed(e.to_string())));
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    async fn start_submit_inner(
+        &mut self,
+        UserPrompt {
+            text,
+            multiplier,
+            generation,
+        }: UserPrompt,
+    ) -> Result<()> {
+        self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
+            .await?;
+        self.increment_generation().await?;
+        if multiplier <= 1 {
+            self.start_turn().await?;
+        } else {
+            self.start_replica_turns(multiplier).await?;
+        }
+        Ok(())
+    }
+
     pub async fn handle_history(
         &mut self,
         generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        // TODO verify
-        self.parent
-            .send(ParentEvent::HistoryUpdate(generation, event.clone()))
-            .await?;
         self.history_mut().handle(generation, event.clone())?;
+        self.emit(ParentEvent::HistoryUpdate(generation, event.clone()))
+            .await?;
         match event {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
                 self.execute_tool_calls(item);
@@ -253,16 +282,38 @@ impl Agent {
         &mut self,
         n: usize,
     ) -> Result<()> {
-        let handles: Vec<_> = stream::iter(0..n)
-            .map(async |_| subagent::spawn(self, String::new(), true).await)
+        // Collect every spawn result so we can clean up siblings if one fails
+        // partway — `try_collect` would otherwise drop already-registered
+        // handles and leak their runtimes.
+        let results: Vec<_> = stream::iter(0..n)
+            .map(async |_| {
+                subagent::spawn_and_submit(
+                    &self.router,
+                    &self.project,
+                    &self.id,
+                    String::new(),
+                    true,
+                )
+                .await
+            })
             .buffered(16)
-            .try_collect()
-            .await?;
-        self.state
-            .topology
-            .children
-            .extend(handles.iter().map(|handle| handle.id.clone()));
-        self.save().await?;
+            .collect()
+            .await;
+        let mut handles = Vec::with_capacity(n);
+        let mut first_err = None;
+        for r in results {
+            match r {
+                Ok(h) => handles.push(h),
+                Err(e) if first_err.is_none() => first_err = Some(e),
+                Err(_) => {}
+            }
+        }
+        if let Some(e) = first_err {
+            for h in handles {
+                drop(self.router.delete(h.id.clone()).await);
+            }
+            return Err(e);
+        }
         self.tskmgr.spawn(
             self.tx.clone(),
             self.history().generation(),
@@ -283,8 +334,11 @@ impl Agent {
         &mut self,
         id: &str,
     ) -> Result<()> {
-        self.state.assistant = ASSISTANT_POOL.get().unwrap().assistant(id)?;
-        self.save().await
+        let new = ASSISTANT_POOL.get().unwrap().assistant(id)?;
+        self.state.assistant = new.clone();
+        self.save().await?;
+        self.emit(ParentEvent::AssistantSet(new)).await?;
+        Ok(())
     }
 
     pub fn execute_tool_calls(
@@ -314,6 +368,27 @@ impl Agent {
                     ))))
                     .await
             });
+    }
+
+    /// Drive the pending oneshot for the current turn, if any.
+    pub fn fire_pending_done(&mut self) {
+        let Some(done) = self.pending_done.take() else {
+            return;
+        };
+        let result = match self.derive_status() {
+            AgentStatus::Normal(TurnStatus::Failed(msg))
+            | AgentStatus::Compact(TurnStatus::Failed(msg)) => {
+                if msg == ABORTED_BY_USER {
+                    TurnResult::Aborted
+                } else {
+                    TurnResult::Failed(msg)
+                }
+            }
+            _ => TurnResult::Success {
+                last_text: self.history().state().last_text_output().ok(),
+            },
+        };
+        drop(done.send(result));
     }
 }
 

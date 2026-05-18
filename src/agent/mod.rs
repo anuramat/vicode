@@ -2,24 +2,25 @@ pub mod compact;
 pub mod handle;
 pub mod id;
 pub mod init;
+pub mod router;
 pub mod run;
 pub mod subagent;
 pub mod task;
 pub mod tool;
 pub mod turn;
 
-use anyhow::Result;
 use derive_more::Display;
-use futures::future::AbortHandle;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 
 use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::ParentHandle;
+use crate::agent::handle::ParentEvent;
+use crate::agent::handle::TurnResult;
+use crate::agent::router::AgentRouterHandle;
 use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::ToolSchemas;
 use crate::forward;
@@ -28,30 +29,15 @@ use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
 
-#[derive(Debug, Clone)]
-pub struct AgentHandle {
-    pub tx: Sender<AgentEvent>,
-    pub state: AgentState,
-    pub abort: AbortHandle,
-}
-
-impl AgentHandle {
-    pub async fn send(
-        &self,
-        event: ExternalEvent,
-    ) -> Result<()> {
-        self.tx.send(AgentEvent::External(event)).await?;
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 pub struct Agent {
     pub project: Project,
     pub id: AgentId,
     pub state: AgentState,
-    /// parent
-    pub parent: ParentHandle,
+    /// router handle for spawning/submitting siblings and children
+    pub router: AgentRouterHandle,
+    /// pending oneshot for the current turn (set by `SubmitWithCompletion`)
+    pub pending_done: Option<oneshot::Sender<TurnResult>>,
     // agent event loop
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,
@@ -61,13 +47,21 @@ pub struct Agent {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct AgentState {
     /// last emitted status for deduplication of status updates
     #[serde(skip)]
     pub status: AgentStatus,
     pub assistant: Assistant,
-    pub topology: AgentTopology,
+    pub visibility: AgentVisibility,
     pub context: AgentContext,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum AgentVisibility {
+    Hidden,
+    #[default]
+    Tab,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
@@ -103,42 +97,29 @@ impl AgentStatus {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct AgentTopology {
-    pub kind: AgentKind,
-    pub children: Vec<AgentId>,
-}
-
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentContext {
     pub commit: String,
     pub history: History,
 }
 
-impl AgentContext {
-    pub fn subagent(
-        &self,
-        inherit_context: bool,
-    ) -> Self {
-        Self {
-            commit: self.commit.clone(),
-            history: self.history.subagent(inherit_context),
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub enum AgentKind {
-    #[default]
-    Primary,
-    Subagent {
-        parent: AgentId,
-    },
-}
-
 impl Agent {
     forward! {
         history: History = self.state.context.history;
+    }
+
+    pub async fn emit(
+        &self,
+        event: ParentEvent,
+    ) -> anyhow::Result<()> {
+        self.router
+            .app_tx()
+            .send(crate::tui::app::AppEvent::ParentEvent(
+                self.id.clone(),
+                event,
+            ))
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 }
 
