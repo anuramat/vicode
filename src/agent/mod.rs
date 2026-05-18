@@ -52,15 +52,10 @@ pub struct AgentState {
     #[serde(skip)]
     pub status: AgentStatus,
     pub assistant: Assistant,
-    pub visibility: AgentVisibility,
+    /// Remaining subagent-spawn budget. 0 means this agent cannot spawn
+    /// subagents; the subagent tool is filtered out at construction.
+    pub max_depth: u32,
     pub context: AgentContext,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
-pub enum AgentVisibility {
-    Hidden,
-    #[default]
-    Tab,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
@@ -165,7 +160,7 @@ mod tests {
         let state = AgentState {
             assistant: assistant().await,
             status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
-            visibility: AgentVisibility::Tab,
+            max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),

@@ -38,7 +38,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::agent::AgentState;
-    use crate::agent::AgentVisibility;
     use crate::agent::handle::AgentEvent;
     use crate::agent::handle::ParentEvent;
     use crate::config::Config;
@@ -117,7 +116,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
@@ -205,7 +204,7 @@ mod tests {
                     crate::llm::history::TurnStatus::InProgress,
                 ),
                 assistant: assistant.clone(),
-                visibility: AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),

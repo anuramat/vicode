@@ -130,6 +130,12 @@ pub struct Config {
     #[default("git -c color.status=always status --short")]
     pub info_cmd: String,
     pub compact: CompactConfig,
+
+    /// Max subagent recursion depth. Primary agents start at this value; each
+    /// subagent inherits parent_depth - 1. Agents at depth 0 can't spawn
+    /// subagents (the subagent tool is hidden from them).
+    #[default = 1]
+    pub subagent_max_depth: u32,
 }
 
 impl std::fmt::Display for Config {

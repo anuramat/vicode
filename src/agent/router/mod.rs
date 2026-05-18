@@ -42,6 +42,7 @@ pub struct SubagentSpawnSnapshot {
     pub commit: String,
     pub assistant_id: String,
     pub history: History,
+    pub max_depth: u32,
 }
 
 #[derive(Debug)]

@@ -123,6 +123,7 @@ impl Agent {
                     commit: self.state.context.commit.clone(),
                     assistant_id: self.state.assistant.id.clone(),
                     history: self.state.context.history.clone(),
+                    max_depth: self.state.max_depth,
                 }));
                 ControlFlow::Continue(())
             }
@@ -468,7 +469,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
@@ -545,7 +546,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
@@ -599,7 +600,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
@@ -641,7 +642,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),

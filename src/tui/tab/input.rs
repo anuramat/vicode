@@ -186,7 +186,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
-    use crate::agent::AgentVisibility;
     use crate::agent::id::AgentId;
     use crate::agent::router::AgentRouter;
     use crate::config::Config;
@@ -234,7 +233,7 @@ mod tests {
         let state = AgentState {
             status: AgentStatus::default(),
             assistant: assistant().await,
-            visibility: AgentVisibility::Tab,
+            max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),

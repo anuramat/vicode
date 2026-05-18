@@ -11,7 +11,6 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
-use crate::agent::AgentVisibility;
 use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::TurnResult;
@@ -118,6 +117,10 @@ async fn spawn_subagent_async(
     let (snap_tx, snap_rx) = oneshot::channel();
     parent_tx.send(AgentEvent::SnapshotRequest(snap_tx)).await?;
     let snap = snap_rx.await?;
+    anyhow::ensure!(
+        snap.max_depth > 0,
+        "parent {parent_aid} has exhausted its subagent depth budget"
+    );
     let assistant = ASSISTANT_POOL
         .get()
         .context("assistant pool not initialized")?
@@ -127,7 +130,7 @@ async fn spawn_subagent_async(
     let state = AgentState {
         status: AgentStatus::default(),
         assistant,
-        visibility: AgentVisibility::Hidden,
+        max_depth: snap.max_depth - 1,
         context: AgentContext {
             commit: snap.commit.clone(),
             history,
@@ -344,6 +347,7 @@ mod tests {
                 commit: snap_commit,
                 assistant_id: "test".into(),
                 history: History::new("instr".into()),
+                max_depth: 1,
             }));
         });
 

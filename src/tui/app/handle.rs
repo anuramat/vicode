@@ -97,7 +97,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
-    use crate::agent::AgentVisibility;
     use crate::config::Config;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
@@ -183,7 +182,7 @@ mod tests {
         let state = AgentState {
             status: AgentStatus::default(),
             assistant: assistant.clone(),
-            visibility: AgentVisibility::Tab,
+            max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),

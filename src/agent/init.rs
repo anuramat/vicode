@@ -7,7 +7,6 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
-use crate::agent::AgentVisibility;
 use crate::agent::ToolSchemas;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::router::RuntimeHandle;
@@ -29,7 +28,8 @@ impl Agent {
         instructions: String,
     ) -> Result<Self> {
         project.new_agent_workdir(&commit, &id, true).await?;
-        let state = AgentState::new(commit, instructions)?;
+        let max_depth = project.config().subagent_max_depth;
+        let state = AgentState::new(commit, instructions, max_depth)?;
         state.save(&project, &id).await?;
         Ok(Self::from_state(project, router, id, state))
     }
@@ -55,16 +55,7 @@ impl Agent {
         state: AgentState,
     ) -> Self {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let mut tools = ToolSchemas::default();
-        if matches!(state.visibility, AgentVisibility::Hidden) {
-            // TODO allow recursive calls with max depth from config
-            tools = tools
-                .iter()
-                .filter(|tool| tool.name != crate::tools::subagent::TOOL_NAME)
-                .cloned()
-                .collect::<Vec<_>>()
-                .into();
-        }
+        let tools = tools_for_depth(state.max_depth);
         Self {
             project,
             id,
@@ -112,6 +103,19 @@ impl Agent {
         self.router.register(aid, runtime).await?;
         Ok(())
     }
+}
+
+/// Tool set for an agent with `max_depth` remaining subagent budget.
+fn tools_for_depth(max_depth: u32) -> ToolSchemas {
+    let all = ToolSchemas::new();
+    if max_depth > 0 {
+        return all;
+    }
+    all.iter()
+        .filter(|tool| tool.name != crate::tools::subagent::TOOL_NAME)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[cfg(test)]
@@ -170,7 +174,7 @@ mod tests {
         let state = AgentState {
             status: AgentStatus::default(),
             assistant,
-            visibility: AgentVisibility::Tab,
+            max_depth: 1,
             context: AgentContext {
                 commit,
                 history: History::new("".into()),
@@ -191,6 +195,7 @@ impl AgentState {
     fn new(
         commit: String,
         instructions: String,
+        max_depth: u32,
     ) -> Result<Self> {
         let state = Self {
             status: AgentStatus::default(),
@@ -198,7 +203,7 @@ impl AgentState {
                 .get()
                 .unwrap()
                 .assistant(&ASSISTANT_POOL.get().unwrap().next_primary())?,
-            visibility: AgentVisibility::Tab,
+            max_depth,
             context: AgentContext {
                 commit,
                 history: History::new(instructions),

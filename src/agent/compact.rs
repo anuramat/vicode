@@ -92,7 +92,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
@@ -138,7 +138,7 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                visibility: crate::agent::AgentVisibility::Tab,
+                max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
