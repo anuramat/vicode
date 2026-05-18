@@ -49,34 +49,42 @@ async fn spawn_subagent_async(
     project: Project,
     inherit_context: bool,
 ) -> Result<(AgentId, HistoryGeneration)> {
-    let (snap_tx, snap_rx) = oneshot::channel();
-    parent_tx.send(AgentEvent::SnapshotRequest(snap_tx)).await?;
-    let snap = snap_rx.await?;
-    anyhow::ensure!(
-        snap.max_depth > 0,
-        "parent {parent_aid} has exhausted its subagent depth budget"
-    );
-    let assistant = ASSISTANT_POOL
-        .get()
-        .context("assistant pool not initialized")?
-        .next_subagent(&snap.assistant_id)?;
-    let history = snap.history.subagent(inherit_context);
-    let generation = history.generation();
-    let state = AgentState {
-        status: AgentStatus::default(),
-        assistant,
-        max_depth: snap.max_depth - 1,
-        context: AgentContext {
-            commit: snap.commit.clone(),
-            history,
-        },
+    let snap = {
+        let (snap_tx, snap_rx) = oneshot::channel();
+        parent_tx.send(AgentEvent::SnapshotRequest(snap_tx)).await?;
+        let snap = snap_rx.await?;
+        // NOTE this shouldn't be possible -- subagent tool should be hidden if max_depth is 0
+        anyhow::ensure!(
+            snap.max_depth > 0,
+            "max subagent depth reached in {parent_aid}"
+        );
+        snap
     };
+
     let child_aid = AgentId::new(&project).await?;
-    project
-        .duplicate_agent_workdir(&parent_aid, &child_aid, &snap.commit, false)
-        .await?;
-    let agent = Agent::from_state(project, router.clone(), child_aid.clone(), state);
-    agent.save().await?;
+
+    let agent = {
+        let history = snap.history.subagent(inherit_context);
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: ASSISTANT_POOL
+                .get()
+                .context("assistant pool not initialized")?
+                .next_subagent(&snap.assistant_id)?,
+            max_depth: snap.max_depth - 1,
+            context: AgentContext {
+                commit: snap.commit.clone(),
+                history,
+            },
+        };
+        project
+            .duplicate_agent_workdir(&parent_aid, &child_aid, &snap.commit, false)
+            .await?;
+        let agent = Agent::from_state(project, router.clone(), child_aid.clone(), state);
+        agent.save().await?;
+        agent
+    };
+    let generation = agent.history().generation();
     let runtime = agent.spawn();
     router.register(child_aid.clone(), runtime).await?;
     Ok((child_aid, generation))
