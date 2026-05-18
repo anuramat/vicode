@@ -147,17 +147,13 @@ mod tests {
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyModifiers;
-    use futures::future::AbortHandle;
     use git2::Repository;
     use similar_asserts::assert_eq;
-    use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::AgentHandle;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
-    use crate::agent::AgentTopology;
-    use crate::agent::handle::AgentEvent;
+    use crate::agent::AgentVisibility;
     use crate::agent::id::AgentId;
     use crate::config::Config;
     use crate::llm::history::History;
@@ -205,27 +201,21 @@ mod tests {
     async fn completion_commands_target_tab_in_insert_mode() {
         let project = crate::project::Project::new_test().unwrap();
         let mut app = App::new(project.clone());
-        let (tx, _rx) = channel(1);
-        let (agent_tx, _agent_rx) = channel::<AgentEvent>(1);
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
             assistant: assistant().await,
-            topology: AgentTopology::default(),
+            visibility: AgentVisibility::Tab,
             context: crate::agent::AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),
             },
         };
         let mut tab = Tab::new(
-            tx,
+            crate::agent::router::AgentRouter::test_handle(),
             aid.clone(),
-            AgentHandle {
-                tx: agent_tx,
-                state,
-                abort: AbortHandle::new_pair().0,
-            },
+            state,
             &project,
         )
         .unwrap();

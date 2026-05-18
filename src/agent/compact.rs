@@ -38,7 +38,6 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::init::channel_parent_sink;
     use crate::agent::task::manager::AgentTaskManager;
     use crate::config::Config;
     use crate::llm::history::History;
@@ -85,7 +84,6 @@ mod tests {
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
-        let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
@@ -94,13 +92,14 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                topology: Default::default(),
+                visibility: crate::agent::AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle(),
+            pending_done: None,
             tx,
             rx,
             tskmgr: AgentTaskManager::new(),
@@ -131,7 +130,6 @@ mod tests {
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
-        let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
@@ -140,13 +138,14 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                topology: Default::default(),
+                visibility: crate::agent::AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle(),
+            pending_done: None,
             tx,
             rx,
             tskmgr: AgentTaskManager::new(),

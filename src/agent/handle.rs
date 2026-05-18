@@ -402,12 +402,13 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::init::channel_parent_sink;
     use crate::config::Config;
+    use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
+    use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -421,10 +422,19 @@ mod tests {
             .unwrap_or_else(|| panic!("{name} channel closed"))
     }
 
+    fn parent_event(event: AppEvent) -> ParentEvent {
+        match event {
+            AppEvent::ParentEvent(_, event) => event,
+            other => panic!("expected ParentEvent, got {other:?}"),
+        }
+    }
+
     async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
+        let pool = crate::llm::provider::assistant::ASSISTANT_POOL
+            .get_or_init(|| async {
+                AssistantPool::from_config(
+                    &Config::parse_with_defaults(
+                        r#"
                 primary_assistant = ["test"]
                 shell_cmd = ["bash", "-c"]
 
@@ -443,13 +453,14 @@ mod tests {
                 model = "gpt-test"
                 window = 1
                 "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+            })
+            .await;
+        pool.assistant("test").unwrap()
     }
 
     #[tokio::test]
@@ -468,13 +479,14 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                topology: Default::default(),
+                visibility: crate::agent::AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
+            pending_done: None,
             tx,
             rx,
             tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
@@ -489,6 +501,8 @@ mod tests {
         agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
             pending::<Result<()>>().await
         });
+        let (done_tx, done_rx) = oneshot::channel();
+        agent.pending_done = Some(done_tx);
 
         let _ = agent
             .handle(AgentEvent::External(ExternalEvent::Abort))
@@ -496,9 +510,9 @@ mod tests {
             .unwrap();
 
         let events = [
-            recv(&mut parent_rx, "parent event").await,
-            recv(&mut parent_rx, "parent event").await,
-            recv(&mut parent_rx, "parent event").await,
+            parent_event(recv(&mut parent_rx, "parent event").await),
+            parent_event(recv(&mut parent_rx, "parent event").await),
+            parent_event(recv(&mut parent_rx, "parent event").await),
         ];
         assert!(matches!(
             events.as_slice(),
@@ -517,6 +531,106 @@ mod tests {
                 ..
             })) if msg == ABORTED_BY_USER
         ));
+        assert!(matches!(
+            timeout(RX_TIMEOUT, done_rx).await.unwrap().unwrap(),
+            TurnResult::Aborted
+        ));
+
+        tokio::fs::remove_dir_all(project.agent(&aid))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn start_submit_failure_fires_pending_done_failed() {
+        let project = Project::new_test().unwrap();
+        let aid = AgentId::from(format!("submit-fail-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(project.agent(&aid))
+            .await
+            .unwrap();
+        let (tx, rx) = channel(8);
+        let assistant = assistant().await;
+        let mut agent = Agent {
+            project: project.clone(),
+            id: aid.clone(),
+            state: AgentState {
+                status: Default::default(),
+                assistant: assistant.clone(),
+                visibility: crate::agent::AgentVisibility::Tab,
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
+                },
+            },
+            router: crate::agent::router::AgentRouter::test_handle(),
+            pending_done: None,
+            tx,
+            rx,
+            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
+            tools: Default::default(),
+        };
+
+        let (done_tx, done_rx) = oneshot::channel();
+        let stale_generation = agent.history().generation() + 1;
+        let result = agent
+            .handle(AgentEvent::External(ExternalEvent::SubmitWithCompletion(
+                UserPrompt {
+                    text: "hi".into(),
+                    multiplier: 1,
+                    generation: stale_generation,
+                },
+                done_tx,
+            )))
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            timeout(RX_TIMEOUT, done_rx).await.unwrap().unwrap(),
+            TurnResult::Failed(_)
+        ));
+        assert!(agent.pending_done.is_none());
+
+        tokio::fs::remove_dir_all(project.agent(&aid))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_assistant_emits_assistant_set_event() {
+        let project = Project::new_test().unwrap();
+        let aid = AgentId::from(format!("set-assistant-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(project.agent(&aid))
+            .await
+            .unwrap();
+        let (parent_tx, mut parent_rx) = channel(8);
+        let (tx, rx) = channel(8);
+        let assistant = assistant().await;
+        let mut agent = Agent {
+            project: project.clone(),
+            id: aid.clone(),
+            state: AgentState {
+                status: Default::default(),
+                assistant: assistant.clone(),
+                visibility: crate::agent::AgentVisibility::Tab,
+                context: crate::agent::AgentContext {
+                    commit: "".into(),
+                    history: History::new("".into()),
+                },
+            },
+            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
+            pending_done: None,
+            tx,
+            rx,
+            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
+            tools: Default::default(),
+        };
+
+        agent.set_assistant("test").await.unwrap();
+
+        let event = parent_event(recv(&mut parent_rx, "parent event").await);
+        assert!(
+            matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test"),
+            "{event:?}"
+        );
 
         tokio::fs::remove_dir_all(project.agent(&aid))
             .await
@@ -530,7 +644,6 @@ mod tests {
         tokio::fs::create_dir_all(project.agent(&aid))
             .await
             .unwrap();
-        let (parent_tx, _parent_rx) = channel(8);
         let (tx, rx) = channel(8);
         let assistant = assistant().await;
         let mut agent = Agent {
@@ -539,13 +652,14 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                topology: Default::default(),
+                visibility: crate::agent::AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle(),
+            pending_done: None,
             tx,
             rx,
             tskmgr: crate::agent::task::manager::AgentTaskManager::new(),

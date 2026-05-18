@@ -38,10 +38,9 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::agent::AgentState;
-    use crate::agent::AgentTopology;
+    use crate::agent::AgentVisibility;
     use crate::agent::handle::AgentEvent;
     use crate::agent::handle::ParentEvent;
-    use crate::agent::init::channel_parent_sink;
     use crate::config::Config;
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::History;
@@ -50,6 +49,7 @@ mod tests {
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
+    use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -61,6 +61,13 @@ mod tests {
             .await
             .unwrap_or_else(|_| panic!("timed out waiting for {name}"))
             .unwrap_or_else(|| panic!("{name} channel closed"))
+    }
+
+    fn parent_event(event: AppEvent) -> ParentEvent {
+        match event {
+            AppEvent::ParentEvent(_, event) => event,
+            other => panic!("expected ParentEvent, got {other:?}"),
+        }
     }
 
     async fn assistant() -> Assistant {
@@ -110,13 +117,14 @@ mod tests {
             state: AgentState {
                 status: Default::default(),
                 assistant: assistant.clone(),
-                topology: AgentTopology::default(),
+                visibility: AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
+            pending_done: None,
             tx,
             rx,
             tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
@@ -162,7 +170,7 @@ mod tests {
 
         assert!(agent.tskmgr.idle());
         assert!(agent.state.context.history.compacting());
-        let event = recv(&mut parent_rx, "parent event").await;
+        let event = parent_event(recv(&mut parent_rx, "parent event").await);
         assert!(
             matches!(
                 event,
@@ -197,13 +205,14 @@ mod tests {
                     crate::llm::history::TurnStatus::InProgress,
                 ),
                 assistant: assistant.clone(),
-                topology: AgentTopology::default(),
+                visibility: AgentVisibility::Tab,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
                     history: History::new("".into()),
                 },
             },
-            parent: channel_parent_sink(parent_tx),
+            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
+            pending_done: None,
             tx,
             rx,
             tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
@@ -247,10 +256,10 @@ mod tests {
             })) if msg == "oops"
         ));
         let events = [
-            recv(&mut parent_rx, "parent event").await,
-            recv(&mut parent_rx, "parent event").await,
-            recv(&mut parent_rx, "parent event").await,
-            recv(&mut parent_rx, "parent event").await,
+            parent_event(recv(&mut parent_rx, "parent event").await),
+            parent_event(recv(&mut parent_rx, "parent event").await),
+            parent_event(recv(&mut parent_rx, "parent event").await),
+            parent_event(recv(&mut parent_rx, "parent event").await),
         ];
         assert!(
             matches!(

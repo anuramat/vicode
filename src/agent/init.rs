@@ -114,6 +114,77 @@ impl Agent {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::channel;
+
+    use super::*;
+    use crate::agent::router::AgentRouter;
+    use crate::config::Config;
+    use crate::llm::provider::assistant::AssistantPool;
+
+    #[tokio::test]
+    async fn try_duplicate_registers_child_with_router() {
+        ASSISTANT_POOL
+            .get_or_init(|| async {
+                AssistantPool::from_config(
+                    &Config::parse_with_defaults(
+                        r#"
+                primary_assistant = ["test"]
+                shell_cmd = ["bash", "-c"]
+
+                [sandbox]
+                kind = "bwrap"
+                bin = "bwrap"
+                args = []
+                stages = []
+
+                [providers.main]
+                api = "responses"
+                base_url = "https://api.example.com/v1"
+
+                [assistants.test]
+                provider = "main"
+                model = "gpt-test"
+                window = 1
+                "#,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+            })
+            .await;
+
+        let project = Project::new_test().unwrap();
+        let (app_tx, _app_rx) = channel(8);
+        let router = AgentRouter::spawn(app_tx, project.clone());
+
+        let parent_aid = AgentId::from(format!("dup-parent-{}", uuid::Uuid::new_v4()));
+        let parent_workdir = project.agent_workdir(&parent_aid);
+        tokio::fs::create_dir_all(&parent_workdir).await.unwrap();
+        let repo = git2::Repository::open(project.root()).unwrap();
+        let commit = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+
+        let assistant = ASSISTANT_POOL.get().unwrap().assistant("test").unwrap();
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant,
+            visibility: AgentVisibility::Tab,
+            context: AgentContext {
+                commit,
+                history: History::new("".into()),
+            },
+        };
+        let parent = Agent::from_state(project.clone(), router.clone(), parent_aid.clone(), state);
+
+        let child_aid = AgentId::new(&project).await.unwrap();
+        parent.try_duplicate(child_aid.clone()).await.unwrap();
+
+        // observable via router: deletion succeeds only if registered
+        router.delete(child_aid).await.unwrap();
+    }
+}
 
 impl AgentState {
     /// init a primary agent from scratch

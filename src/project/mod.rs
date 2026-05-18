@@ -82,7 +82,9 @@ impl Project {
 
     #[cfg(test)]
     pub fn new_test() -> Result<Self> {
-        let config = Config::test();
+        let mut config = Config::test();
+        // tests shouldn't depend on fuse-overlayfs availability
+        config.disable_overlay = true;
         let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root)?;
         let repo = Repository::init(&root)?;
@@ -92,13 +94,14 @@ impl Project {
         repo.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])?;
         let data = root.join(".vicode");
         std::fs::create_dir_all(&data)?;
+        let backend = BackendKind::from_config(&config);
         Ok(Self {
             layout: Layout {
                 id: Self::id(&root),
                 root,
                 data,
             },
-            backend: Self::backend(&config),
+            backend,
             config,
         })
     }

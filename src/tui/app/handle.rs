@@ -97,17 +97,65 @@ impl App<'_> {
 
 #[cfg(test)]
 mod tests {
+    use git2::Repository;
     use similar_asserts::assert_eq;
 
     use super::*;
+    use crate::agent::AgentState;
+    use crate::agent::AgentStatus;
+    use crate::agent::AgentVisibility;
+    use crate::config::Config;
+    use crate::llm::history::History;
+    use crate::llm::provider::assistant::Assistant;
+    use crate::llm::provider::assistant::AssistantPool;
+    use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
+    use crate::tui::tab::Tab;
+    use crate::tui::tab::TabEntry;
+
+    async fn test_assistant() -> Assistant {
+        crate::llm::provider::assistant::ASSISTANT_POOL
+            .get_or_init(|| async {
+                AssistantPool::from_config(
+                    &Config::parse_with_defaults(
+                        r#"
+                primary_assistant = ["test"]
+                shell_cmd = ["bash", "-c"]
+
+                [sandbox]
+                kind = "bwrap"
+                bin = "bwrap"
+                args = []
+                stages = []
+
+                [providers.main]
+                api = "responses"
+                base_url = "https://api.example.com/v1"
+
+                [assistants.test]
+                provider = "main"
+                model = "gpt-test"
+                window = 1
+                "#,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+            })
+            .await
+            .assistant("test")
+            .unwrap()
+    }
 
     #[tokio::test]
-    async fn parent_error_creates_notification() {
+    async fn visible_parent_error_creates_notification() {
         let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let aid = AgentId::from("a".to_string());
+        app.tabs.insert(aid.clone(), TabEntry::Loading);
 
         app.handle_parent_event(
-            AgentId::from("a".to_string()),
+            aid,
             ParentEvent::Error("oops".into()),
         )
         .await
@@ -116,5 +164,56 @@ mod tests {
         let notification = app.notification.expect("expected notification");
         assert!(matches!(notification.kind, NotificationKind::Error));
         assert_eq!(notification.msg, "oops");
+    }
+
+    #[tokio::test]
+    async fn hidden_parent_error_is_ignored() {
+        let mut app = App::new(crate::project::Project::new_test().unwrap());
+
+        app.handle_parent_event(
+            AgentId::from("hidden".to_string()),
+            ParentEvent::Error("oops".into()),
+        )
+        .await
+        .unwrap();
+
+        assert!(app.notification.is_none());
+    }
+
+    #[tokio::test]
+    async fn assistant_set_updates_tab_state() {
+        let project = crate::project::Project::new_test().unwrap();
+        let mut app = App::new(project.clone());
+        let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
+        let workdir = project.agent_workdir(&aid);
+        std::fs::create_dir_all(&workdir).unwrap();
+        Repository::init(&workdir).unwrap();
+        let assistant = test_assistant().await;
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: assistant.clone(),
+            visibility: AgentVisibility::Tab,
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
+        };
+        let tab = Tab::new(
+            crate::agent::router::AgentRouter::test_handle(),
+            aid.clone(),
+            state,
+            &project,
+        )
+        .unwrap();
+        app.tabs.insert(aid.clone(), TabEntry::Ready(tab));
+
+        app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet(assistant.clone()))
+            .await
+            .unwrap();
+
+        let tab = app.tab_mut_by_aid(&aid).unwrap();
+        assert_eq!(tab.state.assistant.id, assistant.id);
+
+        std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
 }

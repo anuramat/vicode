@@ -166,7 +166,7 @@ mod tests {
         let state = AgentState {
             assistant: assistant().await,
             status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
-            topology: Default::default(),
+            visibility: AgentVisibility::Tab,
             context: crate::agent::AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),
