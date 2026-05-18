@@ -44,7 +44,7 @@ impl BackendKind {
 #[async_trait::async_trait]
 #[delegatable_trait]
 pub trait WorkspaceBackend {
-    fn agent_changes_dir(
+    fn agent_diff_root(
         &self,
         layout: &Layout,
         aid: &AgentId,

@@ -15,7 +15,7 @@ use crate::sandbox::SandboxRunner;
 
 #[async_trait::async_trait]
 impl WorkspaceBackend for super::Copy {
-    fn agent_changes_dir(
+    fn agent_diff_root(
         &self,
         layout: &Layout,
         aid: &AgentId,

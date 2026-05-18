@@ -33,8 +33,8 @@ impl ToolRuntimeContext {
         self.project.agent_workdir(&self.agent_id)
     }
 
-    pub fn changes_dir(&self) -> PathBuf {
-        self.project.agent_changes_dir(&self.agent_id)
+    pub fn diff_root(&self) -> PathBuf {
+        self.project.agent_diff_root(&self.agent_id)
     }
 
     pub fn sandbox_runner(&self) -> Result<SandboxRunner> {

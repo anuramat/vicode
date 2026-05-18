@@ -28,7 +28,7 @@ enum MountStatus {
 
 #[async_trait::async_trait]
 impl WorkspaceBackend for Overlay {
-    fn agent_changes_dir(
+    fn agent_diff_root(
         &self,
         layout: &Layout,
         aid: &AgentId,

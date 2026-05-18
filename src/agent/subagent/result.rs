@@ -19,14 +19,14 @@ pub fn diff(
     parent: &AgentId,
     child: &AgentId,
 ) -> Result<String> {
-    let parent_upper = project.agent_changes_dir(parent);
-    let child_upper = project.agent_changes_dir(child);
+    let parent_root = project.agent_diff_root(parent);
+    let child_root = project.agent_diff_root(child);
     let parent_workdir = project.agent_workdir(parent);
     let child_workdir = project.agent_workdir(child);
     let ignore = gitignore(&child_workdir)?;
     let mut paths = BTreeSet::new();
-    collect_paths(&parent_upper, &parent_upper, &mut paths)?;
-    collect_paths(&child_upper, &child_upper, &mut paths)?;
+    collect_paths(&parent_root, &parent_root, &mut paths)?;
+    collect_paths(&child_root, &child_root, &mut paths)?;
 
     let diffs = paths
         .into_iter()

@@ -122,11 +122,11 @@ impl Project {
         self.backend.unmount_all(&self.layout).await
     }
 
-    pub fn agent_changes_dir(
+    pub fn agent_diff_root(
         &self,
         aid: &AgentId,
     ) -> PathBuf {
-        self.backend.agent_changes_dir(&self.layout, aid)
+        self.backend.agent_diff_root(&self.layout, aid)
     }
 
     pub fn sandbox_runner(
