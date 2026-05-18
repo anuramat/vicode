@@ -2,47 +2,25 @@ use std::os::unix::process::ExitStatusExt;
 
 use anyhow::Result;
 
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::Function;
-use crate::agent::tool::traits::ToolContext;
-use crate::project::layout::LayoutTrait;
-use crate::sandbox::Sandbox;
 use crate::tools::bash::BashArguments;
-use crate::tools::bash::BashContext;
 use crate::tools::bash::BashResult;
 
 #[async_trait::async_trait]
-impl ToolContext<BashArguments> for BashContext {
-    async fn prepare(
-        _args: &BashArguments,
-        agent: &crate::agent::Agent,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        let config = agent.project.config();
-        Ok(Self {
-            runner: config.sandbox.runner(
-                agent.project.agent_workdir(&agent.id),
-                agent.project.gitdir()?,
-            ),
-            shell_cmd: config.shell_cmd.clone(),
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl Function<BashContext, (), BashResult> for BashArguments {
+impl Function<(), BashResult> for BashArguments {
     async fn call(
         &self,
-        ctx: BashContext,
+        ctx: ToolRuntimeContext,
     ) -> Result<(BashResult, ())> {
-        let runner = &ctx.runner;
+        let runner = ctx.sandbox_runner()?;
+        let shell_cmd = ctx.config().shell_cmd.clone();
 
         let std::process::Output {
             stdout,
             stderr,
             status,
-        } = runner.exec(ctx.shell_cmd, self.command.clone()).await?;
+        } = runner.exec(shell_cmd, self.command.clone()).await?;
 
         let result = BashResult {
             stdout: String::from_utf8_lossy(&stdout).into(),

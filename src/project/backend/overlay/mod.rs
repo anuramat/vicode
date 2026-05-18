@@ -13,8 +13,10 @@ use super::Overlay;
 use crate::agent::id::AgentId;
 use crate::deps;
 use crate::project::Layout;
-use crate::project::backend::Backend;
+use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::LayoutTrait;
+use crate::sandbox::Sandbox;
+use crate::sandbox::SandboxRunner;
 
 enum MountStatus {
     Mounted,
@@ -25,13 +27,21 @@ enum MountStatus {
 // TODO move more agent logic to ./agent.rs
 
 #[async_trait::async_trait]
-impl Backend for Overlay {
+impl WorkspaceBackend for Overlay {
     fn agent_changes_dir(
         &self,
         layout: &Layout,
         aid: &AgentId,
     ) -> PathBuf {
         self.overlay_upper(layout, aid)
+    }
+
+    fn sandbox_runner(
+        &self,
+        cwd: PathBuf,
+        gitdir: PathBuf,
+    ) -> SandboxRunner {
+        self.sandbox.runner(cwd, gitdir)
     }
 
     async fn init(
@@ -64,7 +74,9 @@ impl Backend for Overlay {
             .mount_status(layout, &layout.agent_workdir(aid))
             .await?
         {
-            MountStatus::Mounted | MountStatus::Broken => self.unmount_agent(layout, aid).await?,
+            MountStatus::Mounted | MountStatus::Broken => {
+                self.unmount_agent(layout, aid).await?;
+            }
             MountStatus::Unmounted => (),
         }
 
@@ -104,12 +116,12 @@ impl Backend for Overlay {
     async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
-        src_id: &AgentId,
+        src_aid: &AgentId,
         dst_aid: &AgentId,
         commit: &str,
         git: bool,
     ) -> Result<()> {
-        let src = self.overlay_upper(layout, src_id);
+        let src = self.overlay_upper(layout, src_aid);
         let dst = self.overlay_upper(layout, dst_aid);
         crate::git::copy_without_dot_git(&src, dst).await?;
         self.init_overlay(layout, commit, dst_aid, git).await?;

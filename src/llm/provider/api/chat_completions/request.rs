@@ -244,7 +244,6 @@ mod tests {
                 signal: None,
             })),
             meta: None,
-            context: None,
         };
         let mut assistant = AssistantMessage::new(0);
         assistant.content = indexmap! {

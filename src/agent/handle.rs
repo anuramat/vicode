@@ -19,6 +19,7 @@ use crate::agent::subagent::replica;
 use crate::agent::task::manager::TaskId;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::llm::history;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
@@ -232,7 +233,7 @@ impl Agent {
         self.history_mut().handle(generation, event.clone())?;
         match event {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
-                self.execute_tool_calls(item).await?;
+                self.execute_tool_calls(item);
             }
             HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
             | HistoryUpdate::CompactResponse(AssistantEvent::Failed(msg)) => {
@@ -286,26 +287,26 @@ impl Agent {
         self.save().await
     }
 
-    pub async fn execute_tool_calls(
+    pub fn execute_tool_calls(
         &mut self,
         item: &AssistantItem,
-    ) -> Result<()> {
+    ) {
         let AssistantItem::ToolCall(call) = item else {
-            return Ok(());
+            return;
         };
         if call.task.output().is_some() {
-            return Ok(());
+            return;
         }
         let mut call = call.clone();
         let generation = self.history().generation();
-        call.task.prepare(self).await?;
+        let ctx = ToolRuntimeContext::new(self.id.clone(), self.project.clone(), self.router.clone());
         self.tskmgr
             .spawn(self.tx.clone(), generation, move |task| async move {
                 let handle = TurnHandle {
                     task,
                     turn_type: TurnType::Default,
                 };
-                call.task.run().await;
+                call.task.run(ctx).await;
                 call.touch_ready_at_now();
                 handle
                     .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
@@ -313,7 +314,6 @@ impl Agent {
                     ))))
                     .await
             });
-        Ok(())
     }
 }
 

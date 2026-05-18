@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use anyhow::Result;
 use dyn_clone::DynClone;
 
-use crate::agent::Agent;
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::tui::widgets::container::element::IntoElement;
 
 dyn_clone::clone_trait_object!(ToolCallSerializable);
@@ -16,43 +16,16 @@ pub trait ToolCall: Send + Sync {
     /// None if the tool call wasn't executed yet
     fn output(&self) -> Option<String>;
 
-    async fn run(&mut self);
-
-    async fn prepare(
+    async fn run(
         &mut self,
-        _agent: &Agent,
-    ) -> Result<()>;
-}
-
-// some helper traits:
-
-#[async_trait::async_trait]
-pub trait ToolContext<TArgs>: Send + Sync {
-    async fn prepare(
-        _args: &TArgs,
-        _agent: &Agent,
-    ) -> Result<Self>
-    where
-        Self: Sized;
+        ctx: ToolRuntimeContext,
+    );
 }
 
 #[async_trait::async_trait]
-pub trait Function<TCtx = (), TMeta = (), TResult = ()>: Send + Sync {
+pub trait Function<TMeta = (), TResult = ()>: Send + Sync {
     async fn call(
         &self,
-        ctx: TCtx,
+        ctx: ToolRuntimeContext,
     ) -> Result<(TResult, TMeta)>;
-}
-
-#[async_trait::async_trait]
-impl<TArgs> ToolContext<TArgs> for () {
-    async fn prepare(
-        _args: &TArgs,
-        _agent: &Agent,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(())
-    }
 }

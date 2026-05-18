@@ -48,7 +48,6 @@ mod tests {
                 }),
                 output,
                 meta: None,
-                context: None,
             }),
         }
     }

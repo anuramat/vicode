@@ -13,12 +13,11 @@ use crate::agent::AgentId;
 use crate::config::Config;
 use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
-use crate::project::backend::Backend;
 use crate::project::backend::BackendKind;
-use crate::project::backend::Copy;
-use crate::project::backend::Overlay;
+use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::LayoutTrait;
 use crate::project::layout::ambassador_impl_LayoutTrait;
+use crate::sandbox::SandboxRunner;
 
 #[derive(Clone, Delegate, Debug)]
 #[delegate(LayoutTrait, target = "layout")]
@@ -38,14 +37,6 @@ pub struct Layout {
 }
 
 impl Project {
-    fn backend(config: &Config) -> BackendKind {
-        if config.disable_overlay {
-            BackendKind::Copy(Copy)
-        } else {
-            BackendKind::Overlay(Overlay)
-        }
-    }
-
     pub fn name(&self) -> String {
         self.layout
             .root
@@ -77,9 +68,10 @@ impl Project {
             .to_path_buf();
         let id = Self::id(&root);
         let data = DIRS.create_data_directory(&id)?;
+        let backend = BackendKind::from_config(&config);
         Ok(Self {
             layout: Layout { root, id, data },
-            backend: Self::backend(&config),
+            backend,
             config,
         })
     }
@@ -134,6 +126,14 @@ impl Project {
         self.backend.agent_changes_dir(&self.layout, aid)
     }
 
+    pub fn sandbox_runner(
+        &self,
+        cwd: PathBuf,
+        gitdir: PathBuf,
+    ) -> SandboxRunner {
+        self.backend.sandbox_runner(cwd, gitdir)
+    }
+
     pub async fn instructions(
         &self,
         aid: &AgentId,
@@ -153,13 +153,13 @@ impl Project {
 
     pub async fn duplicate_agent_workdir(
         &self,
-        src_id: &AgentId,
-        aid: &AgentId,
+        src_aid: &AgentId,
+        dst_aid: &AgentId,
         commit: &str,
         git: bool,
     ) -> Result<()> {
         self.backend
-            .duplicate_agent_workdir(&self.layout, src_id, aid, commit, git)
+            .duplicate_agent_workdir(&self.layout, src_aid, dst_aid, commit, git)
             .await
     }
 

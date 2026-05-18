@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -11,11 +10,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use similar::TextDiff;
 
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::Function;
 use crate::agent::tool::traits::ToolCall;
-use crate::agent::tool::traits::ToolContext;
 use crate::declare_tool;
-use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
 use crate::tui::widgets::syntax::HIGHLIGHTER;
@@ -56,7 +54,6 @@ declare_tool!(
     description: "Edit a file by applying one or more string replacements.",
     call: EditCall,
     arguments: EditArguments,
-    context: EditContext,
     meta: EditMeta,
     result: EditResult,
 );
@@ -66,33 +63,13 @@ pub struct EditMeta {
     diff: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct EditContext {
-    workdir: PathBuf,
-}
-
 #[async_trait::async_trait]
-impl ToolContext<EditArguments> for EditContext {
-    async fn prepare(
-        _: &EditArguments,
-        agent: &crate::agent::Agent,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(Self {
-            workdir: agent.project.agent_workdir(&agent.id),
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl Function<EditContext, EditMeta, EditResult> for EditArguments {
+impl Function<EditMeta, EditResult> for EditArguments {
     async fn call(
         &self,
-        ctx: EditContext,
+        ctx: ToolRuntimeContext,
     ) -> Result<(EditResult, EditMeta)> {
-        let target_path = ctx.workdir.join(&self.filepath);
+        let target_path = ctx.workdir().join(&self.filepath);
         let diff = edit_file(&target_path, &self.edits)?;
         Ok((EditResult { success: true }, EditMeta { diff }))
     }
@@ -180,6 +157,7 @@ fn replace(
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::path::PathBuf;
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
 

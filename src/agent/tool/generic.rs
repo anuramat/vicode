@@ -1,53 +1,30 @@
 use std::fmt::Debug;
 
-use anyhow::Context;
-use anyhow::Result;
 use serde::Serialize;
 
 use super::traits::Function;
 use super::traits::ToolCall;
-use super::traits::ToolContext;
-use crate::agent::Agent;
+use crate::agent::tool::context::ToolRuntimeContext;
 
 // NOTE we have to write explicit bounds because serde heuristics break on Option<T> -- they incorrectly require T to implement Default
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound(
     serialize = "TArgs: serde::Serialize, TResult: serde::Serialize, TMeta: serde::Serialize",
     deserialize = "TArgs: serde::de::DeserializeOwned, TResult: serde::de::DeserializeOwned, TMeta: serde::de::DeserializeOwned",
 ))]
-pub struct GenericTask<TArgs, TCtx, TMeta, TResult> {
+pub struct GenericTask<TArgs, TMeta, TResult> {
     pub arguments: Option<TArgs>,
-    #[serde(skip)]
-    pub context: Option<TCtx>,
     pub meta: Option<TMeta>,
     /// None if the task has not been run yet; Some(Err) if there was a runtime error (we still send the message to the LLM)
     pub output: Option<Result<TResult, String>>,
 }
 
-// TODO can we drop `Clone` for `GenericTask`? We only need tCtx once, right after we prepare it and start the task
-impl<TArgs, TCtx, TMeta, TResult> Clone for GenericTask<TArgs, TCtx, TMeta, TResult>
-where
-    TArgs: Clone,
-    TMeta: Clone,
-    TResult: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            arguments: self.arguments.clone(),
-            context: None,
-            meta: self.meta.clone(),
-            output: self.output.clone(),
-        }
-    }
-}
-
 #[async_trait::async_trait]
-impl<TArgs, TCtx, TMeta, TResult> ToolCall for GenericTask<TArgs, TCtx, TMeta, TResult>
+impl<TArgs, TMeta, TResult> ToolCall for GenericTask<TArgs, TMeta, TResult>
 where
-    TArgs: Serialize + Function<TCtx, TMeta, TResult> + Send + Sync,
+    TArgs: Serialize + Function<TMeta, TResult> + Send + Sync,
     TResult: Serialize + Send + Sync,
     TMeta: Serialize + Send + Sync,
-    TCtx: Send + Sync + ToolContext<TArgs>,
 {
     fn arguments(&self) -> String {
         serde_json::to_string(&self.arguments).expect("could not serialize arguments")
@@ -69,18 +46,11 @@ where
             .expect("could not serialize output")
     }
 
-    async fn prepare(
+    async fn run(
         &mut self,
-        agent: &Agent,
-    ) -> Result<()> {
-        let args = self.arguments.as_ref().context("arguments not set")?;
-        self.context = Some(TCtx::prepare(args, agent).await?);
-        Ok(())
-    }
-
-    async fn run(&mut self) {
+        ctx: ToolRuntimeContext,
+    ) {
         let args = self.arguments.as_ref().unwrap();
-        let ctx = self.context.take().unwrap();
         match args.call(ctx).await {
             Ok((result, meta)) => {
                 self.meta = Some(meta);

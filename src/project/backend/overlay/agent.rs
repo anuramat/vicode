@@ -9,7 +9,7 @@ use crate::agent::id::AgentId;
 use crate::git::checkout;
 use crate::git::worktree;
 use crate::project::Layout;
-use crate::project::backend::Backend;
+use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::AGENT_WORKDIR_DIRNAME;
 use crate::project::layout::LayoutTrait;
 

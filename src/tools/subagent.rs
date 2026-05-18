@@ -8,12 +8,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::agent::Agent;
 use crate::agent::subagent;
-use crate::agent::subagent::SubagentHandle;
 use crate::agent::subagent::SubagentResult;
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::Function;
-use crate::agent::tool::traits::ToolContext;
 use crate::declare_tool;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::message::toolcall::ToolCallWidget;
@@ -24,7 +22,6 @@ declare_tool!(
     description: "Run a child agent in its own workdir and return its response plus the diff it produced.",
     call: SubagentCall,
     arguments: SubagentArguments,
-    context: SubagentContext,
     meta: (),
     result: SubagentResult,
 );
@@ -40,33 +37,21 @@ pub struct SubagentArguments {
     pub inherit_context: bool,
 }
 
-#[derive(Debug)]
-pub struct SubagentContext {
-    handle: SubagentHandle,
-}
-
 #[async_trait::async_trait]
-impl ToolContext<SubagentArguments> for SubagentContext {
-    async fn prepare(
-        args: &SubagentArguments,
-        agent: &Agent,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(Self {
-            handle: subagent::spawn(agent, args.prompt.clone(), args.inherit_context).await?,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl Function<SubagentContext, (), SubagentResult> for SubagentArguments {
+impl Function<(), SubagentResult> for SubagentArguments {
     async fn call(
         &self,
-        ctx: SubagentContext,
+        ctx: ToolRuntimeContext,
     ) -> Result<(SubagentResult, ())> {
-        let result = ctx.handle.wait().await?;
+        let handle = subagent::spawn_and_submit(
+            &ctx.router,
+            &ctx.project,
+            &ctx.agent_id,
+            self.prompt.clone(),
+            self.inherit_context,
+        )
+        .await?;
+        let result = handle.wait().await?;
         Ok((result, ()))
     }
 }

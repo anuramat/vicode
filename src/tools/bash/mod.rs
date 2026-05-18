@@ -2,14 +2,12 @@ pub mod task;
 pub mod widget;
 
 use crate::declare_tool;
-use crate::sandbox::SandboxRunner;
 
 declare_tool! {
     name: "bash",
     description: "Execute a bash command in a sandboxed environment.",
     call: BashCall,
     arguments: BashArguments,
-    context: BashContext,
     meta: (),
     result: BashResult,
 }
@@ -21,12 +19,6 @@ declare_tool! {
 pub struct BashArguments {
     #[schemars(description = "The bash command to execute.")]
     pub command: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct BashContext {
-    runner: SandboxRunner,
-    shell_cmd: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -10,28 +10,50 @@ use anyhow::Result;
 use crate::agent::AgentId;
 use crate::config::Config;
 use crate::project::Layout;
+use crate::sandbox::SandboxConfig;
+use crate::sandbox::SandboxRunner;
 
 // TODO drop the enum and use some macro?
 #[derive(Debug, Clone, Delegate)]
-#[delegate(Backend)]
+#[delegate(WorkspaceBackend)]
 pub enum BackendKind {
     Overlay(Overlay),
     Copy(Copy),
 }
 
 #[derive(Debug, Clone)]
-pub struct Overlay;
+pub struct Overlay {
+    pub sandbox: SandboxConfig,
+}
 #[derive(Debug, Clone)]
-pub struct Copy;
+pub struct Copy {
+    pub sandbox: SandboxConfig,
+}
+
+impl BackendKind {
+    pub fn from_config(config: &Config) -> Self {
+        let sandbox = config.sandbox.clone();
+        if config.disable_overlay {
+            Self::Copy(Copy { sandbox })
+        } else {
+            Self::Overlay(Overlay { sandbox })
+        }
+    }
+}
 
 #[async_trait::async_trait]
 #[delegatable_trait]
-pub trait Backend {
+pub trait WorkspaceBackend {
     fn agent_changes_dir(
         &self,
         layout: &Layout,
         aid: &AgentId,
     ) -> PathBuf;
+    fn sandbox_runner(
+        &self,
+        cwd: PathBuf,
+        gitdir: PathBuf,
+    ) -> SandboxRunner;
     async fn init(
         &self,
         layout: &Layout,
@@ -62,7 +84,7 @@ pub trait Backend {
     async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
-        src_id: &AgentId,
+        src_aid: &AgentId,
         dst_aid: &AgentId,
         commit: &str,
         git: bool,

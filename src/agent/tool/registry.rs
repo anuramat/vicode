@@ -44,9 +44,12 @@ impl ToolSchemas {
 
 #[macro_export]
 macro_rules! declare_tool {
-    (name: $name:expr, description: $description:expr, call: $call:ident, arguments: $arguments:ty, context: $context:ty, meta: $meta:ty, result: $result:ty $(,)?) => {
+    (name: $name:literal, description: $description:expr, call: $call:ident, arguments: $arguments:ty, meta: $meta:ty, result: $result:ty $(,)?) => {
+        #[allow(dead_code)]
+        pub const TOOL_NAME: &str = $name;
+
         pub type $call =
-            $crate::agent::tool::generic::GenericTask<$arguments, $context, $meta, $result>;
+            $crate::agent::tool::generic::GenericTask<$arguments, $meta, $result>;
 
         #[typetag::serde(name = $name)]
         impl $crate::agent::tool::traits::ToolCallSerializable for $call {}

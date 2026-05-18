@@ -84,7 +84,6 @@ mod tests {
                 }),
                 output: None,
                 meta: None,
-                context: None,
             }),
         })
     }

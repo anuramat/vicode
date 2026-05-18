@@ -8,17 +8,27 @@ use crate::git;
 use crate::git::checkout;
 use crate::git::worktree;
 use crate::project::Layout;
-use crate::project::backend::Backend;
+use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::LayoutTrait;
+use crate::sandbox::Sandbox;
+use crate::sandbox::SandboxRunner;
 
 #[async_trait::async_trait]
-impl Backend for super::Copy {
+impl WorkspaceBackend for super::Copy {
     fn agent_changes_dir(
         &self,
         layout: &Layout,
         aid: &AgentId,
     ) -> PathBuf {
         layout.agent_workdir(aid)
+    }
+
+    fn sandbox_runner(
+        &self,
+        cwd: PathBuf,
+        gitdir: PathBuf,
+    ) -> SandboxRunner {
+        self.sandbox.runner(cwd, gitdir)
     }
 
     async fn init(
@@ -72,12 +82,12 @@ impl Backend for super::Copy {
     async fn duplicate_agent_workdir(
         &self,
         layout: &Layout,
-        src_id: &AgentId,
+        src_aid: &AgentId,
         dst_aid: &AgentId,
         commit: &str,
         git: bool,
     ) -> Result<()> {
-        let from = layout.agent_workdir(src_id);
+        let from = layout.agent_workdir(src_aid);
         let to = layout.agent_workdir(dst_aid);
         if git {
             git::worktree(layout, dst_aid, commit, false).await?;

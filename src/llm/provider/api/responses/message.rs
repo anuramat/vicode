@@ -96,7 +96,6 @@ mod tests {
                 signal: None,
             })),
             meta: None,
-            context: None,
         };
 
         let call = ToolCallItem {
@@ -137,7 +136,6 @@ mod tests {
             }),
             output: Some(Err("oops".into())),
             meta: None,
-            context: None,
         };
 
         let call = ToolCallItem {

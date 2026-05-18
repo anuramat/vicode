@@ -2,6 +2,7 @@ use anyhow::Result;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 
+use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::Function;
 use crate::declare_tool;
 use crate::tui::widgets::container::element::Element;
@@ -12,7 +13,6 @@ declare_tool!(
     description: "Manages a todo list. Keeps track of tasks that are pending, in progress, or completed. Useful for organizing and prioritizing tasks.",
     call: TodoCall,
     arguments: TodoArguments,
-    context: (),
     meta: (),
     result: TodoResult,
 );
@@ -60,10 +60,10 @@ pub struct TodoEntry {
 }
 
 #[async_trait::async_trait]
-impl Function<(), (), TodoResult> for TodoArguments {
+impl Function<(), TodoResult> for TodoArguments {
     async fn call(
         &self,
-        _: (),
+        _ctx: ToolRuntimeContext,
     ) -> Result<(TodoResult, ())> {
         Ok((TodoResult {}, ()))
     }
