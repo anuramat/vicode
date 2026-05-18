@@ -18,17 +18,12 @@
 - j/k by default scroll by user supplied percent of height
 - message spacing
 - `:help` and cmdline completions with command:description:key
-- sidebar
-  - "focus_sidebar" command
-  - responsiveness:
-    - wide screen: always show, highlight when focused
-    - narrow screen: show when focused
-  - elements:
-    - customizable bash status (git status by default)
-    - errors
-    - compact in progress
-    - tools/subagents? although we could just show it in the message history? 
-      - I guess we could show more data, compared to history
+- sidebar elements:
+  - customizable bash status (git status by default)
+  - errors
+  - compact in progress
+  - tools/subagents? although we could just show it in the message history? 
+    - I guess we could show more data, compared to history
 - markdown rendering in input field
 - streaming subagent progress/tool outputs
 - add steering submit mode -- queue prompt after tool call finishes
@@ -46,10 +41,6 @@
 - when bash tool is aborted, it should send partial results to the assistant
 - let user execute bash commands in current tab with `!...`
   - append a developer message equivalent to bash tool output, with equivalent rendering
-- subagents
-  - two types
-    - parallel -- each owns a workdir; same as "replica" in best-of-n
-    - blocking -- one at a time, shares workdir with parent, probably gets git access
 - autocompact on threshold
 - alternative argument schemas for user compact command
 - retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
@@ -57,38 +48,19 @@
 # backlog
 
 - customizable syntax highlighting colorscheme
-- let the user browse subagents like normal tabs, probably read-only though
-  - if we let the user prompt subagents, main agents should be able to prompt them too
 - float window fzf-lua style
-  - past errors (ones from stl notifications)
   - logs
   - message picker for undo/compact/jump
-- build prompt recursively from modules
-- lua scripting using `mlua`
 - try reading token usage field in response instead of estimating with tiktoken?
 - show combined elapsed time for multiturn (ie multiple assistant message)
-- show time to first token
-- gitless scenario -- project dir instead of snapshots for overlays
 - add passthrough params; cerebras-specific -- clear_thinking: false
-- better strategy than round robin for providers?
-  - load balancing is actually out of scope (probably)
-  - sampling with relative weights might be useful for diversity in best-of-n though
-- round-robin assistants each turn, as in https://www.swebench.com/SWE-bench/blog/2025/08/19/mini-roulette/
-- question tool
-- plan tool? basically subagent (inherit=false) with prompt=plan, but ask user for confirmation
 - bash commands/includes in context files and user prompts
 - tool call "intent" -- dummy argument for better ui, show for collapsed tool calls
-- aggressive prompting:
-  - use as many tools in parallel as possible
-  - ofetn spawn agents (with inherit=true)
 - fuse to provide extra optional context:
   - compacted history
   - let agent create skill-memories
     - global/per-project/maybe even per-agent
 - hooks?
-- when main agent spawns subagents, show all prompts to all subagents (to
-  minimize overlap)
-  - cross-agent comms?
 - if agent didn't inherit context, provide a tool to retroactively force inherit_context=true
 - cli
   - project commands, `-a/--all` -- apply to all projects
