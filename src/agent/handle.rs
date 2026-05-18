@@ -278,9 +278,6 @@ impl Agent {
         &mut self,
         n: usize,
     ) -> Result<()> {
-        // Collect every spawn result so we can clean up siblings if one fails
-        // partway — `try_collect` would otherwise drop already-registered
-        // handles and leak their runtimes.
         let results: Vec<_> = stream::iter(0..n)
             .map(async |_| {
                 subagent::spawn_and_submit(
@@ -296,26 +293,19 @@ impl Agent {
             .collect()
             .await;
         let mut handles = Vec::with_capacity(n);
-        let mut first_err = None;
+        let mut spawn_errors = Vec::new();
         for r in results {
             match r {
                 Ok(h) => handles.push(h),
-                Err(e) if first_err.is_none() => first_err = Some(e),
-                Err(_) => {}
+                Err(e) => spawn_errors.push(e.to_string()),
             }
-        }
-        if let Some(e) = first_err {
-            for h in handles {
-                drop(self.router.delete(h.id.clone()).await);
-            }
-            return Err(e);
         }
         self.tskmgr.spawn(
             self.tx.clone(),
             self.history().generation(),
             move |task| async move {
                 let created_at = now();
-                let result = replica::run_replicas(handles).await?;
+                let result = replica::run_replicas(handles, spawn_errors).await?;
                 task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
                     result.report,
                     created_at,

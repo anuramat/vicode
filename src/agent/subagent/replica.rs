@@ -14,8 +14,15 @@ pub struct ReplicaResult {
     pub report: String,
 }
 
-pub async fn run_replicas(handles: Vec<SubagentHandle>) -> Result<ReplicaResult> {
-    let entries: Vec<String> = join_all(handles.into_iter().map(|h| async move {
+pub async fn run_replicas(
+    handles: Vec<SubagentHandle>,
+    spawn_errors: Vec<String>,
+) -> Result<ReplicaResult> {
+    let mut entries: Vec<String> = spawn_errors
+        .into_iter()
+        .map(|e| format!("<implementation>\nspawn error: {e}\n</implementation>"))
+        .collect();
+    let live = join_all(handles.into_iter().map(|h| async move {
         let aid = h.id.clone();
         match h.wait().await {
             // TODO change format
@@ -27,6 +34,7 @@ pub async fn run_replicas(handles: Vec<SubagentHandle>) -> Result<ReplicaResult>
         }
     }))
     .await;
+    entries.extend(live);
     Ok(ReplicaResult {
         report: format!("{}{}", REPORT_HEADER_PROMPT, entries.join("\n\n")),
     })
@@ -106,11 +114,43 @@ mod tests {
             sender.send(TurnResult::Failed("boom".into())).unwrap();
         }
 
-        run_replicas(handles).await.unwrap();
+        run_replicas(handles, Vec::new()).await.unwrap();
 
         // every aid should now be absent from the router
         for aid in aids {
             assert!(router.delete(aid).await.is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn spawn_errors_appear_in_report_alongside_live_results() {
+        let project = Project::new_test().unwrap();
+        let (app_tx, _app_rx) = channel(8);
+        let router = AgentRouter::spawn(app_tx, project.clone());
+        let parent_aid = AgentId::from(format!("replica-mixed-{}", uuid::Uuid::new_v4()));
+
+        let aid = AgentId::from(format!("replica-live-{}", uuid::Uuid::new_v4()));
+        let (runtime_tx, _rx) = channel(8);
+        let (abort, _reg) = AbortHandle::new_pair();
+        router
+            .register(aid.clone(), RuntimeHandle::new(runtime_tx, abort))
+            .await
+            .unwrap();
+        let (turn_tx, turn_rx) = oneshot::channel();
+        let handle = SubagentHandle::new_for_test(
+            aid.clone(),
+            parent_aid,
+            project.clone(),
+            router.clone(),
+            turn_rx,
+        );
+        turn_tx.send(TurnResult::Failed("live boom".into())).unwrap();
+
+        let result = run_replicas(vec![handle], vec!["spawn boom".into()])
+            .await
+            .unwrap();
+
+        assert!(result.report.contains("spawn error: spawn boom"));
+        assert!(result.report.contains("error: subagent error: live boom"));
     }
 }
