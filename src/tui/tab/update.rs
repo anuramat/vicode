@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::agent::AgentStatus;
-use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::Message;
@@ -10,7 +9,6 @@ use crate::project::layout::LayoutTrait;
 use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
-use crate::tui::widgets::container::scroll::ScrollElements;
 
 impl Tab<'_> {
     pub fn set_osc7(&self) {
@@ -36,18 +34,10 @@ impl Tab<'_> {
             self.update_input_title();
         }
         // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
-        let len = self.agent.state.context.history.state().messages.len();
+        let len = self.state.context.history.state().messages.len();
         self.scroll.set_dirty(len.saturating_sub(1));
         self.scroll.set_len(len);
         Ok(())
-    }
-
-    pub fn replace_history(
-        &mut self,
-        history: History,
-    ) {
-        self.agent.state.context.history = history;
-        self.scroll = ScrollElements::default();
     }
 
     // XXX does this make sense
@@ -55,12 +45,13 @@ impl Tab<'_> {
         &mut self,
         status: AgentStatus,
     ) -> Result<bool> {
-        if self.agent.state.status == status {
+        if self.state.status == status {
             return Ok(false);
         }
-        self.agent.state.status = status;
+        self.state.status = status;
         self.refresh_file_completion()?;
-        self.tx
+        self.router
+            .app_tx()
             .send(AppEvent::TabStatusChanged(self.aid.clone()))
             .await?;
         Ok(true)
@@ -72,7 +63,7 @@ impl Tab<'_> {
     ) -> String {
         // NOTE we only apply the results if history event was successfully handled, so we don't have to check it here
         let mut result = Vec::new();
-        let messages = &self.agent.state.context.history.state().messages;
+        let messages = &self.state.context.history.state().messages;
         let start = messages.len().saturating_sub(popped);
         for msg in &messages[start..] {
             if let Message::User(UserMessage { text, .. }) = msg {

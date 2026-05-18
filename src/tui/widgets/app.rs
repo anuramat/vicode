@@ -104,7 +104,6 @@ impl<'a> App<'a> {
             #[allow(clippy::cast_precision_loss)]
             let tokens = {
                 let window = tab
-                    .agent
                     .state
                     .assistant
                     .config
@@ -120,7 +119,7 @@ impl<'a> App<'a> {
 
             let right_part = format!(
                 "{} | {} | {}",
-                tokens, tab.agent.state.status, tab.agent.state.assistant.id
+                tokens, tab.state.status, tab.state.assistant.id
             );
             // TODO +3 move to a const
             if right_part.len() + 3 < remaining_width {

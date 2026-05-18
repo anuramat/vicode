@@ -13,8 +13,8 @@ impl<'a> App<'a> {
         command: Command,
     ) -> Result<()> {
         match command.name {
-            CommandName::AssistantNext => self.selected_tab_mut()?.cycle_assistant(false).await?,
-            CommandName::AssistantPrev => self.selected_tab_mut()?.cycle_assistant(true).await?,
+            CommandName::AssistantNext => self.selected_tab()?.cycle_assistant(false).await?,
+            CommandName::AssistantPrev => self.selected_tab()?.cycle_assistant(true).await?,
             CommandName::CmdlineEnter => self.cmdline.input.set_focus(true),
             CommandName::Compact => {
                 self.selected_tab_mut()?

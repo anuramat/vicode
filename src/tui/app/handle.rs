@@ -57,29 +57,38 @@ impl App<'_> {
         #[allow(clippy::enum_glob_use)]
         use ParentEvent::*;
 
+        // events for agents without a tab (subagents) are dropped — the
+        // router still owns the runtime, completion is delivered via oneshot.
         match event {
-            Started(agent) => {
-                self.handle_started(aid.clone(), *agent)?;
-                self.tab_mut_by_aid(&aid)?.refresh_info().await?;
-            }
-            HistoryReset(history) => {
-                self.tab_mut_by_aid(&aid)?.replace_history(history);
-            }
-            HistoryUpdate(loc, event) => {
-                self.tab_mut_by_aid(&aid)?.update(loc, event)?;
-                // TODO resync history if tab handler fails
-            }
-            Error(msg) => {
-                self.notify(NotificationKind::Error, msg);
-            }
-            StatusUpdate(status) => {
-                let tab = self.tab_mut_by_aid(&aid)?;
-                if tab.set_state(status).await? {
+            Started(state) => {
+                self.handle_started(&aid, *state)?;
+                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
                     tab.refresh_info().await?;
                 }
             }
-            SubagentDone(out) => {
-                anyhow::bail!("unexpected subagent completion: {out:?}")
+            HistoryUpdate(loc, event) => {
+                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
+                    tab.update(loc, event)?;
+                }
+            }
+            Error(msg) => {
+                if self.tabs.contains_key(&aid) {
+                    self.notify(NotificationKind::Error, msg);
+                }
+            }
+            StatusUpdate(status) => {
+                if let Ok(tab) = self.tab_mut_by_aid(&aid)
+                    && tab.set_state(status).await?
+                {
+                    tab.refresh_info().await?;
+                }
+            }
+            AssistantSet(assistant) => {
+                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
+                    tab.state.assistant = assistant;
+                    tab.refresh_info().await?;
+                    self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
+                }
             }
         }
         Ok(())

@@ -1,15 +1,11 @@
 use anyhow::Result;
 use git2::Repository;
 use indexmap::IndexMap;
-use tokio::sync::mpsc::Sender;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::AgentHandle;
+use crate::agent::AgentState;
 use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::ParentEvent;
-use crate::agent::handle::ParentHandle;
-use crate::agent::handle::ParentSink;
 use crate::agent::id::AgentId;
 use crate::git::is_workdir_clean;
 use crate::project::layout::LayoutTrait;
@@ -18,35 +14,6 @@ use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 use crate::tui::tab::TabEntry;
-
-#[derive(Debug)]
-struct AppParentSink {
-    aid: AgentId,
-    tx: Sender<AppEvent>,
-}
-
-#[async_trait::async_trait]
-impl ParentSink for AppParentSink {
-    async fn send(
-        &self,
-        event: ParentEvent,
-    ) -> Result<()> {
-        self.tx
-            .send(AppEvent::ParentEvent(self.aid.clone(), event))
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-    }
-
-    fn sibling(
-        &self,
-        aid: AgentId,
-    ) -> ParentHandle {
-        Box::new(Self {
-            aid,
-            tx: self.tx.clone(),
-        })
-    }
-}
 
 impl<'a> App<'a> {
     /// rebuild tablist widget
@@ -58,13 +25,13 @@ impl<'a> App<'a> {
     pub async fn load_tabs(&mut self) -> Result<()> {
         let state = self.load_app_state().await?;
         let mut tabs = IndexMap::new();
-        for aid in &state.primary_agents {
+        for aid in &state.visible_order {
             tabs.insert(aid.clone(), TabEntry::Loading);
         }
         self.tabs = tabs;
         self.rebuild_tablist();
 
-        for aid in state.primary_agents {
+        for aid in state.visible_order {
             self.tx.send(AppEvent::LoadAgent(aid)).await?;
         }
         Ok(())
@@ -93,12 +60,9 @@ impl<'a> App<'a> {
         &self,
         aid: AgentId,
     ) -> Result<()> {
-        let parent = Box::new(AppParentSink {
-            aid: aid.clone(),
-            tx: self.tx.clone(),
-        });
-        let agent = Agent::load(self.project.clone(), parent, aid).await?;
-        agent.spawn();
+        let agent = Agent::load(self.project.clone(), self.router.clone(), aid.clone()).await?;
+        let runtime = agent.spawn();
+        self.router.register(aid, runtime).await?;
         Ok(())
     }
 
@@ -106,26 +70,36 @@ impl<'a> App<'a> {
         &self,
         aid: AgentId,
     ) -> Result<()> {
-        let parent = Box::new(AppParentSink {
-            aid: aid.clone(),
-            tx: self.tx.clone(),
-        });
-
         let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
         let instructions = self.project.instructions(&aid).await?;
-        let agent = Agent::new(self.project.clone(), parent, aid, commit, instructions).await?;
-        agent.spawn();
+        let agent = Agent::new(
+            self.project.clone(),
+            self.router.clone(),
+            aid.clone(),
+            commit,
+            instructions,
+        )
+        .await?;
+        let runtime = agent.spawn();
+        self.router.register(aid, runtime).await?;
         Ok(())
     }
 
     pub fn handle_started(
         &mut self,
-        aid: AgentId,
-        agent: AgentHandle,
+        aid: &AgentId,
+        state: AgentState,
     ) -> Result<()> {
-        let tab = Tab::new(self.tx.clone(), aid.clone(), agent, &self.project)?;
-        self.tabs.insert(aid, TabEntry::Ready(tab));
+        // ignore subagents (no Loading slot reserved)
+        let Some(entry) = self.tabs.get_mut(aid) else {
+            return Ok(());
+        };
+        if !matches!(entry, TabEntry::Loading) {
+            return Ok(());
+        }
+        let tab = Tab::new(self.router.clone(), aid.clone(), state, &self.project)?;
+        *entry = TabEntry::Ready(tab);
         self.rebuild_tablist();
         Ok(())
     }
@@ -137,9 +111,8 @@ impl<'a> App<'a> {
         let allocated = AgentId::new(&self.project).await?;
         self.insert_loading_tab(allocated.clone());
 
-        self.tab_mut_by_aid(&original)?
-            .agent
-            .send(ExternalEvent::DuplicateRequest(allocated))
+        self.router
+            .forward(original, ExternalEvent::DuplicateRequest(allocated))
             .await?;
         Ok(())
     }
@@ -159,8 +132,8 @@ impl<'a> App<'a> {
         let Some((aid, TabEntry::Ready(tab))) = self.tabs.shift_remove_index(idx) else {
             return Ok(());
         };
-        let commit = tab.agent.state.context.commit.clone();
-        tab.agent.abort.abort();
+        let commit = tab.state.context.commit.clone();
+        self.router.delete(aid.clone()).await?;
         self.project.delete_agent(&aid, &commit).await?;
         self.rebuild_tablist();
         Ok(())

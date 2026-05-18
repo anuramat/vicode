@@ -17,6 +17,8 @@ use tokio::time::Instant;
 
 use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
+use crate::agent::router::AgentRouter;
+use crate::agent::router::AgentRouterHandle;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;
@@ -55,6 +57,7 @@ pub struct App<'a> {
 
     pub rx: Receiver<AppEvent>,
     pub tx: Sender<AppEvent>,
+    pub router: AgentRouterHandle,
 
     /// hide tool calls, etc
     pub ctx: RenderContext,
@@ -73,8 +76,9 @@ pub struct App<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AppState {
-    primary_agents: Vec<AgentId>,
+    visible_order: Vec<AgentId>,
 }
 
 const CHANNEL_CAPACITY: usize = 100;
@@ -85,6 +89,7 @@ impl App<'_> {
     fn new(project: Project) -> Self {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
+        let router = AgentRouter::spawn(tx.clone(), project.clone());
 
         let project_name = project.name();
         let ctx = project.config().render;
@@ -98,6 +103,7 @@ impl App<'_> {
             dirty: true,
             tx,
             rx,
+            router,
             should_exit: false,
             tablist: TabList::default(),
             tabs: IndexMap::new(),
@@ -107,7 +113,7 @@ impl App<'_> {
 
     pub fn state(&self) -> AppState {
         AppState {
-            primary_agents: self.tabs.keys().cloned().collect(),
+            visible_order: self.tabs.keys().cloned().collect(),
         }
     }
 

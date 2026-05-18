@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyEvent;
@@ -7,7 +9,6 @@ use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
 use crate::llm::history::message::Message;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
@@ -20,12 +21,8 @@ fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem> {
         .collect()
 }
 
-fn tracked_files(
-    project: &Project,
-    aid: &crate::agent::id::AgentId,
-) -> Result<Vec<String>> {
-    let path = project.agent_workdir(aid);
-    let repo = Repository::open(path)?;
+fn tracked_files(workdir: &Path) -> Result<Vec<String>> {
+    let repo = Repository::open(workdir)?;
     let index = repo.index()?;
     index
         .iter()
@@ -35,19 +32,19 @@ fn tracked_files(
 
 impl Tab<'_> {
     pub async fn cycle_assistant(
-        &mut self,
+        &self,
         prev: bool,
     ) -> Result<()> {
-        // XXX replace this with an externalEvent
-        if !self.agent.state.status.idle() {
+        if !self.state.status.idle() {
             return Ok(());
         }
         let pool = ASSISTANT_POOL.get().unwrap();
         let id = pool
-            .switch_assistant(&self.agent.state.assistant.id, prev)
+            .switch_assistant(&self.state.assistant.id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
-        self.agent.state.assistant = pool.assistant(&id)?;
-        self.agent.send(ExternalEvent::SetAssistant(id)).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::SetAssistant(id))
+            .await?;
         Ok(())
     }
 
@@ -61,7 +58,8 @@ impl Tab<'_> {
     }
 
     pub fn refresh_file_completion(&mut self) -> Result<()> {
-        let paths = tracked_files(&self.project, &self.aid)?;
+        let workdir = self.project.agent_workdir(&self.aid);
+        let paths = tracked_files(&workdir)?;
         self.input
             .completion
             .source_mut()
@@ -97,12 +95,16 @@ impl Tab<'_> {
             generation: self.history().generation(),
         };
 
-        self.agent.send(ExternalEvent::Submit(prompt)).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::Submit(prompt))
+            .await?;
         Ok(())
     }
 
     pub async fn retry(&self) -> Result<()> {
-        self.agent.send(ExternalEvent::Retry).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::Retry)
+            .await?;
         Ok(())
     }
 
@@ -116,12 +118,16 @@ impl Tab<'_> {
         } else {
             self.history().state().len()
         };
-        self.agent.send(ExternalEvent::Compact(n)).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::Compact(n))
+            .await?;
         Ok(())
     }
 
     pub async fn abort(&self) -> Result<()> {
-        self.agent.send(ExternalEvent::Abort).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::Abort)
+            .await?;
         Ok(())
     }
 
@@ -132,7 +138,9 @@ impl Tab<'_> {
         if n > self.history().state().len() {
             return Ok(());
         }
-        self.agent.send(ExternalEvent::Undo(n)).await?;
+        self.router
+            .forward(self.aid.clone(), ExternalEvent::Undo(n))
+            .await?;
         Ok(())
     }
 

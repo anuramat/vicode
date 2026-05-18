@@ -5,16 +5,16 @@ pub mod update;
 use std::fmt::Debug;
 
 use anyhow::Result;
-use tokio::sync::mpsc::Sender;
 
-use crate::agent::AgentHandle;
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
+use crate::agent::router::AgentRouterHandle;
 use crate::forward;
 use crate::llm::history::History;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
-use crate::tui::app::AppEvent;
 use crate::tui::command::parse_arg;
+
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;
@@ -34,9 +34,9 @@ pub enum Focus {
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    pub tx: Sender<AppEvent>, // TODO we can ALMOST drop this
+    pub router: AgentRouterHandle,
     pub aid: AgentId,
-    pub agent: AgentHandle,
+    pub state: AgentState,
     pub project: Project,
 
     pub scroll: ScrollElements,
@@ -61,7 +61,7 @@ impl TabEntry<'_> {
     ) -> String {
         let prefix = match self {
             Self::Loading => "*",
-            Self::Ready(tab) => tab.agent.state.status.label(),
+            Self::Ready(tab) => tab.state.status.label(),
         };
         format!("[{prefix}]{aid}")
     }
@@ -79,19 +79,19 @@ impl TabEntry<'_> {
 
 impl Tab<'_> {
     forward! {
-        history: History = self.agent.state.context.history;
+        history: History = self.state.context.history;
     }
 
     pub fn new(
-        tx: Sender<AppEvent>,
+        router: AgentRouterHandle,
         aid: AgentId,
-        agent: AgentHandle,
+        state: AgentState,
         project: &Project,
     ) -> Result<Self> {
         let mut tab = Self {
-            tx,
+            router,
             aid,
-            agent,
+            state,
             project: project.clone(),
             scroll: ScrollElements::default(),
             input: MessageInput {
