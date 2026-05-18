@@ -5,3 +5,4 @@
 /perf.data.old
 **/*.rs.bk
 *.pending-snap
+/result*
