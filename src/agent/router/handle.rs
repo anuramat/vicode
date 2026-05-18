@@ -1,22 +1,14 @@
-use anyhow::Context;
 use anyhow::Result;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
 use super::AgentRouter;
-use super::AgentRouterHandle;
 use super::RouterCommand;
-use crate::agent::Agent;
-use crate::agent::AgentContext;
+use super::RuntimeHandle;
 use crate::agent::AgentId;
-use crate::agent::AgentState;
-use crate::agent::AgentStatus;
 use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::TurnResult;
-use crate::llm::history::HistoryGeneration;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::Project;
+use crate::agent::handle::UserPrompt;
 
 impl AgentRouter {
     pub async fn handle(
@@ -24,127 +16,87 @@ impl AgentRouter {
         cmd: RouterCommand,
     ) {
         match cmd {
-            RouterCommand::Register { aid, runtime } => {
-                if let Some(prev) = self.runtimes.insert(aid, runtime) {
-                    prev.abort.abort();
-                }
-            }
-            RouterCommand::Forward { aid, event } => {
-                let Some(runtime) = self.runtimes.get(&aid) else {
-                    tracing::error!("forward: unknown agent {aid}");
-                    return;
-                };
-                // clone tx so we don't hold &self.runtimes across the await
-                let tx = runtime.tx.clone();
-                if let Err(e) = tx.send(AgentEvent::External(event)).await {
-                    self.runtimes.remove(&aid);
-                    tracing::error!("forward to {aid} failed: {e}");
-                }
-            }
+            RouterCommand::Register { aid, runtime } => self.handle_register(aid, runtime),
+            RouterCommand::Forward { aid, event } => self.handle_forward(aid, event).await,
             RouterCommand::Submit { aid, prompt, done } => {
-                let Some(runtime) = self.runtimes.get(&aid) else {
-                    drop(done.send(TurnResult::Failed(format!("unknown agent {aid}"))));
-                    return;
-                };
-                // clone tx so we don't hold &self.runtimes across the await
-                let tx = runtime.tx.clone();
-                let send = tx
-                    .send(AgentEvent::External(ExternalEvent::Submit(
-                        prompt,
-                        Some(done),
-                    )))
-                    .await;
-                if let Err(e) = send {
-                    self.runtimes.remove(&aid);
-                    let AgentEvent::External(ExternalEvent::Submit(_, Some(done))) = e.0 else {
-                        unreachable!()
-                    };
-                    drop(done.send(TurnResult::Failed("runtime mailbox closed".into())));
-                }
+                self.handle_submit(aid, prompt, done).await;
             }
             RouterCommand::SpawnSubagent {
                 parent,
                 inherit_context,
                 reply,
-            } => {
-                self.dispatch_spawn_subagent(parent, inherit_context, reply);
-            }
-            RouterCommand::Delete { aid, done } => {
-                let result = if let Some(runtime) = self.runtimes.remove(&aid) {
-                    runtime.abort.abort();
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("unknown agent {aid}"))
-                };
-                drop(done.send(result));
-            }
+            } => self.dispatch_spawn_subagent(parent, inherit_context, reply),
+            RouterCommand::Delete { aid, done } => self.handle_delete(&aid, done),
         }
     }
 
-    /// Dispatch the rest of subagent spawning to a tokio task so the router
-    /// loop isn't blocked awaiting the parent's snapshot reply. Registration
-    /// of the child runtime goes back through `RouterCommand::Register`, and
-    /// the caller's oneshot only fires after registration is queued — so a
-    /// follow-up `Submit` from the caller can't race ahead of `Register`.
-    fn dispatch_spawn_subagent(
-        &self,
-        parent_aid: AgentId,
-        inherit_context: bool,
-        reply: oneshot::Sender<Result<(AgentId, HistoryGeneration)>>,
+    fn handle_register(
+        &mut self,
+        aid: AgentId,
+        runtime: RuntimeHandle,
     ) {
-        let Some(runtime) = self.runtimes.get(&parent_aid) else {
-            drop(reply.send(Err(anyhow::anyhow!("unknown agent {parent_aid}"))));
+        if let Some(prev) = self.runtimes.insert(aid, runtime) {
+            prev.abort.abort();
+        }
+    }
+
+    async fn handle_forward(
+        &mut self,
+        aid: AgentId,
+        event: ExternalEvent,
+    ) {
+        let Some(runtime) = self.runtimes.get(&aid) else {
+            tracing::error!("forward: unknown agent {aid}");
             return;
         };
-        let parent_tx = runtime.tx.clone();
-        let router = self.handle.clone();
-        let project = self.project.clone();
-        tokio::spawn(async move {
-            let result =
-                spawn_subagent_async(parent_aid, parent_tx, router, project, inherit_context).await;
-            drop(reply.send(result));
-        });
+        // clone tx so we don't hold &self.runtimes across the await
+        let tx = runtime.tx.clone();
+        if let Err(e) = tx.send(AgentEvent::External(event)).await {
+            self.runtimes.remove(&aid);
+            tracing::error!("forward to {aid} failed: {e}");
+        }
     }
-}
 
-async fn spawn_subagent_async(
-    parent_aid: AgentId,
-    parent_tx: Sender<AgentEvent>,
-    router: AgentRouterHandle,
-    project: Project,
-    inherit_context: bool,
-) -> Result<(AgentId, HistoryGeneration)> {
-    let (snap_tx, snap_rx) = oneshot::channel();
-    parent_tx.send(AgentEvent::SnapshotRequest(snap_tx)).await?;
-    let snap = snap_rx.await?;
-    anyhow::ensure!(
-        snap.max_depth > 0,
-        "parent {parent_aid} has exhausted its subagent depth budget"
-    );
-    let assistant = ASSISTANT_POOL
-        .get()
-        .context("assistant pool not initialized")?
-        .next_subagent(&snap.assistant_id)?;
-    let history = snap.history.subagent(inherit_context);
-    let generation = history.generation();
-    let state = AgentState {
-        status: AgentStatus::default(),
-        assistant,
-        max_depth: snap.max_depth - 1,
-        context: AgentContext {
-            commit: snap.commit.clone(),
-            history,
-        },
-    };
-    let child_aid = AgentId::new(&project).await?;
-    project
-        .duplicate_agent_workdir(&parent_aid, &child_aid, &snap.commit, false)
-        .await?;
-    let agent = Agent::from_state(project, router.clone(), child_aid.clone(), state);
-    agent.save().await?;
-    let runtime = agent.spawn();
-    router.register(child_aid.clone(), runtime).await?;
-    Ok((child_aid, generation))
+    async fn handle_submit(
+        &mut self,
+        aid: AgentId,
+        prompt: UserPrompt,
+        done: oneshot::Sender<TurnResult>,
+    ) {
+        let Some(runtime) = self.runtimes.get(&aid) else {
+            drop(done.send(TurnResult::Failed(format!("unknown agent {aid}"))));
+            return;
+        };
+        // clone tx so we don't hold &self.runtimes across the await
+        let tx = runtime.tx.clone();
+        let send = tx
+            .send(AgentEvent::External(ExternalEvent::Submit(
+                prompt,
+                Some(done),
+            )))
+            .await;
+        if let Err(e) = send {
+            self.runtimes.remove(&aid);
+            let AgentEvent::External(ExternalEvent::Submit(_, Some(done))) = e.0 else {
+                unreachable!()
+            };
+            drop(done.send(TurnResult::Failed("runtime mailbox closed".into())));
+        }
+    }
+
+    fn handle_delete(
+        &mut self,
+        aid: &AgentId,
+        done: oneshot::Sender<Result<()>>,
+    ) {
+        let result = if let Some(runtime) = self.runtimes.remove(aid) {
+            runtime.abort.abort();
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("unknown agent {aid}"))
+        };
+        drop(done.send(result));
+    }
 }
 
 #[cfg(test)]
@@ -155,11 +107,13 @@ mod tests {
     use tokio::sync::mpsc::Receiver;
     use tokio::sync::mpsc::channel;
 
+    use super::super::AgentRouterHandle;
     use super::super::RuntimeHandle;
     use super::super::SubagentSpawnSnapshot;
     use super::*;
-    use crate::agent::handle::UserPrompt;
     use crate::llm::history::History;
+    use crate::llm::provider::assistant::ASSISTANT_POOL;
+    use crate::project::Project;
     use crate::project::layout::LayoutTrait;
 
     fn fake_runtime() -> (RuntimeHandle, Receiver<AgentEvent>) {

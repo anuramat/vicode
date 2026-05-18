@@ -18,6 +18,7 @@ use crate::project::Project;
 use crate::tui::app::AppEvent;
 
 mod handle;
+mod spawn;
 
 const CHANNEL_CAPACITY: usize = 100;
 
