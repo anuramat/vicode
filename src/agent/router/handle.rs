@@ -116,11 +116,8 @@ async fn spawn_subagent_async(
     inherit_context: bool,
 ) -> Result<(AgentId, HistoryGeneration)> {
     let (snap_tx, snap_rx) = oneshot::channel();
-    parent_tx
-        .send(AgentEvent::SnapshotRequest(snap_tx))
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let snap = snap_rx.await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    parent_tx.send(AgentEvent::SnapshotRequest(snap_tx)).await?;
+    let snap = snap_rx.await?;
     let assistant = ASSISTANT_POOL
         .get()
         .context("assistant pool not initialized")?

@@ -117,8 +117,8 @@ impl Agent {
                 self.id.clone(),
                 event,
             ))
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .await?;
+        Ok(())
     }
 }
 

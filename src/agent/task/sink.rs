@@ -61,7 +61,7 @@ impl TaskHandle {
                 self.generation,
                 event,
             ))
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .await?;
+        Ok(())
     }
 }

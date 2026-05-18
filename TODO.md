@@ -9,11 +9,8 @@
 - grep for TODO XXX PERF TEST
 - make sure our prompting makes sense (check for inconsistencies)
 - cleanup logic for stale agents/worktrees/etc
-- `if let Some(x) = ... { x } else { return }` into `let Some(x) = ...`
-  - maybe there's a clippy lint? or use astgrep
 - check that tool call timing records execution start+end
 - count tool schema in the token usage
-- replace .map_err with .context()
 
 # UI
 
