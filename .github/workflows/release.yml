@@ -1,0 +1,72 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            package: vicode-arx
+            asset: vicode-x86_64-linux.arx
+          - os: macos-latest
+            package: vicode-unwrapped
+            asset: vicode-aarch64-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - name: Flake check
+        run: nix flake check --print-build-logs
+      - name: Build
+        run: nix build --print-build-logs ".#${{ matrix.package }}"
+      - name: Stage asset
+        run: |
+          mkdir -p dist
+          target="dist/${{ matrix.asset }}"
+          if [ -f result ]; then
+            cp -L result "$target"
+          elif [ -f result/bin/vc ]; then
+            cp -L result/bin/vc "$target"
+          else
+            echo "Unexpected build output:" >&2
+            ls -laR result >&2
+            exit 1
+          fi
+          chmod +x "$target"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - id: tag
+        run: echo "tag=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          files: dist/*
+          fail_on_unmatched_files: true
