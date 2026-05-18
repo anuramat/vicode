@@ -3,27 +3,6 @@ use futures::future::join_all;
 
 use super::SubagentHandle;
 
-#[cfg(test)]
-impl SubagentHandle {
-    /// Build a handle with a synthetic turn channel — used by tests that need
-    /// to drive `run_replicas` outcomes without running a real subagent loop.
-    pub fn new_for_test(
-        id: crate::agent::id::AgentId,
-        parent_aid: crate::agent::id::AgentId,
-        project: crate::project::Project,
-        router: crate::agent::router::AgentRouterHandle,
-        turn: tokio::sync::oneshot::Receiver<crate::agent::handle::TurnResult>,
-    ) -> Self {
-        Self {
-            id,
-            parent_aid,
-            project,
-            router,
-            turn,
-        }
-    }
-}
-
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.
 Please review them and provide a single, consolidated implementation that combines the best aspects
 of each. Ensure that the final implementation is efficient, well-structured, and adheres to best
@@ -35,11 +14,49 @@ pub struct ReplicaResult {
     pub report: String,
 }
 
+pub async fn run_replicas(handles: Vec<SubagentHandle>) -> Result<ReplicaResult> {
+    let entries: Vec<String> = join_all(handles.into_iter().map(|h| async move {
+        let aid = h.id.clone();
+        match h.wait().await {
+            // TODO change format
+            Ok(r) => format!(
+                "<implementation id={aid}>\n{}\n```diff\n{}```\n</implementation>",
+                r.output, r.diff
+            ),
+            Err(e) => format!("<implementation id={aid}>\nerror: {e}\n</implementation>"),
+        }
+    }))
+    .await;
+    Ok(ReplicaResult {
+        report: format!("{}{}", REPORT_HEADER_PROMPT, entries.join("\n\n")),
+    })
+}
+
 /// Wait for every replica even if some fail; each `SubagentHandle::wait`
 /// removes its runtime from the router on completion, so a failing replica no
 /// longer drops sibling handles unwaited.
 #[cfg(test)]
 mod tests {
+    impl SubagentHandle {
+        /// Build a handle with a synthetic turn channel — used by tests that need
+        /// to drive `run_replicas` outcomes without running a real subagent loop.
+        pub fn new_for_test(
+            id: crate::agent::id::AgentId,
+            parent_aid: crate::agent::id::AgentId,
+            project: crate::project::Project,
+            router: crate::agent::router::AgentRouterHandle,
+            turn: tokio::sync::oneshot::Receiver<crate::agent::handle::TurnResult>,
+        ) -> Self {
+            Self {
+                id,
+                parent_aid,
+                project,
+                router,
+                turn,
+            }
+        }
+    }
+
     use futures::future::AbortHandle;
     use tokio::sync::mpsc::channel;
     use tokio::sync::oneshot;
@@ -96,22 +113,4 @@ mod tests {
             assert!(router.delete(aid).await.is_err());
         }
     }
-}
-
-pub async fn run_replicas(handles: Vec<SubagentHandle>) -> Result<ReplicaResult> {
-    let entries: Vec<String> = join_all(handles.into_iter().map(|h| async move {
-        let aid = h.id.clone();
-        match h.wait().await {
-            // TODO change format
-            Ok(r) => format!(
-                "<implementation id={aid}>\n{}\n```diff\n{}```\n</implementation>",
-                r.output, r.diff
-            ),
-            Err(e) => format!("<implementation id={aid}>\nerror: {e}\n</implementation>"),
-        }
-    }))
-    .await;
-    Ok(ReplicaResult {
-        report: format!("{}{}", REPORT_HEADER_PROMPT, entries.join("\n\n")),
-    })
 }

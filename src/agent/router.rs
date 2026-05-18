@@ -180,24 +180,6 @@ impl AgentRouter {
         handle
     }
 
-    /// Construct a handle backed by dead-letter channels — for tests that
-    /// instantiate Agents without running a real router/app.
-    #[cfg(test)]
-    pub fn test_handle() -> AgentRouterHandle {
-        let (app_tx, app_rx) = channel(CHANNEL_CAPACITY);
-        std::mem::forget(app_rx);
-        Self::test_handle_with_app_tx(app_tx)
-    }
-
-    /// Like `test_handle` but caller controls the app channel so test code can
-    /// observe `ParentEvent`s emitted by the agent.
-    #[cfg(test)]
-    pub fn test_handle_with_app_tx(app_tx: Sender<AppEvent>) -> AgentRouterHandle {
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        std::mem::forget(rx);
-        AgentRouterHandle { tx, app_tx }
-    }
-
     async fn run(mut self) {
         while let Some(cmd) = self.rx.recv().await {
             self.handle(cmd).await;
@@ -338,6 +320,24 @@ mod tests {
 
     use super::*;
     use crate::project::layout::LayoutTrait;
+
+    impl AgentRouter {
+        /// Construct a handle backed by dead-letter channels — for tests that
+        /// instantiate Agents without running a real router/app.
+        pub fn test_handle() -> AgentRouterHandle {
+            let (app_tx, app_rx) = channel(CHANNEL_CAPACITY);
+            std::mem::forget(app_rx);
+            Self::test_handle_with_app_tx(app_tx)
+        }
+
+        /// Like `test_handle` but caller controls the app channel so test code can
+        /// observe `ParentEvent`s emitted by the agent.
+        pub fn test_handle_with_app_tx(app_tx: Sender<AppEvent>) -> AgentRouterHandle {
+            let (tx, rx) = channel(CHANNEL_CAPACITY);
+            std::mem::forget(rx);
+            AgentRouterHandle { tx, app_tx }
+        }
+    }
 
     fn fake_runtime() -> (RuntimeHandle, Receiver<AgentEvent>) {
         let (tx, rx) = channel(8);
@@ -496,7 +496,13 @@ mod tests {
         let parent_workdir = project.agent_workdir(&parent_aid);
         tokio::fs::create_dir_all(&parent_workdir).await.unwrap();
         let repo = git2::Repository::open(project.root()).unwrap();
-        let commit_str = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let commit_str = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
 
         let (app_tx, _app_rx) = channel(8);
         let handle = AgentRouter::spawn(app_tx, project.clone());
@@ -521,8 +527,10 @@ mod tests {
             }));
         });
 
-        let (child_aid, _generation) =
-            handle.spawn_subagent(parent_aid.clone(), false).await.unwrap();
+        let (child_aid, _generation) = handle
+            .spawn_subagent(parent_aid.clone(), false)
+            .await
+            .unwrap();
         parent_task.await.unwrap();
 
         assert_ne!(child_aid, parent_aid);
