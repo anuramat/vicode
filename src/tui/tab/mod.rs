@@ -14,7 +14,6 @@ use crate::llm::history::History;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::tui::command::parse_arg;
-
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::info::InfoWidget;

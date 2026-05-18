@@ -239,13 +239,7 @@ mod tests {
                 history: History::new("".into()),
             },
         };
-        let mut tab = Tab::new(
-            AgentRouter::test_handle(),
-            aid,
-            state,
-            &project,
-        )
-        .unwrap();
+        let mut tab = Tab::new(AgentRouter::test_handle(), aid, state, &project).unwrap();
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',

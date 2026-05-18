@@ -48,8 +48,7 @@ macro_rules! declare_tool {
         #[allow(dead_code)]
         pub const TOOL_NAME: &str = $name;
 
-        pub type $call =
-            $crate::agent::tool::generic::GenericTask<$arguments, $meta, $result>;
+        pub type $call = $crate::agent::tool::generic::GenericTask<$arguments, $meta, $result>;
 
         #[typetag::serde(name = $name)]
         impl $crate::agent::tool::traits::ToolCallSerializable for $call {}

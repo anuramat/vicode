@@ -339,7 +339,8 @@ impl Agent {
         }
         let mut call = call.clone();
         let generation = self.history().generation();
-        let ctx = ToolRuntimeContext::new(self.id.clone(), self.project.clone(), self.router.clone());
+        let ctx =
+            ToolRuntimeContext::new(self.id.clone(), self.project.clone(), self.router.clone());
         self.tskmgr
             .spawn(self.tx.clone(), generation, move |task| async move {
                 let handle = TurnHandle {

@@ -144,7 +144,9 @@ mod tests {
             router.clone(),
             turn_rx,
         );
-        turn_tx.send(TurnResult::Failed("live boom".into())).unwrap();
+        turn_tx
+            .send(TurnResult::Failed("live boom".into()))
+            .unwrap();
 
         let result = run_replicas(vec![handle], vec!["spawn boom".into()])
             .await

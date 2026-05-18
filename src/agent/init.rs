@@ -168,7 +168,13 @@ mod tests {
         let parent_workdir = project.agent_workdir(&parent_aid);
         tokio::fs::create_dir_all(&parent_workdir).await.unwrap();
         let repo = git2::Repository::open(project.root()).unwrap();
-        let commit = repo.head().unwrap().peel_to_commit().unwrap().id().to_string();
+        let commit = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
 
         let assistant = ASSISTANT_POOL.get().unwrap().assistant("test").unwrap();
         let state = AgentState {
