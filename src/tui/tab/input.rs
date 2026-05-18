@@ -96,7 +96,7 @@ impl Tab<'_> {
         };
 
         self.router
-            .forward(self.aid.clone(), ExternalEvent::Submit(prompt))
+            .forward(self.aid.clone(), ExternalEvent::Submit(prompt, None))
             .await?;
         Ok(())
     }

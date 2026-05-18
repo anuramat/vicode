@@ -58,8 +58,7 @@ pub enum ExternalEvent {
     Abort,
     Undo(usize), // TODO maybe this should send generation or whatever
     SetAssistant(String),
-    Submit(UserPrompt),
-    SubmitWithCompletion(UserPrompt, oneshot::Sender<TurnResult>),
+    Submit(UserPrompt, Option<oneshot::Sender<TurnResult>>),
     DuplicateRequest(AgentId),
 }
 
@@ -186,11 +185,8 @@ impl Agent {
                 self.idle()?;
                 self.try_duplicate(aid).await?;
             }
-            Submit(prompt) => {
-                self.start_submit(prompt, None).await?;
-            }
-            SubmitWithCompletion(prompt, done) => {
-                self.start_submit(prompt, Some(done)).await?;
+            Submit(prompt, done) => {
+                self.start_submit(prompt, done).await?;
             }
             Compact(n) => {
                 self.idle()?;
@@ -566,13 +562,13 @@ mod tests {
         let (done_tx, done_rx) = oneshot::channel();
         let stale_generation = agent.history().generation() + 1;
         let result = agent
-            .handle(AgentEvent::External(ExternalEvent::SubmitWithCompletion(
+            .handle(AgentEvent::External(ExternalEvent::Submit(
                 UserPrompt {
                     text: "hi".into(),
                     multiplier: 1,
                     generation: stale_generation,
                 },
-                done_tx,
+                Some(done_tx),
             )))
             .await;
         assert!(result.is_err());

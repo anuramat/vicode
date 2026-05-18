@@ -36,7 +36,7 @@ pub struct Agent {
     pub state: AgentState,
     /// router handle for spawning/submitting siblings and children
     pub router: AgentRouterHandle,
-    /// pending oneshot for the current turn (set by `SubmitWithCompletion`)
+    /// pending oneshot for the current turn (set by `Submit` callers that want completion)
     pub pending_done: Option<oneshot::Sender<TurnResult>>,
     // agent event loop
     pub tx: Sender<AgentEvent>,

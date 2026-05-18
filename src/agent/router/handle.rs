@@ -50,14 +50,14 @@ impl AgentRouter {
                 // clone tx so we don't hold &self.runtimes across the await
                 let tx = runtime.tx.clone();
                 let send = tx
-                    .send(AgentEvent::External(ExternalEvent::SubmitWithCompletion(
-                        prompt, done,
+                    .send(AgentEvent::External(ExternalEvent::Submit(
+                        prompt,
+                        Some(done),
                     )))
                     .await;
                 if let Err(e) = send {
                     self.runtimes.remove(&aid);
-                    let AgentEvent::External(ExternalEvent::SubmitWithCompletion(_, done)) = e.0
-                    else {
+                    let AgentEvent::External(ExternalEvent::Submit(_, Some(done))) = e.0 else {
                         unreachable!()
                     };
                     drop(done.send(TurnResult::Failed("runtime mailbox closed".into())));
