@@ -9,8 +9,6 @@ use crate::project::Project;
 use crate::project::layout::LayoutTrait;
 use crate::sandbox::SandboxRunner;
 
-/// Runtime view a tool sees when it prepares or executes. Owned so tools can
-/// keep a copy past prepare without bumping into the agent borrow.
 #[derive(Clone, Debug)]
 pub struct ToolRuntimeContext {
     pub agent_id: AgentId,

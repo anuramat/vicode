@@ -33,8 +33,6 @@ pub struct SubagentHandle {
 
 impl SubagentHandle {
     /// Await the subagent's turn and unconditionally delete its router entry.
-    /// The runtime is removed even on error so callers can't leak it by
-    /// failing to handle a `Failed`/`Aborted` outcome.
     pub async fn wait(self) -> Result<SubagentResult> {
         let aid = self.id.clone();
         let result = self.turn.await.context("subagent channel closed");
@@ -49,10 +47,8 @@ impl SubagentHandle {
     }
 }
 
-/// Spawn a subagent under `parent_aid` via the router and submit `prompt`.
+/// Spawn a subagent submit `prompt`.
 /// Returns a handle whose oneshot fires when the subagent's turn completes.
-/// The caller MUST drive [`SubagentHandle::wait`] (or otherwise call
-/// `router.delete`) to avoid leaking the spawned runtime.
 pub async fn spawn_and_submit(
     router: &AgentRouterHandle,
     project: &Project,
