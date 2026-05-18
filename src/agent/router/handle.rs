@@ -7,8 +7,6 @@ use super::RuntimeHandle;
 use crate::agent::AgentId;
 use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::TurnResult;
-use crate::agent::handle::UserPrompt;
 
 impl AgentRouter {
     pub async fn handle(
@@ -18,9 +16,6 @@ impl AgentRouter {
         match cmd {
             RouterCommand::Register { aid, runtime } => self.handle_register(aid, runtime),
             RouterCommand::Forward { aid, event } => self.handle_forward(aid, event).await,
-            RouterCommand::Submit { aid, prompt, done } => {
-                self.handle_submit(aid, prompt, done).await;
-            }
             RouterCommand::SpawnSubagent {
                 parent,
                 inherit_context,
@@ -55,32 +50,6 @@ impl AgentRouter {
         }
     }
 
-    async fn handle_submit(
-        &mut self,
-        aid: AgentId,
-        prompt: UserPrompt,
-        done: oneshot::Sender<TurnResult>,
-    ) {
-        let Some(runtime) = self.runtimes.get(&aid) else {
-            drop(done.send(TurnResult::Failed(format!("unknown agent {aid}"))));
-            return;
-        };
-        let send = runtime
-            .tx
-            .send(AgentEvent::External(ExternalEvent::Submit(
-                prompt,
-                Some(done),
-            )))
-            .await;
-        if let Err(e) = send {
-            self.runtimes.remove(&aid);
-            let AgentEvent::External(ExternalEvent::Submit(_, Some(done))) = e.0 else {
-                unreachable!()
-            };
-            drop(done.send(TurnResult::Failed("runtime mailbox closed".into())));
-        }
-    }
-
     fn handle_delete(
         &mut self,
         aid: &AgentId,
@@ -108,6 +77,7 @@ mod tests {
     use super::super::RuntimeHandle;
     use super::super::SubagentSpawnSnapshot;
     use super::*;
+    use crate::agent::handle::UserPrompt;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::ASSISTANT_POOL;
     use crate::project::Project;
@@ -133,7 +103,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_to_dead_runtime_clears_entry_and_fires_failed() {
+    async fn submit_to_dead_runtime_clears_entry_and_closes_oneshot() {
         let mut router = empty_router();
         let aid = AgentId::from("dead-submit".to_string());
         let (runtime, rx) = fake_runtime();
@@ -142,18 +112,20 @@ mod tests {
 
         let (done, done_rx) = oneshot::channel();
         router
-            .handle(RouterCommand::Submit {
+            .handle(RouterCommand::Forward {
                 aid: aid.clone(),
-                prompt: UserPrompt {
-                    text: "".into(),
-                    multiplier: 1,
-                    generation: 0,
-                },
-                done,
+                event: ExternalEvent::Submit(
+                    UserPrompt {
+                        text: "".into(),
+                        multiplier: 1,
+                        generation: 0,
+                    },
+                    Some(done),
+                ),
             })
             .await;
 
-        assert!(matches!(done_rx.await.unwrap(), TurnResult::Failed(_)));
+        assert!(done_rx.await.is_err());
         assert!(!router.runtimes.contains_key(&aid));
     }
 

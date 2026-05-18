@@ -56,11 +56,6 @@ pub enum RouterCommand {
         aid: AgentId,
         event: ExternalEvent,
     },
-    Submit {
-        aid: AgentId,
-        prompt: UserPrompt,
-        done: oneshot::Sender<TurnResult>,
-    },
     SpawnSubagent {
         parent: AgentId,
         inherit_context: bool,
@@ -138,7 +133,10 @@ impl AgentRouterHandle {
     ) -> Result<oneshot::Receiver<TurnResult>> {
         let (done, rx) = oneshot::channel();
         self.tx
-            .send(RouterCommand::Submit { aid, prompt, done })
+            .send(RouterCommand::Forward {
+                aid,
+                event: ExternalEvent::Submit(prompt, Some(done)),
+            })
             .await?;
         Ok(rx)
     }
