@@ -217,6 +217,7 @@
               command = lib.getExe pkgs.tombi;
               options = [
                 "format"
+                "--offline"
                 "--"
               ];
               includes = [ "*.toml" ];
