@@ -12,7 +12,19 @@ use crate::config::vec;
 use crate::deps;
 
 fn default_stages() -> Vec<Stage> {
-    let args = vec(["--die-with-parent", "--proc", "/proc", "--dev", "/dev"]);
+    let args = vec([
+        "--die-with-parent",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--dev-bind-try",
+        "/dev/dri",
+        "/dev/dri",
+        "--dev-bind-try",
+        "/dev/kfd",
+        "/dev/kfd",
+    ]);
     let ro = expand_vec([
         "/nix",
         "/bin",
@@ -20,26 +32,39 @@ fn default_stages() -> Vec<Stage> {
         "/etc",
         "/lib",
         "/lib64",
+        "/sys",
         "/run/current-system",
         "/run/systemd/resolve/stub-resolv.conf",
-        "$XDG_CONFIG_HOME",
         "~/.bashrc",
         "~/.bash_profile",
         "~/.profile",
     ]);
-    let tmpfs = expand_vec([
-        "/tmp",
-        "$TMPDIR",
-        "$XDG_CACHE_HOME",
-        "$XDG_STATE_HOME",
-        "$XDG_DATA_HOME",
-    ]);
-    vec![Stage {
+    let tmpfs = expand_vec(["/tmp", "$TMPDIR"]);
+    let mut result = vec![Stage {
         ro,
         tmpfs,
         args,
         ..Stage::default()
-    }]
+    }];
+    if let Some(stage) = xdg_stage() {
+        result.push(stage);
+    }
+    result
+}
+
+fn xdg_stage() -> Option<Stage> {
+    let xdg = xdg::BaseDirectories::new();
+    let ro = vec![xdg.get_config_home()?.to_str()?.to_string()];
+    let rw = vec![
+        xdg.get_cache_home()?.to_str()?.to_string(),
+        xdg.get_data_home()?.to_str()?.to_string(),
+        xdg.get_state_home()?.to_str()?.to_string(),
+    ];
+    Some(Stage {
+        ro,
+        rw,
+        ..Stage::default()
+    })
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, SmartDefault, JsonSchema)]
@@ -139,15 +164,8 @@ impl Sandbox for BwrapConfig {
         runner.workdir(&cwd.to_string_lossy());
         runner
     }
-}
 
-impl BwrapConfig {
-    pub fn merge_default(&mut self) {
-        let mut stages = Vec::new();
-
-        stages.extend(default_stages());
-        stages.extend(self.stages.clone());
-
-        self.stages = stages;
+    fn merge_default(&mut self) {
+        self.stages.splice(0..0, default_stages());
     }
 }

@@ -23,20 +23,14 @@ pub struct SandboxConfig {
     custom: Option<String>,
 }
 
-impl SandboxConfig {
-    pub fn merge_default(&mut self) {
-        if !self.clear_defaults && cfg!(target_os = "linux") {
-            self.bwrap.merge_default();
-        }
-    }
-}
-
 pub trait Sandbox: std::fmt::Debug + DynClone + Send + Sync {
     fn runner(
         &self,
         cwd: PathBuf,
         gitdir: PathBuf,
     ) -> SandboxRunner;
+
+    fn merge_default(&mut self);
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +58,13 @@ impl Sandbox for SandboxConfig {
             self.bwrap.runner(cwd, gitdir)
         } else {
             unreachable!("unsupported platform")
+        }
+    }
+
+    fn merge_default(&mut self) {
+        if !self.clear_defaults {
+            self.bwrap.merge_default();
+            self.sbe.merge_default();
         }
     }
 }

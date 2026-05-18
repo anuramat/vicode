@@ -177,6 +177,8 @@ impl Config {
     }
 
     pub fn parse_with_defaults(s: &str) -> Result<Self> {
+        use crate::sandbox::Sandbox;
+
         let mut config: Self = toml::from_str(s)?;
         config.keymap.merge_default();
         config.sandbox.merge_default();
