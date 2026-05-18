@@ -62,14 +62,10 @@ impl App<'_> {
         match event {
             Started(state) => {
                 self.handle_started(&aid, *state)?;
-                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
-                    tab.refresh_info().await?;
-                }
+                self.tab_mut_by_aid(&aid)?.refresh_info().await?;
             }
             HistoryUpdate(loc, event) => {
-                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
-                    tab.update(loc, event)?;
-                }
+                self.tab_mut_by_aid(&aid)?.update(loc, event)?;
             }
             Error(msg) => {
                 if self.tabs.contains_key(&aid) {
@@ -77,18 +73,16 @@ impl App<'_> {
                 }
             }
             StatusUpdate(status) => {
-                if let Ok(tab) = self.tab_mut_by_aid(&aid)
-                    && tab.set_state(status).await?
-                {
+                let tab = self.tab_mut_by_aid(&aid)?;
+                if tab.set_state(status).await? {
                     tab.refresh_info().await?;
                 }
             }
             AssistantSet(assistant) => {
-                if let Ok(tab) = self.tab_mut_by_aid(&aid) {
-                    tab.state.assistant = assistant;
-                    tab.refresh_info().await?;
-                    self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
-                }
+                let tab = self.tab_mut_by_aid(&aid)?;
+                tab.state.assistant = assistant;
+                tab.refresh_info().await?;
+                self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
             }
         }
         Ok(())
@@ -154,12 +148,9 @@ mod tests {
         let aid = AgentId::from("a".to_string());
         app.tabs.insert(aid.clone(), TabEntry::Loading);
 
-        app.handle_parent_event(
-            aid,
-            ParentEvent::Error("oops".into()),
-        )
-        .await
-        .unwrap();
+        app.handle_parent_event(aid, ParentEvent::Error("oops".into()))
+            .await
+            .unwrap();
 
         let notification = app.notification.expect("expected notification");
         assert!(matches!(notification.kind, NotificationKind::Error));
