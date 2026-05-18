@@ -76,7 +76,6 @@ pub struct App<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct AppState {
     visible_order: Vec<AgentId>,
 }

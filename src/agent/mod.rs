@@ -47,7 +47,6 @@ pub struct Agent {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
 pub struct AgentState {
     /// last emitted status for deduplication of status updates
     #[serde(skip)]
