@@ -67,7 +67,6 @@ pub enum ExternalEvent {
 pub enum TurnResult {
     Success { last_text: Option<String> },
     Failed(String),
-    Aborted,
 }
 
 #[derive(Debug)]
@@ -180,7 +179,7 @@ impl Agent {
                     self.handle_history(g, event).await?;
                 }
                 if let Some(done) = done {
-                    drop(done.send(TurnResult::Aborted));
+                    drop(done.send(TurnResult::Failed(ABORTED_BY_USER.into())));
                 }
             }
             DuplicateRequest(aid) => {
@@ -221,7 +220,7 @@ impl Agent {
     ) -> Result<()> {
         self.idle()?;
         if let Some(prev) = self.pending_done.take() {
-            drop(prev.send(TurnResult::Aborted));
+            drop(prev.send(TurnResult::Failed(ABORTED_BY_USER.into())));
         }
         self.pending_done = done;
         if let Err(e) = self.start_submit_inner(prompt).await {
@@ -377,13 +376,7 @@ impl Agent {
         };
         let result = match self.derive_status() {
             AgentStatus::Normal(TurnStatus::Failed(msg))
-            | AgentStatus::Compact(TurnStatus::Failed(msg)) => {
-                if msg == ABORTED_BY_USER {
-                    TurnResult::Aborted
-                } else {
-                    TurnResult::Failed(msg)
-                }
-            }
+            | AgentStatus::Compact(TurnStatus::Failed(msg)) => TurnResult::Failed(msg),
             _ => TurnResult::Success {
                 last_text: self.history().state().last_text_output().ok(),
             },
@@ -533,7 +526,7 @@ mod tests {
         ));
         assert!(matches!(
             timeout(RX_TIMEOUT, done_rx).await.unwrap().unwrap(),
-            TurnResult::Aborted
+            TurnResult::Failed(msg) if msg == ABORTED_BY_USER
         ));
 
         tokio::fs::remove_dir_all(project.agent(&aid))

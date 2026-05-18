@@ -40,7 +40,6 @@ impl SubagentHandle {
         let output = match result? {
             TurnResult::Success { last_text } => last_text.unwrap_or_default(),
             TurnResult::Failed(msg) => anyhow::bail!("subagent error: {msg}"),
-            TurnResult::Aborted => anyhow::bail!("subagent aborted"),
         };
         let diff = diff(&self.project, &self.parent_aid, &aid)?;
         Ok(SubagentResult { output, diff })
