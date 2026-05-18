@@ -5,4 +5,5 @@ pub const FUSE_OVERLAYFS: &str = "fuse-overlayfs";
 pub const GIT: &str = "git";
 pub const MOUNTPOINT: &str = "mountpoint";
 pub const TAR: &str = "tar";
+pub const TMUTIL: &str = "tmutil";
 pub const UMOUNT: &str = "umount";

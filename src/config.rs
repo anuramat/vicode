@@ -86,8 +86,6 @@ where
 #[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
-    /// disable fuse-overlayfs/bindfs overlays and just copy stuff around; mac compatibility hack
-    pub disable_overlay: bool,
     pub sandbox: SandboxConfig,
     #[default(vec([deps::BASH, "-c"]))]
     pub shell_cmd: Vec<String>,

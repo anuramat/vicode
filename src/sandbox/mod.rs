@@ -25,7 +25,7 @@ pub struct SandboxConfig {
 
 impl SandboxConfig {
     pub fn merge_default(&mut self) {
-        if !self.clear_defaults {
+        if !self.clear_defaults && cfg!(target_os = "linux") {
             self.bwrap.merge_default();
         }
     }
@@ -58,10 +58,12 @@ impl Sandbox for SandboxConfig {
                 args: vec![],
                 cwd,
             }
-        } else {
-            // default to bwrap
-            // TODO: choose depending on the platform
+        } else if cfg!(target_os = "macos") {
+            self.sbe.runner(cwd, gitdir)
+        } else if cfg!(target_os = "linux") {
             self.bwrap.runner(cwd, gitdir)
+        } else {
+            unreachable!("unsupported platform")
         }
     }
 }

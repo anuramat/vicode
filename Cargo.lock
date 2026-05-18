@@ -3682,6 +3682,7 @@ dependencies = [
  "indexmap",
  "insta",
  "inventory",
+ "libc",
  "libgit2-sys",
  "notify",
  "nucleo-matcher",

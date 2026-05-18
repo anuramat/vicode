@@ -1,5 +1,8 @@
 #![cfg_attr(test, allow(clippy::pedantic, clippy::nursery, clippy::style))]
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("vicode supports only Linux and macOS");
+
 mod agent;
 mod cli;
 mod config;

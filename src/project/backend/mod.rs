@@ -1,4 +1,4 @@
-pub mod copy;
+pub mod cow;
 pub mod overlay;
 
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use crate::sandbox::SandboxRunner;
 #[delegate(WorkspaceBackend)]
 pub enum BackendKind {
     Overlay(Overlay),
-    Copy(Copy),
+    Cow(Cow),
 }
 
 #[derive(Debug, Clone)]
@@ -26,17 +26,19 @@ pub struct Overlay {
     pub sandbox: SandboxConfig,
 }
 #[derive(Debug, Clone)]
-pub struct Copy {
+pub struct Cow {
     pub sandbox: SandboxConfig,
 }
 
 impl BackendKind {
     pub fn from_config(config: &Config) -> Self {
         let sandbox = config.sandbox.clone();
-        if config.disable_overlay {
-            Self::Copy(Copy { sandbox })
-        } else {
+        if cfg!(target_os = "macos") {
+            Self::Cow(Cow { sandbox })
+        } else if cfg!(target_os = "linux") {
             Self::Overlay(Overlay { sandbox })
+        } else {
+            unreachable!("compile_error! in main.rs should have fired for this target_os")
         }
     }
 }
