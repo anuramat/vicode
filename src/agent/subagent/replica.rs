@@ -1,6 +1,8 @@
 use anyhow::Result;
+use futures::future::join_all;
 
 use super::SubagentHandle;
+
 
 const REPORT_HEADER_PROMPT: &str = "Here are multiple implementations for the requested changes.
 Please review them and provide a single, consolidated implementation that combines the best aspects
@@ -13,18 +15,24 @@ pub struct ReplicaResult {
     pub report: String,
 }
 
+/// Wait for every replica even if some fail; each `SubagentHandle::wait`
+/// removes its runtime from the router on completion, so a failing replica no
+/// longer drops sibling handles unwaited.
+
 pub async fn run_replicas(handles: Vec<SubagentHandle>) -> Result<ReplicaResult> {
-    let mut results = Vec::new();
-    for handle in handles {
-        let aid = handle.id.clone();
-        let result = handle.wait().await?;
-        // TODO change format
-        results.push(format!(
-            "<implementation id={aid}>\n{}\n```diff\n{}```\n</implementation>",
-            result.output, result.diff
-        ));
-    }
+    let entries: Vec<String> = join_all(handles.into_iter().map(|h| async move {
+        let aid = h.id.clone();
+        match h.wait().await {
+            // TODO change format
+            Ok(r) => format!(
+                "<implementation id={aid}>\n{}\n```diff\n{}```\n</implementation>",
+                r.output, r.diff
+            ),
+            Err(e) => format!("<implementation id={aid}>\nerror: {e}\n</implementation>"),
+        }
+    }))
+    .await;
     Ok(ReplicaResult {
-        report: format!("{}{}", REPORT_HEADER_PROMPT, results.join("\n\n")),
+        report: format!("{}{}", REPORT_HEADER_PROMPT, entries.join("\n\n")),
     })
 }

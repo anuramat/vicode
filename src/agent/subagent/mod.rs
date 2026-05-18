@@ -7,20 +7,14 @@ use anyhow::Context;
 use anyhow::Result;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
-use super::handle::ExternalEvent;
-use crate::agent::Agent;
-use crate::agent::AgentEvent;
-use crate::agent::AgentStatus;
-use crate::agent::handle::ParentEvent;
+use crate::agent::handle::TurnResult;
 use crate::agent::handle::UserPrompt;
 use crate::agent::id::AgentId;
-use crate::agent::init::channel_parent_sink;
-use crate::llm::history::TurnStatus;
+use crate::agent::router::AgentRouterHandle;
+use crate::agent::subagent::result::diff;
+use crate::project::Project;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentResult {
@@ -31,69 +25,62 @@ pub struct SubagentResult {
 #[derive(Debug)]
 pub struct SubagentHandle {
     pub id: AgentId,
-    output: oneshot::Receiver<Result<SubagentResult>>,
+    parent_aid: AgentId,
+    project: Project,
+    router: AgentRouterHandle,
+    turn: oneshot::Receiver<TurnResult>,
 }
 
 impl SubagentHandle {
+    /// Await the subagent's turn and unconditionally delete its router entry.
+    /// The runtime is removed even on error so callers can't leak it by
+    /// failing to handle a `Failed`/`Aborted` outcome.
     pub async fn wait(self) -> Result<SubagentResult> {
-        self.output
-            .await
-            .context("failed to receive subagent output")?
+        let aid = self.id.clone();
+        let result = self.turn.await.context("subagent channel closed");
+        drop(self.router.delete(aid.clone()).await);
+        let output = match result? {
+            TurnResult::Success { last_text } => last_text.unwrap_or_default(),
+            TurnResult::Failed(msg) => anyhow::bail!("subagent error: {msg}"),
+            TurnResult::Aborted => anyhow::bail!("subagent aborted"),
+        };
+        let diff = diff(&self.project, &self.parent_aid, &aid)?;
+        Ok(SubagentResult { output, diff })
     }
 }
 
-pub async fn spawn(
-    parent: &Agent,
+/// Spawn a subagent under `parent_aid` via the router and submit `prompt`.
+/// Returns a handle whose oneshot fires when the subagent's turn completes.
+/// The caller MUST drive [`SubagentHandle::wait`] (or otherwise call
+/// `router.delete`) to avoid leaking the spawned runtime.
+pub async fn spawn_and_submit(
+    router: &AgentRouterHandle,
+    project: &Project,
+    parent_aid: &AgentId,
     prompt: String,
     inherit_context: bool,
 ) -> Result<SubagentHandle> {
-    let (parent_tx, parent_rx) = channel(100);
-    let sink = channel_parent_sink(parent_tx);
-    let agent = parent.subagent(sink, inherit_context).await?;
-
-    let child_tx = agent.tx.clone();
-    let aid = agent.id.clone();
-    let generation = agent.state.context.history.generation();
-    agent.spawn();
-
-    let (output_tx, output) = oneshot::channel();
-    tokio::spawn(async move {
-        let result = run_child(generation, prompt, child_tx, parent_rx).await;
-        drop(output_tx.send(result));
-    });
-    Ok(SubagentHandle { id: aid, output })
-}
-
-async fn run_child(
-    generation: u64,
-    prompt: String,
-    child_tx: Sender<AgentEvent>,
-    mut parent_rx: Receiver<ParentEvent>,
-) -> Result<SubagentResult> {
-    child_tx
-        .send(AgentEvent::External(ExternalEvent::Submit(UserPrompt {
-            text: prompt,
-            multiplier: 1,
-            generation,
-        })))
+    let (child, generation) = router
+        .spawn_subagent(parent_aid.clone(), inherit_context)
         .await?;
-    loop {
-        match parent_rx.recv().await {
-            Some(event) => match event {
-                ParentEvent::SubagentDone(s) => return Ok(s),
-                ParentEvent::StatusUpdate(
-                    AgentStatus::Normal(TurnStatus::Failed(err))
-                    | AgentStatus::Compact(TurnStatus::Failed(err)),
-                ) => {
-                    anyhow::bail!("subagent error: {err}");
-                }
-                _ => {}
+    let turn = router
+        .submit_oneshot(
+            child.clone(),
+            UserPrompt {
+                text: prompt,
+                multiplier: 1,
+                generation,
             },
-            None => anyhow::bail!("subagent channel closed before turn completion"),
-        }
-    }
+        )
+        .await?;
+    Ok(SubagentHandle {
+        id: child,
+        parent_aid: parent_aid.clone(),
+        project: project.clone(),
+        router: router.clone(),
+        turn,
+    })
 }
-
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;

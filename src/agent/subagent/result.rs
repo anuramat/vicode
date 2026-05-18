@@ -17,12 +17,12 @@ use crate::project::layout::LayoutTrait;
 pub fn diff(
     project: &Project,
     parent: &AgentId,
-    aid: &AgentId,
+    child: &AgentId,
 ) -> Result<String> {
     let parent_upper = project.agent_changes_dir(parent);
-    let child_upper = project.agent_changes_dir(aid);
+    let child_upper = project.agent_changes_dir(child);
     let parent_workdir = project.agent_workdir(parent);
-    let child_workdir = project.agent_workdir(aid);
+    let child_workdir = project.agent_workdir(child);
     let ignore = gitignore(&child_workdir)?;
     let mut paths = BTreeSet::new();
     collect_paths(&parent_upper, &parent_upper, &mut paths)?;
