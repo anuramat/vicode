@@ -83,7 +83,28 @@
             let
               commonArgs = {
                 inherit nativeBuildInputs;
-                src = pkgs.lib.cleanSource ./.;
+                src =
+                  let
+                    filter =
+                      path: type:
+                      let
+                        rel =
+                          let
+                            root = toString ./.;
+                          in
+                          lib.removePrefix "${root}/" (toString path);
+                      in
+                      rel == "Cargo.toml"
+                      || rel == "Cargo.lock"
+                      || rel == "src"
+                      || rel == "default"
+                      || (lib.hasPrefix "src/" rel && (type == "directory" || lib.hasSuffix ".rs" rel))
+                      || lib.hasPrefix "default/" rel;
+                  in
+                  lib.cleanSourceWith {
+                    src = ./.;
+                    inherit filter;
+                  };
                 strictDeps = true;
               };
               cargoArtifacts = craneLib.buildDepsOnly commonArgs;
