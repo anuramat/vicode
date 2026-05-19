@@ -111,7 +111,7 @@
               };
             in
             {
-              inherit unwrapped wrapped;
+              inherit unwrapped wrapped cargoArtifacts;
             };
 
           linux =
@@ -150,6 +150,7 @@
                 "${pname}-arx" = bundled;
                 ${pname} = build.wrapped;
                 "${pname}-unwrapped" = build.unwrapped;
+                "${pname}-deps" = build.cargoArtifacts;
                 default = build.wrapped;
               };
               inherit binDeps;
@@ -171,6 +172,7 @@
               packages = {
                 ${pname} = build.wrapped;
                 "${pname}-unwrapped" = build.unwrapped;
+                "${pname}-deps" = build.cargoArtifacts;
                 default = build.wrapped;
               };
               inherit binDeps;
