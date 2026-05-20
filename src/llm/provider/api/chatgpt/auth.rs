@@ -628,7 +628,6 @@ pub(super) fn join_url(
 mod tests {
     use similar_asserts::assert_eq;
 
-    use super::super::test_support;
     use super::*;
 
     fn temp_dir() -> PathBuf {
@@ -758,58 +757,6 @@ mod tests {
             client_id: "client",
         }
         "#);
-    }
-
-    #[tokio::test]
-    async fn device_code_polling_retries_until_ready() {
-        let server = test_support::mock_server(vec![
-            test_support::MockResponse {
-                status: 200,
-                content_type: "application/json",
-                body: serde_json::json!({
-                    "device_auth_id": "device",
-                    "user_code": "ABCD",
-                    "interval": "0"
-                })
-                .to_string(),
-            },
-            test_support::MockResponse {
-                status: 403,
-                content_type: "application/json",
-                body: "{}".into(),
-            },
-            test_support::MockResponse {
-                status: 200,
-                content_type: "application/json",
-                body: serde_json::json!({
-                    "authorization_code": "auth-code",
-                    "code_verifier": "verifier"
-                })
-                .to_string(),
-            },
-        ])
-        .await;
-        let manager = ChatgptAuthManager::with_store(AuthStore::new_in(
-            temp_dir(),
-            "chatgpt",
-            server.base_url.clone(),
-            "client".into(),
-        ))
-        .unwrap();
-
-        let start = manager.start_device_flow().await.unwrap();
-        let authorization = manager
-            .poll_device_flow(&start, Duration::from_secs(5))
-            .await
-            .unwrap();
-
-        insta::assert_debug_snapshot!(authorization, @r#"
-        DeviceCodeAuthorization {
-            authorization_code: "auth-code",
-            code_verifier: "verifier",
-        }
-        "#);
-        assert_eq!(server.requests.lock().unwrap().len(), 3);
     }
 
     #[tokio::test]

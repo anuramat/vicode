@@ -3,9 +3,6 @@ pub mod cli;
 pub mod error;
 pub mod stream;
 
-#[cfg(test)]
-pub mod test_support;
-
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;

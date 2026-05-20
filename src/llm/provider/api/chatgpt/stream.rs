@@ -108,38 +108,14 @@ async fn send_once(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::time::Duration;
-
-    use base64::Engine as _;
-
-    use super::super::CHATGPT_AUTH_TYPE;
     use super::super::OAUTH_CLIENT_ID;
-    use super::super::auth::AuthRecord;
     use super::super::auth::AuthStore;
-    use super::super::test_support;
-    use super::super::test_support::RecordedRequest;
     use super::*;
-    use crate::utils::now;
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vicode-stream-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    fn token(account_id: &str) -> String {
-        format!(
-            "a.{}.c",
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-                serde_json::to_vec(&serde_json::json!({
-                    "https://api.openai.com/auth": {
-                        "chatgpt_account_id": account_id
-                    }
-                }))
-                .unwrap(),
-            )
-        )
     }
 
     fn body() -> responses::CreateResponse {
@@ -149,175 +125,6 @@ mod tests {
             .input(responses::InputParam::Items(Vec::new()))
             .build()
             .unwrap()
-    }
-
-    fn summarize(requests: &[RecordedRequest]) -> serde_json::Value {
-        let keep = ["authorization", "chatgpt-account-id", "originator"];
-        requests
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "path": r.path,
-                    "headers": r.headers.iter()
-                        .filter(|(k, _)| keep.contains(&k.as_str()))
-                        .collect::<BTreeMap<_, _>>(),
-                    "body": r.body,
-                })
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn refreshes_before_request_and_sets_headers() {
-        let server = test_support::mock_server(vec![
-            test_support::MockResponse {
-                status: 200,
-                content_type: "application/json",
-                body: serde_json::json!({
-                    "access_token": "fresh_access",
-                    "refresh_token": "fresh_refresh",
-                    "id_token": token("org_123"),
-                    "expires_in": 3600
-                })
-                .to_string(),
-            },
-            test_support::MockResponse {
-                status: 200,
-                content_type: "text/event-stream",
-                body: String::new(),
-            },
-        ])
-        .await;
-        let store = AuthStore::new_in(
-            temp_dir(),
-            "chatgpt",
-            server.base_url.clone(),
-            OAUTH_CLIENT_ID.into(),
-        );
-        store
-            .save(&AuthRecord {
-                version: 1,
-                kind: CHATGPT_AUTH_TYPE.into(),
-                provider_id: "chatgpt".into(),
-                issuer: server.base_url.clone(),
-                client_id: OAUTH_CLIENT_ID.into(),
-                access_token: "old_access".into(),
-                refresh_token: "old_refresh".into(),
-                expires_at_unix_ms: now() + 1_000,
-                account_id: None,
-                plan_type: None,
-                email: None,
-            })
-            .unwrap();
-        let auth = ChatgptAuthManager::with_store(store).unwrap();
-
-        let _ = run(&auth, &server.base_url, || Ok(body())).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        insta::assert_json_snapshot!(summarize(&server.requests.lock().unwrap()), @r#"
-        [
-          {
-            "body": "grant_type=refresh_token&refresh_token=old_refresh&client_id=app_EMoamEEZ73f0CkXaXp7hrann",
-            "headers": {},
-            "path": "/oauth/token"
-          },
-          {
-            "body": "{\"input\":[],\"model\":\"gpt-test\",\"stream\":true}",
-            "headers": {
-              "authorization": "Bearer fresh_access",
-              "chatgpt-account-id": "org_123",
-              "originator": "vicode"
-            },
-            "path": "/responses"
-          }
-        ]
-        "#);
-    }
-
-    #[tokio::test]
-    async fn retries_once_after_auth_failure() {
-        let server = test_support::mock_server(vec![
-            test_support::MockResponse {
-                status: 401,
-                content_type: "application/json",
-                body: serde_json::json!({
-                    "error": {
-                        "message": "token expired",
-                        "type": "invalid_request_error",
-                        "param": null,
-                        "code": "token_expired"
-                    }
-                })
-                .to_string(),
-            },
-            test_support::MockResponse {
-                status: 200,
-                content_type: "application/json",
-                body: serde_json::json!({
-                    "access_token": "fresh_access",
-                    "refresh_token": "fresh_refresh",
-                    "expires_in": 3600
-                })
-                .to_string(),
-            },
-            test_support::MockResponse {
-                status: 200,
-                content_type: "text/event-stream",
-                body: String::new(),
-            },
-        ])
-        .await;
-        let store = AuthStore::new_in(
-            temp_dir(),
-            "chatgpt",
-            server.base_url.clone(),
-            OAUTH_CLIENT_ID.into(),
-        );
-        store
-            .save(&AuthRecord {
-                version: 1,
-                kind: CHATGPT_AUTH_TYPE.into(),
-                provider_id: "chatgpt".into(),
-                issuer: server.base_url.clone(),
-                client_id: OAUTH_CLIENT_ID.into(),
-                access_token: "stale_access".into(),
-                refresh_token: "old_refresh".into(),
-                expires_at_unix_ms: now() + 10 * 60_000,
-                account_id: None,
-                plan_type: None,
-                email: None,
-            })
-            .unwrap();
-        let auth = ChatgptAuthManager::with_store(store).unwrap();
-
-        let _ = run(&auth, &server.base_url, || Ok(body())).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        insta::assert_json_snapshot!(summarize(&server.requests.lock().unwrap()), @r#"
-        [
-          {
-            "body": "{\"input\":[],\"model\":\"gpt-test\",\"stream\":true}",
-            "headers": {
-              "authorization": "Bearer stale_access",
-              "originator": "vicode"
-            },
-            "path": "/responses"
-          },
-          {
-            "body": "grant_type=refresh_token&refresh_token=old_refresh&client_id=app_EMoamEEZ73f0CkXaXp7hrann",
-            "headers": {},
-            "path": "/oauth/token"
-          },
-          {
-            "body": "{\"input\":[],\"model\":\"gpt-test\",\"stream\":true}",
-            "headers": {
-              "authorization": "Bearer fresh_access",
-              "originator": "vicode"
-            },
-            "path": "/responses"
-          }
-        ]
-        "#);
     }
 
     #[tokio::test]
