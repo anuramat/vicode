@@ -1,5 +1,7 @@
 # vicode
 
+[![built with garnix](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fgarnix.io%2Fapi%2Fbadges%2Fanuramat%2Fvicode%3Fbranch%3Dmain)](https://garnix.io/repo/anuramat/vicode)
+
 coding agent with tabs/subagents running in overlayfs-backed worktrees:
 create/fork tabs to work on multiple features/implementations, while subagents
 work in parallel without conflicts; share the compilation cache between agents,
