@@ -1,16 +1,12 @@
 use ratatui::prelude::*;
+use ratatui::widgets::Clear;
 
 use crate::tui::colors::LOGO_COLOR;
-use crate::tui::colors::LOGO_FILL_COLOR;
 
 pub static LOGO_VARIANTS: std::sync::LazyLock<Logo> = std::sync::LazyLock::new(Logo::new);
 
 fn logo_style() -> Style {
     Style::default().fg(LOGO_COLOR).bold()
-}
-
-fn bg_style() -> Style {
-    Style::default().fg(LOGO_FILL_COLOR).not_bold()
 }
 
 pub struct LogoVariant {
@@ -30,15 +26,15 @@ impl Widget for &Logo {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        buf.set_style(buf.area, bg_style());
-
-        let style = logo_style();
+        Clear.render(area, buf);
+        buf.set_style(area, logo_style());
         let logo = self.get_logo(area);
+
         let x_start = (area.width - logo.width) / 2;
         let y_start = (area.height - logo.height) / 2;
         for (y_rel, line) in logo.text.lines().enumerate() {
             let y_abs = y_start + y_rel as u16;
-            if y_abs >= area.right() {
+            if y_abs >= area.bottom() {
                 break;
             }
             for (x_rel, ch) in line.chars().enumerate() {
@@ -46,9 +42,8 @@ impl Widget for &Logo {
                 if x_abs >= area.right() {
                     break;
                 }
-                if !ch.is_whitespace() {
-                    buf[(x_abs, y_abs)].set_char(ch).set_style(style);
-                }
+
+                buf[(x_abs, y_abs)].set_char(ch);
             }
         }
     }

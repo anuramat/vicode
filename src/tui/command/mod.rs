@@ -13,6 +13,8 @@ pub use chord::KeyChord;
 pub use keymap::Keymap;
 pub use name::CommandName;
 
+pub use crate::tui::widgets::container::scroll::ScrollOp;
+
 pub fn parse_arg<T>(args: Option<&str>) -> Result<Option<T>>
 where
     T: FromStr,
@@ -87,6 +89,13 @@ mod tests {
             Command {
                 name: CommandName::AssistantPrev,
                 args: None,
+            }
+        );
+        assert_eq!(
+            "scroll down".parse::<Command>().unwrap(),
+            Command {
+                name: CommandName::Scroll,
+                args: Some("down".into()),
             }
         );
     }

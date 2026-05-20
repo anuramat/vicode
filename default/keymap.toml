@@ -15,6 +15,7 @@
 "c-e" = "completion_cancel"
 
 [normal]
+"esc" = "toggle_tabs"
 ":" = "cmdline_enter"
 "i" = "insert_enter"
 
@@ -22,8 +23,6 @@
 "r" = "refresh_info"
 
 "o" = "tab_new"
-"j" = "tab_next"
-"k" = "tab_prev"
 "s-d" = "tab_delete"
 "s-y" = "tab_duplicate"
 
@@ -34,17 +33,21 @@
 "tab" = "assistant_next"
 "s-tab" = "assistant_prev"
 
-"up" = "scroll_line_up"
-"down" = "scroll_line_down"
-"c-y" = "scroll_line_up"
-"c-e" = "scroll_line_down"
+"j" = "scroll down"
+"k" = "scroll up"
 
-"c-u" = "scroll_half_page_up"
-"c-d" = "scroll_half_page_down"
-"c-b" = "scroll_page_up"
-"c-f" = "scroll_page_down"
+"up" = "scroll line_up"
+"down" = "scroll line_down"
+"c-y" = "scroll line_up"
+"c-e" = "scroll line_down"
 
-"[" = "scroll_prev_element"
-"]" = "scroll_next_element"
-"g" = "scroll_top"
-"s-g" = "scroll_bottom"
+"c-u" = "scroll half_page_up"
+"c-d" = "scroll half_page_down"
+"c-b" = "scroll page_up"
+"c-f" = "scroll page_down"
+
+"[" = "scroll prev_element"
+"]" = "scroll next_element"
+
+"g" = "scroll top"
+"s-g" = "scroll bottom"

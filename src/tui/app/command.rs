@@ -1,9 +1,11 @@
 use anyhow::Result;
 
 use crate::tui::app::App;
+use crate::tui::app::AppFocus;
 use crate::tui::app::NotificationKind;
 use crate::tui::command::Command;
 use crate::tui::command::CommandName;
+use crate::tui::command::ScrollOp;
 use crate::tui::command::parse_arg;
 use crate::tui::widgets::input::Input;
 
@@ -26,7 +28,10 @@ impl<'a> App<'a> {
             CommandName::CompletionPrev => self.active_input()?.completion_prev(),
             CommandName::InputExit => self.exit_input()?,
             CommandName::InputSubmit => self.submit().await?,
-            CommandName::InsertEnter => self.selected_tab_mut()?.insert_mode(true),
+            CommandName::InsertEnter => {
+                self.focus = AppFocus::Body;
+                self.selected_tab_mut()?.insert_mode(true);
+            }
             CommandName::InsertPaste => {
                 self.selected_tab_mut()?
                     .paste(&command.args.unwrap_or_default());
@@ -35,16 +40,11 @@ impl<'a> App<'a> {
             CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user().await?,
             CommandName::Quit => self.should_exit = true,
             CommandName::RefreshInfo => self.selected_tab_mut()?.refresh_info().await?,
-            CommandName::ScrollBottom => self.selected_tab_mut()?.scroll_bottom(),
-            CommandName::ScrollHalfPageDown => self.selected_tab_mut()?.scroll_half_page_down(),
-            CommandName::ScrollHalfPageUp => self.selected_tab_mut()?.scroll_half_page_up(),
-            CommandName::ScrollLineDown => self.selected_tab_mut()?.scroll_line_down(),
-            CommandName::ScrollLineUp => self.selected_tab_mut()?.scroll_line_up(),
-            CommandName::ScrollNextElement => self.selected_tab_mut()?.scroll_next_element(),
-            CommandName::ScrollPageDown => self.selected_tab_mut()?.scroll_page_down(),
-            CommandName::ScrollPageUp => self.selected_tab_mut()?.scroll_page_up(),
-            CommandName::ScrollPrevElement => self.selected_tab_mut()?.scroll_prev_element(),
-            CommandName::ScrollTop => self.selected_tab_mut()?.scroll_top(),
+            CommandName::Scroll => {
+                let op: ScrollOp = parse_arg(command.args.as_deref())?
+                    .ok_or_else(|| anyhow::anyhow!("missing argument"))?;
+                self.scroll(op)?;
+            }
             CommandName::SetMultiplier => self
                 .selected_tab_mut()?
                 .set_multiplier(command.args.as_deref())?,
@@ -58,7 +58,10 @@ impl<'a> App<'a> {
                 self.ctx.hide_developer = !self.ctx.hide_developer;
                 self.notify_hide(self.ctx.hide_developer, "developer msg");
             }
-            CommandName::ToggleInfo => self.selected_tab_mut()?.toggle_focus(),
+            CommandName::ToggleInfo => {
+                self.selected_tab()?;
+                self.toggle_focus(AppFocus::Info);
+            }
             CommandName::ToggleMarkdown => {
                 self.ctx.render_markdown = !self.ctx.render_markdown;
                 self.notify(
@@ -77,7 +80,7 @@ impl<'a> App<'a> {
                 self.ctx.hide_reasoning = !self.ctx.hide_reasoning;
                 self.notify_hide(self.ctx.hide_reasoning, "reasoning");
             }
-            CommandName::ToggleTabs => self.toggle_tabs(),
+            CommandName::ToggleTabs => self.toggle_focus(AppFocus::Tabs),
             CommandName::ToggleTools => {
                 self.ctx.hide_tools = !self.ctx.hide_tools;
                 self.notify_hide(self.ctx.hide_tools, "tool calls");
@@ -108,8 +111,51 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    fn toggle_tabs(&mut self) {
-        self.show_tabs = !self.show_tabs;
+    fn toggle_focus(
+        &mut self,
+        focus: AppFocus,
+    ) {
+        self.focus = if self.focus == focus {
+            AppFocus::Body
+        } else {
+            focus
+        };
+    }
+
+    fn scroll(
+        &mut self,
+        op: ScrollOp,
+    ) -> Result<()> {
+        match self.focus {
+            AppFocus::Body => self.selected_tab_mut()?.scroll(op),
+            AppFocus::Tabs => self.scroll_tabs(op),
+            AppFocus::Info => self.selected_tab_mut()?.info.scroll(op),
+        }
+        Ok(())
+    }
+
+    fn scroll_tabs(
+        &mut self,
+        op: ScrollOp,
+    ) {
+        match op {
+            ScrollOp::HalfPageUp
+            | ScrollOp::LineUp
+            | ScrollOp::PageUp
+            | ScrollOp::PrevElement
+            | ScrollOp::Up => self.prev_tab(),
+            ScrollOp::HalfPageDown
+            | ScrollOp::LineDown
+            | ScrollOp::NextElement
+            | ScrollOp::PageDown
+            | ScrollOp::Down => self.next_tab(),
+            ScrollOp::Top => {
+                self.select_tab(Some(0));
+            }
+            ScrollOp::Bottom => {
+                self.select_tab(self.tabs.len().checked_sub(1));
+            }
+        }
     }
 
     fn notify_hide(
@@ -248,5 +294,50 @@ mod tests {
             app.selected_tab().unwrap().input.textarea.lines(),
             ["open @src/main.rs"]
         );
+    }
+
+    #[tokio::test]
+    async fn tab_focus_owns_contextual_scroll_commands() {
+        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        app.tabs = ["a", "b"]
+            .into_iter()
+            .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))
+            .collect();
+        app.focus = AppFocus::Body;
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+
+        app.execute(Command {
+            name: CommandName::ToggleTabs,
+            args: None,
+        })
+        .await
+        .unwrap();
+        app.execute(Command {
+            name: CommandName::Scroll,
+            args: Some("down".into()),
+        })
+        .await
+        .unwrap();
+        assert_eq!(app.selected_tab_idx(), Some(1));
+
+        app.execute(Command {
+            name: CommandName::Scroll,
+            args: Some("up".into()),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(app.focus, AppFocus::Tabs);
+        assert_eq!(app.selected_tab_idx(), Some(0));
+
+        app.execute(Command {
+            name: CommandName::ToggleTabs,
+            args: None,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(app.focus, AppFocus::Body);
     }
 }

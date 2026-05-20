@@ -32,6 +32,14 @@ pub enum NotificationKind {
     Error,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AppFocus {
+    Body,
+    Info,
+    #[default]
+    Tabs,
+}
+
 #[derive(Debug)]
 pub enum AppEvent {
     Key(KeyEvent),
@@ -72,7 +80,7 @@ pub struct App<'a> {
     pub cmdline: Cmdline<'a>,
     pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
-    pub show_tabs: bool,
+    pub focus: AppFocus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -95,7 +103,7 @@ impl App<'_> {
 
         Self {
             project,
-            show_tabs: false,
+            focus: AppFocus::default(),
             project_name,
             cmdline: Cmdline::new(),
             ctx,

@@ -9,13 +9,14 @@ use crate::agent::id::AgentId;
 use crate::deps;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
-use crate::tui::widgets::container::composite::CompositeElement;
-use crate::tui::widgets::container::element::HeightComputable;
+use crate::tui::widgets::container::collapsible_sections::CollapsibleSection;
+use crate::tui::widgets::container::collapsible_sections::CollapsibleSections;
 use crate::tui::widgets::container::element::RenderContext;
+use crate::tui::widgets::container::scroll::ScrollOp;
 
 #[derive(Debug, Default)]
 pub struct InfoWidget {
-    elements: CompositeElement,
+    sections: CollapsibleSections,
 }
 
 impl InfoWidget {
@@ -29,10 +30,13 @@ impl InfoWidget {
             .args(args)
             .output()
             .await?;
-        let text = output.stdout.into_text()?;
-        let elements = vec![Paragraph::new(text).into()];
-        let elements = CompositeElement(elements);
-        Ok(Self { elements })
+
+        Ok(Self {
+            sections: CollapsibleSections::new([CollapsibleSection::new(
+                "status",
+                Paragraph::new(output.stdout.into_text()?),
+            )]),
+        })
     }
 
     pub fn render(
@@ -40,6 +44,13 @@ impl InfoWidget {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        self.elements.render(area, buf, RenderContext::default());
+        self.sections.render(area, buf, RenderContext::default());
+    }
+
+    pub fn scroll(
+        &mut self,
+        op: ScrollOp,
+    ) {
+        self.sections.scroll(op);
     }
 }

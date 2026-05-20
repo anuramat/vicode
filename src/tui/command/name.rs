@@ -40,16 +40,8 @@ pub enum CommandName {
     Quit,
     /// refresh the info pane
     RefreshInfo,
-    ScrollBottom,
-    ScrollHalfPageDown,
-    ScrollHalfPageUp,
-    ScrollLineDown,
-    ScrollLineUp,
-    ScrollNextElement,
-    ScrollPageDown,
-    ScrollPageUp,
-    ScrollPrevElement,
-    ScrollTop,
+    /// scroll the focused pane
+    Scroll,
     /// set multiplier for the next prompt
     SetMultiplier,
     /// delete the currently selected tab

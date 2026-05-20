@@ -1,5 +1,4 @@
 pub mod input;
-pub mod scroll;
 pub mod update;
 
 use std::fmt::Debug;
@@ -16,6 +15,7 @@ use crate::project::layout::LayoutTrait;
 use crate::tui::command::parse_arg;
 use crate::tui::osc7::set_osc7;
 use crate::tui::widgets::container::scroll::ScrollElements;
+use crate::tui::widgets::container::scroll::ScrollOp;
 use crate::tui::widgets::info::InfoWidget;
 use crate::tui::widgets::input::CompletionSource;
 use crate::tui::widgets::input::Input;
@@ -23,13 +23,6 @@ use crate::tui::widgets::input::InputOpts;
 use crate::tui::widgets::tab::input::MessageInput;
 
 const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    #[default]
-    Body,
-    Info,
-}
 
 #[derive(Debug)]
 pub struct Tab<'a> {
@@ -41,7 +34,6 @@ pub struct Tab<'a> {
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
     pub info: InfoWidget,
-    pub focus: Focus,
 
     pub multiplier: usize,
 }
@@ -102,7 +94,6 @@ impl Tab<'_> {
                 }),
             },
             info: InfoWidget::default(),
-            focus: Focus::default(),
             multiplier: 1,
         };
         tab.refresh_file_completion()?;
@@ -114,13 +105,6 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            Focus::Body => Focus::Info,
-            Focus::Info => Focus::Body,
-        };
-    }
-
     pub fn set_multiplier(
         &mut self,
         value: Option<&str>,
@@ -130,5 +114,13 @@ impl Tab<'_> {
         self.multiplier = value as usize;
         self.update_input_title();
         Ok(())
+    }
+
+    pub fn scroll(
+        &mut self,
+        op: ScrollOp,
+    ) {
+        let messages = self.state.context.history.state().messages.as_slice();
+        self.scroll.scroll(messages, op);
     }
 }
