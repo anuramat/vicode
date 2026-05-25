@@ -45,7 +45,7 @@
           rustfmt = fenixPkgs.latest.rustfmt;
 
           nativeBuildInputs = with pkgs; [
-            perl # some dependency needs this
+            perl # for OpenSSL
           ];
 
           devTools = with pkgs; [
@@ -107,7 +107,13 @@
                   };
                 strictDeps = true;
               };
-              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
+              cargoArtifacts = craneLib.buildDepsOnly (
+                commonArgs
+                // {
+                  inherit cargoVendorDir;
+                }
+              );
               unwrapped = craneLib.buildPackage (
                 commonArgs
                 // {
@@ -132,7 +138,12 @@
               };
             in
             {
-              inherit unwrapped wrapped cargoArtifacts;
+              inherit
+                unwrapped
+                wrapped
+                cargoVendorDir
+                cargoArtifacts
+                ;
             };
 
           linux =
@@ -174,6 +185,7 @@
                 "${pname}-deps" = build.cargoArtifacts;
                 default = build.wrapped;
               };
+              inherit (build) cargoVendorDir;
               inherit binDeps;
             };
 
@@ -196,6 +208,7 @@
                 "${pname}-deps" = build.cargoArtifacts;
                 default = build.wrapped;
               };
+              inherit (build) cargoVendorDir;
               inherit binDeps;
             };
 
@@ -215,24 +228,9 @@
               packages = devTools ++ nativeBuildInputs ++ platform.binDeps;
             };
           pre-commit = {
-            check.enable = false;
+            check.enable = false; # otherwise we duplicate treefmt; if we get more hooks, might want to enable this and disable treefmt check
             settings.hooks = {
               treefmt.enable = true;
-              cargo-fix = {
-                enable = true;
-                entry =
-                  let
-                    cargo-fix = pkgs.writeShellApplication {
-                      name = "cargo-fix";
-                      text = ''
-                        cargo fix "$@" --allow-dirty --allow-staged
-                      '';
-                    };
-                  in
-                  lib.getExe cargo-fix;
-                pass_filenames = false;
-                files = "\\.rs$";
-              };
             };
           };
           treefmt = {
@@ -254,7 +252,7 @@
               just.enable = true;
             };
           };
-          packages = platform.packages;
+          inherit (platform) packages;
         };
     };
 }
