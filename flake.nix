@@ -86,7 +86,7 @@
                 src =
                   let
                     filter =
-                      path: type:
+                      path: _type:
                       let
                         rel =
                           let
@@ -98,7 +98,7 @@
                       || rel == "Cargo.lock"
                       || rel == "src"
                       || rel == "default"
-                      || (lib.hasPrefix "src/" rel && (type == "directory" || lib.hasSuffix ".rs" rel))
+                      || lib.hasPrefix "src/" rel
                       || lib.hasPrefix "default/" rel;
                   in
                   lib.cleanSourceWith {
