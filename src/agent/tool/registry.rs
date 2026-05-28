@@ -1,44 +1,130 @@
+use std::sync::LazyLock;
+
+use derive_getters::Getters;
 use derive_more::Deref;
 use derive_more::DerefMut;
-use derive_more::From;
-use derive_more::Into;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::llm::history::TokenCount;
+use crate::llm::history::count_text_tokens;
+
 inventory::collect!(ToolDeclaration);
+
+pub static TOOL_REGISTRY: LazyLock<ToolRegistry> = LazyLock::new(ToolRegistry::from_inventory);
 
 #[derive(Clone, Debug)]
 pub struct ToolDeclaration(pub fn() -> ToolSchema);
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Getters)]
 pub struct ToolSchema {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
+    name: String,
+    description: String,
+    parameters: Value,
+    // skipping so we don't send it to the provider
+    #[serde(skip)]
+    #[getter(skip)]
+    token_count: usize,
 }
 
-#[derive(Clone, Debug, From, Into, Deref, DerefMut)]
-pub struct ToolSchemas(pub Vec<ToolSchema>);
+#[derive(Clone, Debug, Deref, DerefMut)]
+pub struct ToolRegistry {
+    #[deref]
+    #[deref_mut]
+    pub schemas: Vec<ToolSchema>,
+    pub token_count: usize,
+}
 
-impl Default for ToolSchemas {
+impl Default for ToolRegistry {
     fn default() -> Self {
-        Self::new()
+        TOOL_REGISTRY.clone()
     }
 }
 
-impl ToolSchemas {
+impl ToolRegistry {
     pub fn empty() -> Self {
-        Self(Vec::new())
+        Vec::new().into()
     }
 
-    pub fn new() -> Self {
-        Self(
-            inventory::iter::<ToolDeclaration>
-                .into_iter()
-                .map(|declaration| declaration.0())
-                .collect(),
-        )
+    pub fn without<I, S>(
+        &self,
+        names: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: ToString,
+    {
+        let names = names
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        let mut result: Self = self
+            .iter()
+            .filter(|tool| !names.iter().any(|name| name == tool.name()))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        result.recount();
+        result
+    }
+
+    fn from_inventory() -> Self {
+        inventory::iter::<ToolDeclaration>
+            .into_iter()
+            .map(|declaration| declaration.0())
+            .collect::<Vec<_>>()
+            .into()
+    }
+}
+
+impl ToolSchema {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: Value,
+    ) -> Self {
+        let mut result = Self {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+            token_count: 0,
+        };
+        result.recount();
+        result
+    }
+}
+
+impl From<Vec<ToolSchema>> for ToolRegistry {
+    fn from(schemas: Vec<ToolSchema>) -> Self {
+        let mut result = Self {
+            schemas,
+            token_count: 0,
+        };
+        result.recount();
+        result
+    }
+}
+
+impl TokenCount for ToolRegistry {
+    fn token_count(&self) -> usize {
+        self.token_count
+    }
+
+    fn recount(&mut self) {
+        self.schemas.iter_mut().for_each(ToolSchema::recount);
+        self.token_count = self.schemas.iter().map(ToolSchema::token_count).sum();
+    }
+}
+
+impl TokenCount for ToolSchema {
+    fn token_count(&self) -> usize {
+        self.token_count
+    }
+
+    fn recount(&mut self) {
+        let text = serde_json::to_string(self).expect("could not serialize tool schema");
+        self.token_count = count_text_tokens(&text);
     }
 }
 
@@ -54,11 +140,11 @@ macro_rules! declare_tool {
         impl $crate::agent::tool::traits::ToolCallSerializable for $call {}
 
         fn declaration() -> $crate::agent::tool::registry::ToolSchema {
-            $crate::agent::tool::registry::ToolSchema {
-                name: $name.to_string(),
-                description: $description.to_string(),
-                parameters: schemars::schema_for!($arguments).to_value(),
-            }
+            $crate::agent::tool::registry::ToolSchema::new(
+                $name,
+                $description,
+                schemars::schema_for!($arguments).to_value(),
+            )
         }
 
         inventory::submit! {
@@ -75,12 +161,11 @@ mod tests {
 
     #[test]
     fn test_toolkit_schema() {
-        let schema = ToolSchemas::new();
+        let registry = TOOL_REGISTRY.clone();
 
-        let bash_schema = schema
-            .0
+        let bash_schema = registry
             .iter()
-            .find(|schema| schema.name == "bash")
+            .find(|schema| schema.name() == "bash")
             .expect("bash tool not found");
 
         let serialized = serde_json::to_value(bash_schema).unwrap();
@@ -105,5 +190,29 @@ mod tests {
           }
         }
         "#);
+    }
+
+    #[test]
+    fn tool_registry_token_count_is_cached_and_nonzero() {
+        use similar_asserts::assert_eq;
+
+        assert!(TOOL_REGISTRY.token_count() > 0);
+        assert_eq!(
+            TOOL_REGISTRY.token_count(),
+            ToolRegistry::default().token_count()
+        );
+        assert_eq!(ToolRegistry::empty().token_count(), 0);
+    }
+
+    #[test]
+    fn without_excludes_named_tools() {
+        use similar_asserts::assert_eq;
+
+        let excluded = ["bash"];
+        let registry = TOOL_REGISTRY.without(&excluded);
+
+        assert!(!registry.iter().any(|tool| tool.name() == "bash"));
+        assert_eq!(registry.len(), TOOL_REGISTRY.len() - 1);
+        assert!(registry.token_count() < TOOL_REGISTRY.token_count());
     }
 }

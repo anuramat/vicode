@@ -22,7 +22,7 @@ use crate::agent::handle::ParentEvent;
 use crate::agent::handle::TurnResult;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::task::manager::AgentTaskManager;
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::forward;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
@@ -43,7 +43,7 @@ pub struct Agent {
     pub rx: Receiver<AgentEvent>,
     /// manages jobs in the agent event loop
     pub tskmgr: AgentTaskManager,
-    pub tools: ToolSchemas,
+    pub tools: ToolRegistry,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

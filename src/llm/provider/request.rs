@@ -8,7 +8,7 @@ use backon::TokioSleeper;
 use tokio::sync::AcquireError;
 use tracing::instrument;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::message::Message;
 use crate::llm::provider::api::StartedAssistantStream;
 use crate::llm::provider::assistant::Assistant;
@@ -19,7 +19,7 @@ impl Assistant {
         &self,
         instructions: String,
         history: Vec<Message>,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
     ) -> Result<StartedAssistantStream> {
         retry(
             || async {

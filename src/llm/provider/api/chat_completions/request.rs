@@ -10,7 +10,7 @@ use async_openai::types::chat::ChatCompletionRequestToolMessageContent;
 use async_openai::types::chat::ChatCompletionRequestUserMessage;
 use async_openai::types::chat::CreateChatCompletionRequestArgs;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::llm::history::message::AsMessageText;
@@ -27,7 +27,7 @@ pub fn request(
     assistant: ModelConfig,
     instructions: String,
     mut items: Vec<Message>,
-    tools: ToolSchemas,
+    tools: ToolRegistry,
     streaming: bool,
     compat: &ApiCompatConfig,
 ) -> Result<serde_json::Value> {
@@ -55,7 +55,7 @@ pub fn request(
     let message_values = message_values(&items, &compat.reasoning_content_field);
 
     builder.stream(streaming).messages(messages(items));
-    if !tools.0.is_empty() {
+    if !tools.is_empty() {
         builder.tools(Vec::from(tools));
     }
     let mut value = serde_json::to_value(builder.build()?)?;

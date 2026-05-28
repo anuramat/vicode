@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ModelConfig;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::message::AssistantItem;
@@ -36,7 +36,7 @@ pub trait Api: Send + Sync + std::fmt::Debug {
         model: ModelConfig,
         instructions: String,
         messages: Vec<Message>,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
     ) -> Result<StartedAssistantStream>;
 }
 

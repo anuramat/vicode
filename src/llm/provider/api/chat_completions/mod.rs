@@ -8,7 +8,7 @@ use async_openai::config::OpenAIConfig;
 use async_trait::async_trait;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::llm::history::message::Message;
@@ -39,7 +39,7 @@ impl Api for ChatCompletionsApi {
         model: ModelConfig,
         instructions: String,
         messages: Vec<Message>,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
     ) -> Result<StartedAssistantStream> {
         let request = request::request(model, instructions, messages, tools, true, &self.compat)?;
         tracing::debug!(request = %request);

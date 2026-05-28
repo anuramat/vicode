@@ -7,10 +7,11 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
-use crate::agent::ToolSchemas;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::router::RuntimeHandle;
 use crate::agent::task::manager::AgentTaskManager;
+use crate::agent::tool::registry::TOOL_REGISTRY;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
@@ -106,16 +107,11 @@ impl Agent {
 }
 
 /// Tool set for an agent with `max_depth` remaining subagent budget.
-fn tools_for_depth(max_depth: u32) -> ToolSchemas {
-    let all = ToolSchemas::new();
+fn tools_for_depth(max_depth: u32) -> ToolRegistry {
     if max_depth > 0 {
-        return all;
+        return TOOL_REGISTRY.clone();
     }
-    all.iter()
-        .filter(|tool| tool.name != crate::tools::subagent::TOOL_NAME)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into()
+    TOOL_REGISTRY.without([crate::tools::subagent::TOOL_NAME])
 }
 
 #[cfg(test)]

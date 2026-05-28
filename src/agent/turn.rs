@@ -5,7 +5,7 @@ use tracing::trace;
 
 use super::Agent;
 use super::Assistant;
-use super::ToolSchemas;
+use super::ToolRegistry;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
 use crate::llm::history::AssistantEvent;
@@ -33,7 +33,7 @@ impl Agent {
     #[instrument(skip(self, tools, instructions, messages))]
     pub async fn spawn_turn(
         &mut self,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
         instructions: String,
         messages: Vec<Message>,
         turn_type: TurnType,
@@ -64,7 +64,7 @@ impl Agent {
     pub async fn turn(
         handle: TurnHandle,
         assistant: &Assistant,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
         instructions: String,
         messages: Vec<Message>,
     ) -> Result<()> {

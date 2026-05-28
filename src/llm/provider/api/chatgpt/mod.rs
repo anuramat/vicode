@@ -10,7 +10,7 @@ pub use auth::ChatgptAuthManager;
 pub use auth::provider_auth;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::llm::history::message::Message;
@@ -47,7 +47,7 @@ impl Api for ChatgptApi {
         model: ModelConfig,
         instructions: String,
         messages: Vec<Message>,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
     ) -> Result<StartedAssistantStream> {
         let compat = ApiCompatConfig::default();
         let inner = stream::run(&self.auth, CHATGPT_BASE_URL, || {

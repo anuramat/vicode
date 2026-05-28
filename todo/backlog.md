@@ -15,7 +15,6 @@
   overlay is mounted, when state is written to file
 - cleanup logic for stale agents/worktrees/etc
 - check that tool call timing records execution start+end
-- count tool schema in the token usage
 
 ## UI
 

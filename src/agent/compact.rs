@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::agent::task::sink::TurnType;
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::HistoryUpdate;
 
 impl Agent {
@@ -22,7 +22,7 @@ impl Agent {
     pub async fn compact_turn(&mut self) -> Result<()> {
         let messages = self.history().compact_turn_input()?;
         self.spawn_turn(
-            ToolSchemas::empty(),
+            ToolRegistry::empty(),
             self.history().instructions().to_string(),
             messages,
             TurnType::Compact,

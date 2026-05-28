@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use tokio::sync::OwnedSemaphorePermit;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
 use crate::llm::history::message::AsMessageText;
@@ -53,7 +53,7 @@ impl Api for ResponsesApi {
         model: ModelConfig,
         instructions: String,
         messages: Vec<Message>,
-        tools: ToolSchemas,
+        tools: ToolRegistry,
     ) -> Result<StartedAssistantStream> {
         let request = request(model, instructions, messages, tools, &self.compat)?;
         let inner = self.client.responses().create_stream(request).await?;
@@ -78,7 +78,7 @@ pub fn request(
     model: ModelConfig,
     instructions: String,
     mut messages: Vec<Message>,
-    tools: ToolSchemas,
+    tools: ToolRegistry,
     compat: &ApiCompatConfig,
 ) -> Result<responses::CreateResponse> {
     let mut builder = responses::CreateResponseArgs::default();
@@ -123,7 +123,7 @@ pub fn request(
         })
         .collect();
     builder.input(responses::InputParam::Items(input));
-    if !tools.0.is_empty() {
+    if !tools.is_empty() {
         builder.tools(tools);
     }
     Ok(builder.build()?)
@@ -149,17 +149,17 @@ impl Stream for ResponsesStream {
     }
 }
 
-impl From<ToolSchemas> for Vec<responses::Tool> {
-    fn from(schema: ToolSchemas) -> Self {
-        schema
-            .0
+impl From<ToolRegistry> for Vec<responses::Tool> {
+    fn from(registry: ToolRegistry) -> Self {
+        registry
+            .schemas
             .into_iter()
             .map(|tool| {
                 responses::Tool::Function(responses::FunctionTool {
-                    name: tool.name,
-                    parameters: Some(tool.parameters),
+                    name: tool.name().clone(),
+                    parameters: Some(tool.parameters().clone()),
                     strict: Some(true),
-                    description: Some(tool.description),
+                    description: Some(tool.description().clone()),
                 })
             })
             .collect::<Self>()

@@ -5,22 +5,22 @@ use async_openai::types::chat::ChatCompletionTools;
 use async_openai::types::chat::FunctionObject;
 use serde_json::Value;
 
-use crate::agent::tool::registry::ToolSchemas;
+use crate::agent::tool::registry::ToolRegistry;
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::history::message::ToolCallItem;
 use crate::utils::now;
 
-impl From<ToolSchemas> for Vec<ChatCompletionTools> {
-    fn from(schema: ToolSchemas) -> Self {
-        schema
-            .0
+impl From<ToolRegistry> for Vec<ChatCompletionTools> {
+    fn from(registry: ToolRegistry) -> Self {
+        registry
+            .schemas
             .into_iter()
             .map(|tool| {
                 ChatCompletionTools::Function(ChatCompletionTool {
                     function: FunctionObject {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.parameters),
+                        name: tool.name().clone(),
+                        description: Some(tool.description().clone()),
+                        parameters: Some(tool.parameters().clone()),
                         strict: Some(true),
                     },
                 })

@@ -31,6 +31,8 @@ pub use tokens::TokenCount;
 pub use tokens::count_text_tokens;
 use tracing::instrument;
 
+use crate::agent::tool::registry::TOOL_REGISTRY;
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct History {
     instructions: Instructions,
@@ -84,7 +86,7 @@ impl History {
     }
 
     pub fn token_count(&self) -> usize {
-        self.instructions.token_count() + self.state().token_count()
+        self.instructions.token_count() + self.state().token_count() + TOOL_REGISTRY.token_count()
     }
 
     fn increment(&mut self) {
@@ -320,5 +322,12 @@ mod tests {
         assert_eq!(history.generation(), 1);
         history.handle(1, HistoryUpdate::Pop(1)).unwrap();
         assert_eq!(history.generation(), 1);
+    }
+
+    #[test]
+    fn history_token_count_includes_tool_schemas() {
+        let history = History::new(String::new());
+
+        assert_eq!(history.token_count(), TOOL_REGISTRY.token_count());
     }
 }
