@@ -14,7 +14,6 @@
 - agent init is kinda fucked up, need clear boundaries on init status: when
   overlay is mounted, when state is written to file
 - cleanup logic for stale agents/worktrees/etc
-- check that tool call timing records execution start+end
 
 ## UI
 
