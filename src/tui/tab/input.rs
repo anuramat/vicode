@@ -181,7 +181,6 @@ mod tests {
     use crossterm::event::KeyModifiers;
     use git2::Repository;
     use similar_asserts::assert_eq;
-    use tokio::sync::mpsc::channel;
 
     use super::*;
     use crate::agent::AgentState;

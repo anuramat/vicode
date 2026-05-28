@@ -61,7 +61,7 @@ async fn spawn_subagent_async(
         snap
     };
 
-    let child_aid = AgentId::new(&project).await?;
+    let child_aid = router.allocate_agent_id().await?;
 
     let agent = {
         let history = snap.history.subagent(inherit_context);

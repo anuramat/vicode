@@ -1,15 +1,10 @@
 use std::fmt::Debug;
 use std::fmt::Display;
 
-use anyhow::Result;
 use derive_more::From;
 use derive_more::Into;
-use petname::Generator;
 use serde::Deserialize;
 use serde::Serialize;
-
-use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 
 #[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AgentId(String);
@@ -19,17 +14,16 @@ static GENERATOR: std::sync::LazyLock<petname::Petnames<'static>> =
 
 const SEPARATOR: &str = "-";
 const WORDS: u8 = 3;
-const PATIENCE: usize = 3;
+pub const PATIENCE: usize = 3;
 
 impl AgentId {
-    pub async fn new(project: &Project) -> Result<Self> {
-        for _ in 0..PATIENCE {
-            let id: Self = GENERATOR.generate_one(WORDS, SEPARATOR).unwrap().into();
-            if !project.agent_id_exists(&id).await? {
-                return Ok(id);
-            }
-        }
-        anyhow::bail!("{PATIENCE} name collisions when generating AgentId");
+    pub fn generate() -> Vec<Self> {
+        GENERATOR
+            .namer(WORDS, SEPARATOR)
+            .iter(&mut rand::rng())
+            .map(Into::into)
+            .take(PATIENCE)
+            .collect()
     }
 }
 

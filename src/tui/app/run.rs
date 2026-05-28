@@ -10,12 +10,19 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
+use tracing_appender::non_blocking::WorkerGuard;
 
 use super::App;
+use crate::agent::AgentState;
+use crate::agent::id::AgentId;
+use crate::config::Config;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
+use crate::project::Layout;
 use crate::project::Project;
 use crate::project::layout::LayoutTrait;
+use crate::project::lock::ProjectLock;
+use crate::project::state::StateStore;
 use crate::tui::app::AppEvent;
 use crate::tui::app::NotificationKind;
 use crate::tui::osc7::set_osc7;
@@ -23,10 +30,35 @@ use crate::tui::osc7::set_osc7;
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
 
 impl App<'_> {
-    pub async fn launch(project: Project) -> Result<()> {
-        let mut app = Self::new(project);
+    pub async fn launch(config: Config) -> Result<()> {
+        // figure out where we (will) store data etc
+        let layout = Layout::discover()?;
+        // start tracing as early as possible
+        let _guard = init_tracing(&layout)?;
+        // make sure we're the only instance in this project
+        let lock = ProjectLock::acquire(&layout)?;
+
+        // TODO move to AgentRouter?
+        ASSISTANT_POOL
+            .get_or_try_init(|| AssistantPool::from_config(&config))
+            .await?;
+
+        // read everything we need at startup, then hand the db to the writer task
+        let store = StateStore::open(layout.state_db())?;
+        let app_state = store.load_app()?;
+        let agent_ids = store.agent_ids()?;
+        let tab_agents = {
+            let agents: Result<Vec<(AgentId, AgentState)>> = app_state
+                .visible_order
+                .iter()
+                .map(|aid| store.load_agent(aid).map(|state| (aid.clone(), state)))
+                .collect();
+            agents?
+        };
+        let project = Project::new(config, layout, lock, store.into_handle());
+        let mut app = Self::new(project, agent_ids);
         let term = app.setup_terminal()?;
-        app.run(term).await?;
+        app.run(term, tab_agents).await?;
         Ok(())
     }
 
@@ -53,6 +85,7 @@ impl App<'_> {
     pub async fn run<B>(
         mut self,
         mut term: Terminal<B>,
+        tab_agents: Vec<(AgentId, AgentState)>,
     ) -> Result<()>
     where
         B: Backend,
@@ -61,12 +94,8 @@ impl App<'_> {
         self.cleanup().await?;
         // create shared lowerdir
         self.project.init().await?;
-        // load assistants
-        ASSISTANT_POOL
-            .get_or_try_init(|| AssistantPool::from_config(self.project.config()))
-            .await?;
         // load tabs
-        self.load_tabs().await?;
+        self.load_tabs(tab_agents).await?;
 
         tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
@@ -136,4 +165,18 @@ impl App<'_> {
             Ok::<(), anyhow::Error>(())
         });
     }
+}
+
+pub fn init_tracing(project: &impl LayoutTrait) -> Result<WorkerGuard> {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt;
+
+    use crate::config;
+
+    let dir = config::DIRS.create_state_directory("")?;
+    let appender = tracing_appender::rolling::never(&dir, format!("{}.log", project.id()));
+    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let filter = EnvFilter::from_default_env();
+    fmt().with_env_filter(filter).with_writer(writer).init();
+    Ok(guard)
 }

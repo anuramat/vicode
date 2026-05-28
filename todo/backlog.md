@@ -2,9 +2,8 @@
 
 ## fix/refactor/perf
 
-- fix agent state persistence
-  - debounce file writes
-  - maybe stop using json
+- put assistant pool into router (?)
+- set Durability=None for most agent saves
 - unwraps
 - grep for TODO XXX PERF TEST
 - better prompting in tool descriptions, check for inconsistencies

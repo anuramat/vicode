@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use anyhow::Result;
 use futures::future::AbortHandle;
@@ -61,6 +62,9 @@ pub enum RouterCommand {
         inherit_context: bool,
         reply: oneshot::Sender<Result<(AgentId, HistoryGeneration)>>,
     },
+    Allocate {
+        done: oneshot::Sender<Result<AgentId>>,
+    },
     Delete {
         aid: AgentId,
         done: oneshot::Sender<Result<()>>,
@@ -68,6 +72,7 @@ pub enum RouterCommand {
 }
 
 pub struct AgentRouter {
+    agent_ids: HashSet<AgentId>,
     runtimes: HashMap<AgentId, RuntimeHandle>,
     rx: Receiver<RouterCommand>,
     handle: AgentRouterHandle,
@@ -125,6 +130,12 @@ impl AgentRouterHandle {
         rx.await?
     }
 
+    pub async fn allocate_agent_id(&self) -> Result<AgentId> {
+        let (done, rx) = oneshot::channel();
+        self.tx.send(RouterCommand::Allocate { done }).await?;
+        rx.await?
+    }
+
     /// Submit a prompt and get a oneshot receiver for the turn result.
     pub async fn submit_oneshot(
         &self,
@@ -155,10 +166,12 @@ impl AgentRouter {
     pub fn spawn(
         app_tx: Sender<AppEvent>,
         project: Project,
+        agent_ids: HashSet<AgentId>,
     ) -> AgentRouterHandle {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
         let handle = AgentRouterHandle { tx, app_tx };
         let router = Self {
+            agent_ids,
             runtimes: HashMap::new(),
             rx,
             handle: handle.clone(),

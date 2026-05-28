@@ -22,24 +22,27 @@ impl<'a> App<'a> {
         self.select_tab(self.selected_tab_idx());
     }
 
-    pub async fn load_tabs(&mut self) -> Result<()> {
-        let state = self.load_app_state().await?;
+    pub async fn load_tabs(
+        &mut self,
+        agents: Vec<(AgentId, AgentState)>,
+    ) -> Result<()> {
+        // TODO get rid of Loading, just insert tabs here
         let mut tabs = IndexMap::new();
-        for aid in &state.visible_order {
+        for (aid, _) in &agents {
             tabs.insert(aid.clone(), TabEntry::Loading);
         }
         self.tabs = tabs;
         self.rebuild_tablist();
 
-        for aid in state.visible_order {
-            self.tx.send(AppEvent::LoadAgent(aid)).await?;
+        for (aid, agent_state) in agents {
+            self.load_agent(aid, agent_state).await?;
         }
         Ok(())
     }
 
     /// create a new primary agent, and a corresponding tab
     pub async fn new_tab(&mut self) -> Result<()> {
-        let aid = AgentId::new(&self.project).await?;
+        let aid = self.router.allocate_agent_id().await?;
         self.insert_loading_tab(aid.clone());
         self.tx.send(AppEvent::NewAgent(aid)).await?;
         Ok(())
@@ -59,8 +62,14 @@ impl<'a> App<'a> {
     pub async fn load_agent(
         &self,
         aid: AgentId,
+        state: AgentState,
     ) -> Result<()> {
-        let agent = Agent::load(self.project.clone(), self.router.clone(), aid.clone()).await?;
+        let agent = Agent::from_state(
+            self.project.clone(),
+            self.router.clone(),
+            aid.clone(),
+            state,
+        );
         let runtime = agent.spawn();
         self.router.register(aid, runtime).await?;
         Ok(())
@@ -106,13 +115,13 @@ impl<'a> App<'a> {
 
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
-        let original = self.selected_tab()?.aid.clone();
+        let original_aid = self.selected_tab()?.aid.clone();
 
-        let allocated = AgentId::new(&self.project).await?;
-        self.insert_loading_tab(allocated.clone());
+        let aid = self.router.allocate_agent_id().await?;
+        self.insert_loading_tab(aid.clone());
 
         self.router
-            .forward(original, ExternalEvent::DuplicateRequest(allocated))
+            .forward(original_aid, ExternalEvent::DuplicateRequest(aid))
             .await?;
         Ok(())
     }
@@ -253,7 +262,10 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let mut app = App::new(
+            crate::project::Project::new_test().unwrap(),
+            Default::default(),
+        );
 
         app.new_tab().await.unwrap();
 
@@ -265,7 +277,10 @@ mod tests {
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let mut app = App::new(
+            crate::project::Project::new_test().unwrap(),
+            Default::default(),
+        );
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))

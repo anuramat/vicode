@@ -21,6 +21,7 @@ impl AgentRouter {
                 inherit_context,
                 reply,
             } => self.dispatch_spawn_subagent(parent, inherit_context, reply),
+            RouterCommand::Allocate { done } => self.handle_allocate(done),
             RouterCommand::Delete { aid, done } => self.handle_delete(&aid, done),
         }
     }
@@ -30,9 +31,26 @@ impl AgentRouter {
         aid: AgentId,
         runtime: RuntimeHandle,
     ) {
+        self.agent_ids.insert(aid.clone());
         if let Some(prev) = self.runtimes.insert(aid, runtime) {
             prev.abort.abort();
         }
+    }
+
+    fn handle_allocate(
+        &mut self,
+        done: oneshot::Sender<Result<AgentId>>,
+    ) {
+        for aid in AgentId::generate() {
+            if self.agent_ids.insert(aid.clone()) {
+                drop(done.send(Ok(aid)));
+                return;
+            }
+        }
+        drop(done.send(Err(anyhow::anyhow!(
+            "{} collisions when generating agent id",
+            crate::agent::id::PATIENCE
+        ))));
     }
 
     async fn handle_forward(
@@ -94,11 +112,13 @@ mod tests {
         let (app_tx, app_rx) = channel(8);
         std::mem::forget(app_rx);
         let handle = AgentRouterHandle { tx, app_tx };
+        let project = Project::new_test().unwrap();
         AgentRouter {
+            agent_ids: Default::default(),
             runtimes: HashMap::new(),
             rx,
             handle,
-            project: Project::new_test().unwrap(),
+            project,
         }
     }
 
@@ -251,7 +271,7 @@ mod tests {
             .to_string();
 
         let (app_tx, _app_rx) = channel(8);
-        let handle = AgentRouter::spawn(app_tx, project.clone());
+        let handle = AgentRouter::spawn(app_tx, project.clone(), Default::default());
 
         let (parent_runtime, mut parent_rx) = fake_runtime();
         handle

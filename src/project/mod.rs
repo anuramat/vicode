@@ -1,5 +1,7 @@
 pub mod backend;
 pub mod layout;
+pub mod lock;
+pub mod state;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -17,6 +19,8 @@ use crate::project::backend::BackendKind;
 use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::LayoutTrait;
 use crate::project::layout::ambassador_impl_LayoutTrait;
+use crate::project::lock::ProjectLock;
+use crate::project::state::StateStoreHandle;
 use crate::sandbox::SandboxRunner;
 
 #[derive(Clone, Delegate, Debug)]
@@ -25,6 +29,8 @@ pub struct Project {
     layout: Layout,
     backend: BackendKind,
     config: Config,
+    _lock: ProjectLock,
+    store: StateStoreHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -36,14 +42,18 @@ pub struct Layout {
     pub data: PathBuf,
 }
 
-impl Project {
-    pub fn name(&self) -> String {
-        self.layout
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
+impl Layout {
+    /// discover the project layout from the current working directory
+    pub fn discover() -> Result<Self> {
+        // TODO discover vs open? normalize across codebase
+        let repo = Repository::discover(".")?;
+        let root = repo
+            .workdir()
+            .context("cannot run inside a bare repository")?
+            .to_path_buf();
+        let id = Self::id(&root);
+        let data = DIRS.create_data_directory(&id)?;
+        Ok(Self { root, id, data })
     }
 
     fn id(root: &Path) -> String {
@@ -58,55 +68,41 @@ impl Project {
         .to_string();
         format!("{name_prefix}{uuid}")
     }
+}
 
-    pub fn new(config: Config) -> Result<Self> {
-        // TODO discover vs open? normalize across codebase
-        let repo = Repository::discover(".")?;
-        let root = repo
-            .workdir()
-            .context("cannot run inside a bare repository")?
-            .to_path_buf();
-        let id = Self::id(&root);
-        let data = DIRS.create_data_directory(&id)?;
+impl Project {
+    /// assemble a project from its already-acquired lock and started state writer
+    pub fn new(
+        config: Config,
+        layout: Layout,
+        lock: ProjectLock,
+        store: StateStoreHandle,
+    ) -> Self {
         let backend = BackendKind::from_config(&config);
-        Ok(Self {
-            layout: Layout { root, id, data },
+        Self {
+            layout,
             backend,
             config,
-        })
+            _lock: lock,
+            store,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.layout
+            .root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
     }
 
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    #[cfg(test)]
-    pub fn new_test() -> Result<Self> {
-        use crate::project::backend::Cow;
-
-        let config = Config::test();
-        let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root)?;
-        let repo = Repository::init(&root)?;
-        let tree_id = repo.index()?.write_tree()?;
-        let tree = repo.find_tree(tree_id)?;
-        let signature = git2::Signature::now("vicode", "vicode@example.com")?;
-        repo.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])?;
-        let data = root.join(".vicode");
-        std::fs::create_dir_all(&data)?;
-        // tests shouldn't depend on fuse-overlayfs availability
-        let backend = BackendKind::Cow(Cow {
-            sandbox: config.sandbox.clone(),
-        });
-        Ok(Self {
-            layout: Layout {
-                id: Self::id(&root),
-                root,
-                data,
-            },
-            backend,
-            config,
-        })
+    pub fn store(&self) -> &StateStoreHandle {
+        &self.store
     }
 
     pub async fn mount_agent(
@@ -187,6 +183,7 @@ impl Project {
         let name = self.worktree_name(aid);
         crate::git::prune_worktree(&repo, &name)?;
         crate::git::delete_branch_if_at(&repo, &name, commit)?;
+        self.store.delete_agent(aid).await?;
         Ok(())
     }
 
@@ -199,5 +196,153 @@ impl Project {
         self.backend
             .new_agent_workdir(&self.layout, commit, aid, git)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+    use crate::agent::AgentContext;
+    use crate::agent::AgentState;
+    use crate::agent::AgentStatus;
+    use crate::llm::history::History;
+    use crate::llm::provider::assistant::ASSISTANT_POOL;
+    use crate::llm::provider::assistant::AssistantPool;
+    use crate::project::lock::ProjectLock;
+
+    impl Project {
+        pub fn new_test() -> Result<Self> {
+            use crate::project::backend::Cow;
+
+            let config = Config::test();
+            let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root)?;
+            let repo = Repository::init(&root)?;
+            let tree_id = repo.index()?.write_tree()?;
+            let tree = repo.find_tree(tree_id)?;
+            let signature = git2::Signature::now("vicode", "vicode@example.com")?;
+            repo.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])?;
+            let data = root.join(".vicode");
+            std::fs::create_dir_all(&data)?;
+            let layout = Layout {
+                id: Layout::id(&root),
+                root,
+                data,
+            };
+            // tests shouldn't depend on fuse-overlayfs availability
+            let backend = BackendKind::Cow(Cow {
+                sandbox: config.sandbox.clone(),
+            });
+            let _lock = ProjectLock::acquire(&layout)?;
+            let store = crate::project::state::StateStore::open(layout.state_db())?.into_handle();
+            Ok(Self {
+                layout,
+                backend,
+                config,
+                _lock,
+                store,
+            })
+        }
+    }
+
+    async fn agent_state(commit: String) -> AgentState {
+        let pool = ASSISTANT_POOL
+            .get_or_init(|| async {
+                AssistantPool::from_config(
+                    &Config::parse_with_defaults(
+                        r#"
+                primary_assistant = ["test"]
+                shell_cmd = ["bash", "-c"]
+
+                [sandbox]
+                kind = "bwrap"
+                bin = "bwrap"
+                args = []
+                stages = []
+
+                [providers.main]
+                api = "responses"
+                base_url = "https://api.example.com/v1"
+
+                [assistants.test]
+                provider = "main"
+                model = "gpt-test"
+                "#,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+            })
+            .await;
+        AgentState {
+            status: AgentStatus::default(),
+            assistant: pool.assistant(&pool.next_primary()).unwrap(),
+            max_depth: 1,
+            context: AgentContext {
+                commit,
+                history: History::new("".into()),
+            },
+        }
+    }
+
+    fn head_commit(project: &Project) -> String {
+        Repository::open(project.root())
+            .unwrap()
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn delete_agent_removes_workdir() {
+        let project = Project::new_test().unwrap();
+        let aid = AgentId::from("delete-me".to_string());
+        let commit = head_commit(&project);
+
+        project
+            .new_agent_workdir(&commit, &aid, true)
+            .await
+            .unwrap();
+        project
+            .store()
+            .save_agent(&aid, &agent_state(commit.clone()).await)
+            .await
+            .unwrap();
+
+        assert!(project.agent(&aid).exists());
+
+        project.delete_agent(&aid, &commit).await.unwrap();
+
+        assert!(!project.agent(&aid).exists());
+        assert_eq!(head_commit(&project), commit);
+    }
+
+    #[test]
+    fn project_holds_lock_until_dropped() {
+        let project = Project::new_test().unwrap();
+        let layout = Layout {
+            root: project.root().to_path_buf(),
+            id: project.id().into(),
+            data: project.data().to_path_buf(),
+        };
+
+        let err = ProjectLock::acquire(&layout).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "vicode is already running in {} (PID: {})",
+                project.id(),
+                std::process::id(),
+            )
+        );
+
+        drop(project);
+        let _lock = ProjectLock::acquire(&layout).unwrap();
     }
 }

@@ -8,13 +8,12 @@ use git2::Repository;
 use super::Layout;
 use crate::agent::id::AgentId;
 
-const APP_STATE_FILENAME: &str = "state.json";
 const AGENTS_DIRNAME: &str = "agents";
-const AGENT_STATE_FILENAME: &str = "state.json";
 pub const AGENT_WORKDIR_DIRNAME: &str = "workdir";
+const PROJECT_LOCK_FILENAME: &str = "project.lock";
+const STATE_DB_FILENAME: &str = "state.redb";
 const WORKTREE_NAME_PREFIX: &str = "vc-";
 
-#[async_trait::async_trait]
 #[delegatable_trait]
 pub trait LayoutTrait {
     fn root(&self) -> &std::path::Path;
@@ -23,13 +22,17 @@ pub trait LayoutTrait {
 
     fn id(&self) -> &str;
 
-    fn app_state(&self) -> PathBuf {
-        self.data().join(APP_STATE_FILENAME)
-    }
-
     fn gitdir(&self) -> Result<PathBuf> {
         let repo = Repository::open(self.root())?;
         Ok(repo.commondir().to_path_buf())
+    }
+
+    fn state_db(&self) -> PathBuf {
+        self.data().join(STATE_DB_FILENAME)
+    }
+
+    fn project_lock(&self) -> PathBuf {
+        self.data().join(PROJECT_LOCK_FILENAME)
     }
 
     fn agents(&self) -> PathBuf {
@@ -50,25 +53,11 @@ pub trait LayoutTrait {
         self.agent(aid).join(AGENT_WORKDIR_DIRNAME)
     }
 
-    fn agent_state(
-        &self,
-        aid: &AgentId,
-    ) -> PathBuf {
-        self.agent(aid).join(AGENT_STATE_FILENAME)
-    }
-
     fn worktree_name(
         &self,
         aid: &AgentId,
     ) -> String {
         format!("{WORKTREE_NAME_PREFIX}{aid}")
-    }
-
-    async fn agent_id_exists(
-        &self,
-        aid: &AgentId,
-    ) -> Result<bool> {
-        Ok(tokio::fs::try_exists(self.agent(aid)).await?)
     }
 }
 
@@ -77,7 +66,6 @@ pub fn worktree_name_to_agent_id(name: &str) -> Option<AgentId> {
         .map(|s| AgentId::from(s.to_string()))
 }
 
-#[async_trait::async_trait]
 impl LayoutTrait for Layout {
     fn root(&self) -> &Path {
         &self.root

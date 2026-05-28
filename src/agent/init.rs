@@ -15,7 +15,6 @@ use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 
 const CHANNEL_CAPACITY: usize = 100;
 
@@ -32,19 +31,6 @@ impl Agent {
         let max_depth = project.config().subagent_max_depth;
         let state = AgentState::new(commit, instructions, max_depth)?;
         state.save(&project, &id).await?;
-        Ok(Self::from_state(project, router, id, state))
-    }
-
-    /// load agent by id from disk
-    pub async fn load(
-        project: Project,
-        router: AgentRouterHandle,
-        id: AgentId,
-    ) -> Result<Self> {
-        let path = project.agent_state(&id);
-        let serialized = tokio::fs::read_to_string(path).await?;
-        let state: AgentState = serde_json::from_str(&serialized)?;
-
         Ok(Self::from_state(project, router, id, state))
     }
 
@@ -122,10 +108,10 @@ mod tests {
     use crate::agent::router::AgentRouter;
     use crate::config::Config;
     use crate::llm::provider::assistant::AssistantPool;
+    use crate::project::layout::LayoutTrait;
 
-    #[tokio::test]
-    async fn try_duplicate_registers_child_with_router() {
-        ASSISTANT_POOL
+    async fn assistant() -> crate::llm::provider::assistant::Assistant {
+        let pool = ASSISTANT_POOL
             .get_or_init(|| async {
                 AssistantPool::from_config(
                     &Config::parse_with_defaults(
@@ -155,10 +141,14 @@ mod tests {
                 .unwrap()
             })
             .await;
+        pool.assistant(&pool.next_primary()).unwrap()
+    }
 
+    #[tokio::test]
+    async fn try_duplicate_registers_child_with_router() {
         let project = Project::new_test().unwrap();
         let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(app_tx, project.clone());
+        let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
 
         let parent_aid = AgentId::from(format!("dup-parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);
@@ -172,23 +162,53 @@ mod tests {
             .id()
             .to_string();
 
-        let assistant = ASSISTANT_POOL.get().unwrap().assistant("test").unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant,
+            assistant: assistant().await,
             max_depth: 1,
             context: AgentContext {
-                commit,
+                commit: commit.clone(),
                 history: History::new("".into()),
             },
         };
         let parent = Agent::from_state(project.clone(), router.clone(), parent_aid.clone(), state);
 
-        let child_aid = AgentId::new(&project).await.unwrap();
+        let child_aid = router.allocate_agent_id().await.unwrap();
         parent.try_duplicate(child_aid.clone()).await.unwrap();
+
+        assert!(!project.agent(&child_aid).join("state.json").exists());
 
         // observable via router: deletion succeeds only if registered
         router.delete(child_aid).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn new_agent_saves_without_state_json() {
+        assistant().await;
+        let project = Project::new_test().unwrap();
+        let (app_tx, _app_rx) = channel(8);
+        let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
+        let aid = AgentId::from(format!("new-agent-{}", uuid::Uuid::new_v4()));
+        let repo = git2::Repository::open(project.root()).unwrap();
+        let commit = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string();
+
+        Agent::new(
+            project.clone(),
+            router.clone(),
+            aid.clone(),
+            commit.clone(),
+            "instructions".into(),
+        )
+        .await
+        .unwrap();
+
+        assert!(!project.agent(&aid).join("state.json").exists());
     }
 }
 
@@ -216,12 +236,9 @@ impl AgentState {
 
     pub async fn save(
         &self,
-        layout: &impl LayoutTrait,
+        project: &Project,
         id: &AgentId,
     ) -> Result<()> {
-        let serialized = serde_json::to_string_pretty(self)?;
-        let path = layout.agent_state(id);
-        tokio::fs::write(path, serialized).await?;
-        Ok(())
+        project.store().save_agent(id, self).await
     }
 }

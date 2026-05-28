@@ -1,7 +1,7 @@
 #![cfg_attr(test, allow(clippy::pedantic, clippy::nursery, clippy::style))]
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-compile_error!("vicode supports only Linux and macOS");
+compile_error!("unsupported platform");
 
 mod agent;
 mod cli;
@@ -17,26 +17,11 @@ mod tools;
 mod tui;
 mod utils;
 
-use anyhow::Result;
 use clap::Parser;
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt;
 use tui::app::App;
 
 use crate::cli::Cli;
 use crate::config::Config;
-use crate::project::Project;
-use crate::project::layout::LayoutTrait;
-
-fn init_tracing(project: &Project) -> Result<WorkerGuard> {
-    let dir = config::DIRS.create_state_directory("")?;
-    let appender = tracing_appender::rolling::never(&dir, format!("{}.log", project.id()));
-    let (writer, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::from_default_env();
-    fmt().with_env_filter(filter).with_writer(writer).init();
-    Ok(guard)
-}
 
 #[tokio::main]
 async fn main() {
@@ -47,10 +32,8 @@ async fn main() {
         return;
     }
 
-    let config = Config::load().unwrap();
-    let project = Project::new(config).unwrap();
-    let _guard = init_tracing(&project).unwrap();
-    let result = App::launch(project).await;
+    let config = Config::load().unwrap_or_else(|err| fatal(&err));
+    let result = App::launch(config).await;
     App::reset_terminal();
     if let Err(err) = result {
         fatal(&err);

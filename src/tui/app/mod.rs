@@ -4,6 +4,8 @@ pub mod key;
 pub mod run;
 pub mod tabs;
 
+use std::collections::HashSet;
+
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use indexmap::IndexMap;
@@ -20,7 +22,6 @@ use crate::agent::id::AgentId;
 use crate::agent::router::AgentRouter;
 use crate::agent::router::AgentRouterHandle;
 use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 use crate::tui::tab::TabEntry;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
@@ -45,7 +46,6 @@ pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
 
-    LoadAgent(AgentId),
     NewAgent(AgentId),
     ParentEvent(AgentId, ParentEvent),
     TabStatusChanged(AgentId),
@@ -93,10 +93,13 @@ const CHANNEL_CAPACITY: usize = 100;
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl App<'_> {
-    fn new(project: Project) -> Self {
+    fn new(
+        project: Project,
+        agent_ids: HashSet<AgentId>,
+    ) -> Self {
         // TODO figure out what should stay here, and what belongs to run()/launch()
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let router = AgentRouter::spawn(tx.clone(), project.clone());
+        let router = AgentRouter::spawn(tx.clone(), project.clone(), agent_ids);
 
         let project_name = project.name();
         let ctx = project.config().render;
@@ -137,19 +140,6 @@ impl App<'_> {
     }
 
     pub async fn save_app_state(&self) -> Result<()> {
-        let data = self.state();
-        let serialized = serde_json::to_string_pretty(&data)?;
-        let path = self.project.app_state();
-        tokio::fs::write(path, serialized).await?;
-        Ok(())
-    }
-
-    pub async fn load_app_state(&self) -> Result<AppState> {
-        let path = self.project.app_state();
-        if !path.exists() {
-            return Ok(AppState::default());
-        }
-        let serialized = tokio::fs::read_to_string(path).await?;
-        Ok(serde_json::from_str(&serialized)?)
+        self.project.store().save_app(&self.state()).await
     }
 }

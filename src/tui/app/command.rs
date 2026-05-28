@@ -245,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
         let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone());
+        let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
@@ -298,7 +298,10 @@ mod tests {
 
     #[tokio::test]
     async fn tab_focus_owns_contextual_scroll_commands() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let mut app = App::new(
+            crate::project::Project::new_test().unwrap(),
+            Default::default(),
+        );
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))

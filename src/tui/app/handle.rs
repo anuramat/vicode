@@ -26,9 +26,6 @@ impl App<'_> {
                 self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
-            LoadAgent(agent_id) => {
-                self.load_agent(agent_id).await?;
-            }
             NewAgent(agent_id) => {
                 self.new_agent(agent_id).await?;
             }
@@ -143,7 +140,10 @@ mod tests {
 
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let mut app = App::new(
+            crate::project::Project::new_test().unwrap(),
+            Default::default(),
+        );
         let aid = AgentId::from("a".to_string());
         app.tabs.insert(aid.clone(), TabEntry::Loading);
 
@@ -158,7 +158,10 @@ mod tests {
 
     #[tokio::test]
     async fn hidden_parent_error_is_ignored() {
-        let mut app = App::new(crate::project::Project::new_test().unwrap());
+        let mut app = App::new(
+            crate::project::Project::new_test().unwrap(),
+            Default::default(),
+        );
 
         app.handle_parent_event(
             AgentId::from("hidden".to_string()),
@@ -173,7 +176,7 @@ mod tests {
     #[tokio::test]
     async fn assistant_set_updates_tab_state() {
         let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone());
+        let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();

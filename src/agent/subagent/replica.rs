@@ -80,7 +80,7 @@ mod tests {
     async fn failing_replica_does_not_leak_sibling_runtimes() {
         let project = Project::new_test().unwrap();
         let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(app_tx, project.clone());
+        let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
         let parent_aid = AgentId::from(format!("replica-parent-{}", uuid::Uuid::new_v4()));
 
         // register N fake runtimes
@@ -126,7 +126,7 @@ mod tests {
     async fn spawn_errors_appear_in_report_alongside_live_results() {
         let project = Project::new_test().unwrap();
         let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(app_tx, project.clone());
+        let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
         let parent_aid = AgentId::from(format!("replica-mixed-{}", uuid::Uuid::new_v4()));
 
         let aid = AgentId::from(format!("replica-live-{}", uuid::Uuid::new_v4()));
