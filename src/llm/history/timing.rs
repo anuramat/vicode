@@ -21,16 +21,21 @@ pub trait Timing {
     }
 
     fn duration_str(&self) -> String {
-        self.ready_at().or_else(|| self.ended_at()).map_or_else(
-            || "tbd".to_string(),
-            |end| {
-                let start = self.started_at().unwrap_or_else(|| self.created_at());
-                #[allow(clippy::cast_precision_loss)]
-                let ms = end.saturating_sub(start) as f64;
-                let s: f64 = ms / 1000_f64;
-                format!("{s:.1}s")
-            },
-        )
+        let start = self.started_at().unwrap_or_else(|| self.created_at());
+        let (end, in_progress) = self
+            .ready_at()
+            .or_else(|| self.ended_at())
+            .map_or_else(|| (now(), true), |t| (t, false));
+
+        #[allow(clippy::cast_precision_loss)]
+        let ms = end.saturating_sub(start) as f64;
+        let s: f64 = ms / 1000_f64;
+
+        if in_progress {
+            format!("{s:.1}s+")
+        } else {
+            format!("{s:.1}s")
+        }
     }
 }
 
