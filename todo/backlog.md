@@ -3,7 +3,9 @@
 ## fix/refactor/perf
 
 - put assistant pool into router (?)
-- set Durability=None for most agent saves
+- PERF in persistence:
+  - set Durability=None for most agent saves to write less
+  - debounce per-agent writes to serialize less
 - unwraps
 - grep for TODO XXX PERF TEST
 - better prompting in tool descriptions, check for inconsistencies

@@ -27,8 +27,6 @@ impl Tab<'_> {
             None
         };
         self.history_mut().handle(generation, event)?;
-
-        // XXX proper handling -- resync and show error notification
         if let Some(input) = input {
             self.input.prepend_text(input);
             self.update_input_title();
@@ -40,7 +38,6 @@ impl Tab<'_> {
         Ok(())
     }
 
-    // XXX does this make sense
     pub async fn set_state(
         &mut self,
         status: AgentStatus,

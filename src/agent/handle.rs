@@ -44,7 +44,6 @@ pub enum AgentEvent {
 pub enum ParentEvent {
     Started(Box<crate::agent::AgentState>),
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
-    // XXX maybe status update should be a variant of history update?
     StatusUpdate(AgentStatus),
     AssistantSet(Assistant),
     Error(String),
