@@ -51,6 +51,7 @@ impl App<'_> {
             let agents: Result<Vec<(AgentId, AgentState)>> = app_state
                 .visible_order
                 .iter()
+                .filter(|aid| agent_ids.contains(aid))
                 .map(|aid| store.load_agent(aid).map(|state| (aid.clone(), state)))
                 .collect();
             agents?

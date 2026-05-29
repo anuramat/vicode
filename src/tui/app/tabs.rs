@@ -110,6 +110,7 @@ impl<'a> App<'a> {
         tab.refresh_file_completion()?;
         tab.refresh_info().await?;
         self.rebuild_tablist();
+        self.save_app_state().await?;
         Ok(())
     }
 
@@ -153,6 +154,7 @@ impl<'a> App<'a> {
         router.delete(aid.clone()).await?;
         self.project.delete_agent(&aid, &commit).await?;
         self.rebuild_tablist();
+        self.save_app_state().await?;
         Ok(())
     }
 
