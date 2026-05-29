@@ -206,7 +206,6 @@ mod tests {
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
-    use crate::tui::tab::TabEntry;
     use crate::tui::widgets::input::CompletionItem;
     use crate::tui::widgets::input::CompletionSource;
     use crate::tui::widgets::input::Input;
@@ -258,12 +257,11 @@ mod tests {
             },
         };
         let mut tab = Tab::new(
-            crate::agent::router::AgentRouter::test_handle(),
+            Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
             state,
             &project,
-        )
-        .unwrap();
+        );
         tab.input.input = Input::new(InputOpts {
             source: CompletionSource::Freeform(vec![(
                 '@',
@@ -274,7 +272,7 @@ mod tests {
         });
         tab.insert_mode(true);
 
-        app.tabs.insert(aid, TabEntry::Ready(tab));
+        app.tabs.insert(aid, tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
         for ch in "open @sr".chars() {
@@ -302,9 +300,22 @@ mod tests {
             crate::project::Project::new_test().unwrap(),
             Default::default(),
         );
+        let project = app.project.clone();
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: assistant().await,
+            max_depth: 1,
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
+        };
         app.tabs = ["a", "b"]
             .into_iter()
-            .map(|id| (AgentId::from(id.to_string()), TabEntry::Loading))
+            .map(|id| {
+                let aid = AgentId::from(id.to_string());
+                (aid.clone(), Tab::new(None, aid, state.clone(), &project))
+            })
             .collect();
         app.focus = AppFocus::Body;
         app.rebuild_tablist();

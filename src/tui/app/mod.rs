@@ -17,12 +17,13 @@ use tokio::sync::mpsc::channel;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
+use crate::agent::AgentState;
 use crate::agent::handle::ParentEvent;
 use crate::agent::id::AgentId;
 use crate::agent::router::AgentRouter;
 use crate::agent::router::AgentRouterHandle;
 use crate::project::Project;
-use crate::tui::tab::TabEntry;
+use crate::tui::tab::Tab;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
 use crate::tui::widgets::tablist::TabList;
@@ -46,7 +47,7 @@ pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
 
-    NewAgent(AgentId),
+    NewAgent(AgentId, Box<AgentState>),
     ParentEvent(AgentId, ParentEvent),
     TabStatusChanged(AgentId),
 
@@ -73,7 +74,7 @@ pub struct App<'a> {
     pub dirty: bool,
 
     /// UI for primary agents
-    pub tabs: IndexMap<AgentId, TabEntry<'a>>,
+    pub tabs: IndexMap<AgentId, Tab<'a>>,
 
     /// project name shown in status line
     pub project_name: String,

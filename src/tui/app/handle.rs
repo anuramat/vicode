@@ -26,8 +26,8 @@ impl App<'_> {
                 self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
-            NewAgent(agent_id) => {
-                self.new_agent(agent_id).await?;
+            NewAgent(agent_id, state) => {
+                self.new_agent(agent_id, *state).await?;
             }
             ParentEvent(agent_id, event) => {
                 self.handle_parent_event(agent_id, event).await?;
@@ -54,31 +54,25 @@ impl App<'_> {
         #[allow(clippy::enum_glob_use)]
         use ParentEvent::*;
 
-        // events for agents without a tab (subagents) are dropped — the
-        // router still owns the runtime, completion is delivered via oneshot.
+        let tab = self.tab_mut_by_aid(&aid)?;
         match event {
             Started(state) => {
-                self.handle_started(&aid, *state)?;
-                self.tab_mut_by_aid(&aid)?.refresh_info().await?;
+                // TODO this calls tab_mut_by_aid again, which is sad
+                self.handle_started(&aid, *state).await?;
             }
             HistoryUpdate(loc, event) => {
-                self.tab_mut_by_aid(&aid)?.update(loc, event)?;
+                tab.update(loc, event)?;
             }
             Error(msg) => {
-                if self.tabs.contains_key(&aid) {
-                    self.notify(NotificationKind::Error, msg);
-                }
+                self.notify(NotificationKind::Error, msg);
             }
             StatusUpdate(status) => {
-                let tab = self.tab_mut_by_aid(&aid)?;
                 if tab.set_state(status).await? {
                     tab.refresh_info().await?;
                 }
             }
             AssistantSet(assistant) => {
-                let tab = self.tab_mut_by_aid(&aid)?;
                 tab.state.assistant = assistant;
-                tab.refresh_info().await?;
                 self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
             }
         }
@@ -101,7 +95,6 @@ mod tests {
     use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
     use crate::tui::tab::Tab;
-    use crate::tui::tab::TabEntry;
 
     async fn test_assistant() -> Assistant {
         crate::llm::provider::assistant::ASSISTANT_POOL
@@ -145,7 +138,19 @@ mod tests {
             Default::default(),
         );
         let aid = AgentId::from("a".to_string());
-        app.tabs.insert(aid.clone(), TabEntry::Loading);
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: test_assistant().await,
+            max_depth: 1,
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
+        };
+        app.tabs.insert(
+            aid.clone(),
+            Tab::new(None, aid.clone(), state, &app.project),
+        );
 
         app.handle_parent_event(aid, ParentEvent::Error("oops".into()))
             .await
@@ -154,23 +159,6 @@ mod tests {
         let notification = app.notification.expect("expected notification");
         assert!(matches!(notification.kind, NotificationKind::Error));
         assert_eq!(notification.msg, "oops");
-    }
-
-    #[tokio::test]
-    async fn hidden_parent_error_is_ignored() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
-            Default::default(),
-        );
-
-        app.handle_parent_event(
-            AgentId::from("hidden".to_string()),
-            ParentEvent::Error("oops".into()),
-        )
-        .await
-        .unwrap();
-
-        assert!(app.notification.is_none());
     }
 
     #[tokio::test]
@@ -192,13 +180,12 @@ mod tests {
             },
         };
         let tab = Tab::new(
-            crate::agent::router::AgentRouter::test_handle(),
+            Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
             state,
             &project,
-        )
-        .unwrap();
-        app.tabs.insert(aid.clone(), TabEntry::Ready(tab));
+        );
+        app.tabs.insert(aid.clone(), tab);
 
         app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet(assistant.clone()))
             .await

@@ -80,7 +80,7 @@ async fn spawn_subagent_async(
         project
             .duplicate_agent_workdir(&parent_aid, &child_aid, &snap.commit, false)
             .await?;
-        let agent = Agent::from_state(project, router.clone(), child_aid.clone(), state);
+        let agent = Agent::new(project, router.clone(), child_aid.clone(), state);
         agent.save().await?;
         agent
     };

@@ -50,10 +50,12 @@ impl Tab<'_> {
         }
         self.state.status = status;
         self.refresh_file_completion()?;
-        self.router
-            .app_tx()
-            .send(AppEvent::TabStatusChanged(self.aid.clone()))
-            .await?;
+        if let Some(router) = &self.router {
+            router
+                .app_tx()
+                .send(AppEvent::TabStatusChanged(self.aid.clone()))
+                .await?;
+        }
         Ok(true)
     }
 

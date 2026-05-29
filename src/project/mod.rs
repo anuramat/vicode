@@ -183,6 +183,7 @@ impl Project {
         let name = self.worktree_name(aid);
         crate::git::prune_worktree(&repo, &name)?;
         crate::git::delete_branch_if_at(&repo, &name, commit)?;
+        // TODO check if anyone uses the commit snapshot lowerdir, delete if not
         self.store.delete_agent(aid).await?;
         Ok(())
     }

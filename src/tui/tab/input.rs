@@ -35,6 +35,7 @@ impl Tab<'_> {
         &self,
         prev: bool,
     ) -> Result<()> {
+        let router = self.router()?;
         if !self.state.status.idle() {
             return Ok(());
         }
@@ -42,7 +43,7 @@ impl Tab<'_> {
         let id = pool
             .switch_assistant(&self.state.assistant.id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
-        self.router
+        router
             .forward(self.aid.clone(), ExternalEvent::SetAssistant(id))
             .await?;
         Ok(())
@@ -84,6 +85,7 @@ impl Tab<'_> {
     }
 
     pub async fn submit(&mut self) -> Result<()> {
+        self.router()?;
         let text = self.input.take_area().lines().join("\n").trim().to_string();
         self.input.set_focus(false);
         if text.is_empty() {
@@ -95,53 +97,50 @@ impl Tab<'_> {
             generation: self.history().generation(),
         };
 
-        self.router
+        self.router()?
             .forward(self.aid.clone(), ExternalEvent::Submit(prompt, None))
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn retry(&self) -> Result<()> {
-        self.router
+        self.router()?
             .forward(self.aid.clone(), ExternalEvent::Retry)
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn compact(
         &self,
         n: Option<&str>,
     ) -> Result<()> {
+        self.router()?;
         let n = if let Some(n) = n {
             n.parse()
                 .with_context(|| format!("invalid compact number: {n}"))?
         } else {
             self.history().state().len()
         };
-        self.router
+        self.router()?
             .forward(self.aid.clone(), ExternalEvent::Compact(n))
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn abort(&self) -> Result<()> {
-        self.router
+        self.router()?
             .forward(self.aid.clone(), ExternalEvent::Abort)
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn undo(
         &self,
         n: usize,
     ) -> Result<()> {
-        if n > self.history().state().len() {
-            return Ok(());
-        }
-        self.router
+        anyhow::ensure!(
+            n <= self.history().state().len(),
+            "cannot undo {n} messages, history is shorter"
+        );
+        self.router()?
             .forward(self.aid.clone(), ExternalEvent::Undo(n))
-            .await?;
-        Ok(())
+            .await
     }
 
     pub async fn undo_user(&self) -> Result<()> {
@@ -153,8 +152,7 @@ impl Tab<'_> {
             return Ok(());
         };
         let n = messages.len() - loc;
-        self.undo(n).await?;
-        Ok(())
+        self.undo(n).await
     }
 
     pub fn key_insert(
@@ -169,7 +167,6 @@ impl Tab<'_> {
         &mut self,
         content: &str,
     ) {
-        // TODO instead of putting it in the input area, show "pasted: <contents>" block above input area or something
         self.input.textarea.insert_str(content);
         self.update_input_title();
     }
@@ -238,7 +235,7 @@ mod tests {
                 history: History::new("".into()),
             },
         };
-        let mut tab = Tab::new(AgentRouter::test_handle(), aid, state, &project).unwrap();
+        let mut tab = Tab::new(Some(AgentRouter::test_handle()), aid, state, &project);
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',
@@ -295,5 +292,26 @@ mod tests {
         commit_file(&repo, &workdir, "src.rs");
 
         assert_eq!(tracked_files(&workdir).unwrap(), vec!["src.rs"]);
+    }
+
+    #[tokio::test]
+    async fn preview_submit_keeps_input() {
+        let project = Project::new_test().unwrap();
+        let aid = AgentId::from("preview-submit".to_string());
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: assistant().await,
+            max_depth: 1,
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("".into()),
+            },
+        };
+        let mut tab = Tab::new(None, aid, state, &project);
+        tab.input.textarea.insert_str("do work");
+
+        drop(tab.submit().await);
+
+        assert_eq!(tab.input.textarea.lines(), ["do work"]);
     }
 }

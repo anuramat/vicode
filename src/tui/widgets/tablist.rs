@@ -8,7 +8,7 @@ use ratatui::widgets::ListState;
 use ratatui::widgets::StatefulWidget;
 
 use crate::agent::id::AgentId;
-use crate::tui::tab::TabEntry;
+use crate::tui::tab::Tab;
 
 fn style() -> Style {
     Style::default().add_modifier(Modifier::REVERSED)
@@ -29,11 +29,11 @@ pub struct TabListState(ListState);
 impl<'a> TabList<'a> {
     pub fn rebuild(
         &mut self,
-        tabs: &IndexMap<AgentId, TabEntry<'a>>,
+        tabs: &IndexMap<AgentId, Tab<'a>>,
     ) {
         let items = tabs
             .iter()
-            .map(|(aid, tab)| ListItem::new(tab.label(aid)))
+            .map(|(_, tab)| ListItem::new(tab.label()))
             .collect::<Vec<_>>();
         self.widget = List::new(items).highlight_style(style()).into();
     }

@@ -6,7 +6,6 @@ use super::layout::AppPaneLayout;
 use super::layout::TABLIST_WIDTH;
 use crate::tui::app::App;
 use crate::tui::app::AppFocus;
-use crate::tui::tab::TabEntry;
 use crate::tui::widgets::logo::LOGO_VARIANTS;
 
 const CONSTRAINTS: [Constraint; 2] = [Constraint::Min(0), Constraint::Length(1)];
@@ -42,20 +41,15 @@ impl App<'_> {
             let ctx = self.ctx;
             if let Some(idx) = self.selected_tab_idx() {
                 if let Some((_, tab)) = self.tabs.get_index_mut(idx) {
-                    match tab {
-                        TabEntry::Loading => tab.render(panes.body, frame.buffer_mut(), ctx),
-                        TabEntry::Ready(tab) => {
-                            let body = panes
-                                .prerender_body(self.focus == AppFocus::Body, frame.buffer_mut());
-                            tab.render(body, frame.buffer_mut(), ctx);
-                            if let Some(inner) = panes.info.prerender(
-                                body_area,
-                                self.focus == AppFocus::Info,
-                                frame.buffer_mut(),
-                            ) {
-                                tab.info.render(inner, frame.buffer_mut());
-                            }
-                        }
+                    let body =
+                        panes.prerender_body(self.focus == AppFocus::Body, frame.buffer_mut());
+                    tab.render(body, frame.buffer_mut(), ctx);
+                    if let Some(inner) = panes.info.prerender(
+                        body_area,
+                        self.focus == AppFocus::Info,
+                        frame.buffer_mut(),
+                    ) {
+                        tab.info.render(inner, frame.buffer_mut());
                     }
                 }
             } else {
