@@ -180,6 +180,7 @@ mod tests {
 
     use super::*;
     use crate::llm::history::AssistantEvent;
+    use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::message::AssistantItem;
@@ -192,6 +193,24 @@ mod tests {
 
     fn compact_response(event: AssistantEvent) -> HistoryUpdate {
         HistoryUpdate::CompactResponse(event)
+    }
+
+    fn compact_start(n_drop: usize) -> HistoryUpdate {
+        HistoryUpdate::CompactStart(CompactStart::new(n_drop))
+    }
+
+    fn completed(items: Vec<AssistantItem>) -> AssistantEvent {
+        AssistantEvent::Completed {
+            items,
+            ended_at: 99,
+        }
+    }
+
+    fn failed(message: &str) -> AssistantEvent {
+        AssistantEvent::Failed {
+            message: message.into(),
+            ended_at: 99,
+        }
     }
 
     fn output_item(
@@ -239,9 +258,7 @@ mod tests {
         }
         let generation = history.generation();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 2 })
-            .unwrap();
+        history.handle(generation, compact_start(2)).unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();
@@ -257,7 +274,7 @@ mod tests {
         history
             .handle(
                 generation,
-                compact_response(AssistantEvent::Completed(vec![output_item("out", None)])),
+                compact_response(completed(vec![output_item("out", None)])),
             )
             .unwrap();
 
@@ -289,17 +306,12 @@ mod tests {
         let generation = history.generation();
         let total_tokens = history.state().token_count();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
+        history.handle(generation, compact_start(1)).unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Failed("oops".into())),
-            )
+            .handle(generation, compact_response(failed("oops")))
             .unwrap();
 
         assert!(history.compacting());
@@ -333,9 +345,7 @@ mod tests {
         }
         let generation = history.generation();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
+        history.handle(generation, compact_start(1)).unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();
@@ -349,10 +359,7 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Failed("oops".into())),
-            )
+            .handle(generation, compact_response(failed("oops")))
             .unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
@@ -369,7 +376,7 @@ mod tests {
         history
             .handle(
                 generation,
-                compact_response(AssistantEvent::Completed(vec![output_item("out-2", None)])),
+                compact_response(completed(vec![output_item("out-2", None)])),
             )
             .unwrap();
 
@@ -395,18 +402,13 @@ mod tests {
         let generation = history.generation();
         let total_tokens = history.state().token_count();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
+        history.handle(generation, compact_start(1)).unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();
 
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Completed(vec![])),
-            )
+            .handle(generation, compact_response(completed(vec![])))
             .unwrap();
 
         assert!(!history.compacting());
@@ -436,9 +438,7 @@ mod tests {
         push(&mut history, Message::User(UserMessage::new("last".into())));
         let generation = history.generation();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 2 })
-            .unwrap();
+        history.handle(generation, compact_start(2)).unwrap();
         history
             .handle(generation, compact_response(AssistantEvent::Created(0)))
             .unwrap();

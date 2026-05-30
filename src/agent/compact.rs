@@ -41,6 +41,7 @@ mod tests {
     use crate::agent::task::manager::AgentTaskManager;
     use crate::config::Config;
     use crate::llm::history::History;
+    use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
@@ -109,7 +110,10 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::UserMessage("short".into()))
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("short".into())),
+            )
             .unwrap();
 
         agent.init_compact(0).await.unwrap();
@@ -155,7 +159,7 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::CompactStart { n_drop: 0 })
+            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(0)))
             .unwrap();
 
         let entries = &agent.history().compact_turn_input().unwrap();

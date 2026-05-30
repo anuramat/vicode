@@ -134,6 +134,17 @@ mod tests {
         HistoryUpdate::TurnResponse(event)
     }
 
+    fn completed(items: Vec<AssistantItem>) -> AssistantEvent {
+        AssistantEvent::Completed { items, ended_at: 9 }
+    }
+
+    fn failed(message: &str) -> AssistantEvent {
+        AssistantEvent::Failed {
+            message: message.into(),
+            ended_at: 9,
+        }
+    }
+
     fn output_item_at(
         id: &str,
         queued_ms: u64,
@@ -250,6 +261,7 @@ mod tests {
                 response(AssistantEvent::Delta(Delta {
                     id: "out".into(),
                     delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
+                    received_at: 3,
                 })),
             )
             .unwrap();
@@ -284,11 +296,7 @@ mod tests {
         history
             .handle(
                 0,
-                response(AssistantEvent::Completed(vec![output_item_at(
-                    "out",
-                    1,
-                    Some(2),
-                )])),
+                response(completed(vec![output_item_at("out", 1, Some(2))])),
             )
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
@@ -298,6 +306,7 @@ mod tests {
             panic!("expected output item");
         };
         assert_eq!(item.ended_at, None);
+        assert_eq!(msg.ended_at, Some(9));
         assert!(matches!(msg.status, AssistantStatus::Success));
     }
 
@@ -308,10 +317,7 @@ mod tests {
             .handle(0, response(AssistantEvent::Created(0)))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Failed("aborted by user".into())),
-            )
+            .handle(0, response(failed("aborted by user")))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -320,5 +326,6 @@ mod tests {
             msg.status,
             AssistantStatus::Error(ref text) if text == "aborted by user"
         ));
+        assert_eq!(msg.ended_at, Some(9));
     }
 }

@@ -238,8 +238,8 @@ mod tests {
 
     use super::ChatCompletionsStream;
     use super::StreamState;
+    use crate::llm::history::AssistantEvent;
     use crate::llm::history::message::AssistantItem;
-    use crate::llm::provider::api::StreamEvent;
 
     #[test]
     fn chat_text_chunk_creates_output_before_delta() {
@@ -269,8 +269,8 @@ mod tests {
             None,
         );
 
-        assert!(matches!(events[0], StreamEvent::ItemAdded(_)));
-        assert!(matches!(events[1], StreamEvent::Delta(_)));
+        assert!(matches!(events[0], AssistantEvent::Item(_)));
+        assert!(matches!(events[1], AssistantEvent::Delta(_)));
     }
 
     #[test]
@@ -346,9 +346,9 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [
-                StreamEvent::ItemDone(AssistantItem::ToolCall(_)),
-                StreamEvent::Completed(_)
-            ]
+                AssistantEvent::Item(item),
+                AssistantEvent::Completed { .. }
+            ] if matches!(item.as_ref(), AssistantItem::ToolCall(_))
         ));
     }
 
@@ -413,15 +413,15 @@ mod tests {
 
         assert!(matches!(
             stream.next().await,
-            Some(Ok(StreamEvent::ItemAdded(_)))
+            Some(Ok(AssistantEvent::Item(_)))
         ));
         assert!(matches!(
             stream.next().await,
-            Some(Ok(StreamEvent::Delta(_)))
+            Some(Ok(AssistantEvent::Delta(_)))
         ));
         assert!(matches!(
             stream.next().await,
-            Some(Ok(StreamEvent::Completed(_)))
+            Some(Ok(AssistantEvent::Completed { .. }))
         ));
         assert!(stream.next().await.is_none());
     }

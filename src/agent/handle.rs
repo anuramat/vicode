@@ -383,6 +383,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::config::Config;
+    use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
@@ -498,7 +499,7 @@ mod tests {
             events.as_slice(),
             [
                 ParentEvent::HistoryUpdate(_, HistoryUpdate::GenerationIncremented),
-                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))),
+                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed { message: msg, .. })),
                 ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
                     crate::llm::history::TurnStatus::Failed(status),
                 )),
@@ -653,7 +654,7 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
+            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1)))
             .unwrap();
         agent
             .handle_history(
@@ -665,7 +666,7 @@ mod tests {
         agent
             .handle_history(
                 0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed("oops".into())),
+                HistoryUpdate::CompactResponse(AssistantEvent::failed("oops".into())),
             )
             .await
             .unwrap();

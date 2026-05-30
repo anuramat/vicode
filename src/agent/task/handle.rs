@@ -42,8 +42,10 @@ mod tests {
     use crate::agent::handle::ParentEvent;
     use crate::config::Config;
     use crate::llm::history::AssistantEvent;
+    use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
+    use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
@@ -133,13 +135,16 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::UserMessage("first".into()))
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("first".into())),
+            )
             .unwrap();
         agent
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
+            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1)))
             .unwrap();
         agent
             .state
@@ -156,7 +161,7 @@ mod tests {
             .history
             .handle(
                 0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed("oops".into())),
+                HistoryUpdate::CompactResponse(AssistantEvent::failed("oops".into())),
             )
             .unwrap();
         agent
@@ -221,7 +226,10 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::UserMessage("first".into()))
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("first".into())),
+            )
             .unwrap();
         agent
             .handle_history(0, HistoryUpdate::TurnResponse(AssistantEvent::Created(0)))
@@ -230,7 +238,7 @@ mod tests {
         agent
             .handle_history(
                 0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Failed("oops".into())),
+                HistoryUpdate::TurnResponse(AssistantEvent::failed("oops".into())),
             )
             .await
             .unwrap();
@@ -270,7 +278,7 @@ mod tests {
                     ),
                     ParentEvent::HistoryUpdate(
                         _,
-                        HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
+                        HistoryUpdate::TurnResponse(AssistantEvent::Failed { message: msg, .. })
                     ),
                     ParentEvent::Error(error),
                     ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
