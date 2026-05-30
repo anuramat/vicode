@@ -48,19 +48,28 @@
             perl # for OpenSSL
           ];
 
-          devTools = with pkgs; [
-            just
-            fenixPkgs.stable.cargo
-            fenixPkgs.stable.clippy
-            fenixPkgs.stable.rust-src
-            fenixPkgs.stable.rustc
-            rustfmt
-            cargo-udeps
-            cargo-edit
-            cargo-expand
-            cargo-flamegraph
-            cargo-insta
-          ];
+          devTools =
+            let
+              rustCore = fenixPkgs.stable.withComponents [
+                "cargo"
+                "clippy"
+                "rust-src"
+                "rust-analyzer"
+                "rustc"
+              ];
+            in
+            [
+              rustCore
+              rustfmt
+            ]
+            ++ (with pkgs; [
+              just
+              cargo-udeps
+              cargo-edit
+              cargo-expand
+              cargo-flamegraph
+              cargo-insta
+            ]);
 
           mkCraneLib =
             {
