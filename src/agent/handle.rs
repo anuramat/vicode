@@ -25,6 +25,7 @@ use crate::llm::history::HistoryUpdate;
 use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
@@ -168,7 +169,7 @@ impl Agent {
                     .status()
                     .is_some_and(|s| s.failable())
                 {
-                    Some(HistoryUpdate::TurnResponse(AssistantEvent::Failed(
+                    Some(HistoryUpdate::TurnResponse(AssistantEvent::failed(
                         ABORTED_BY_USER.into(),
                     )))
                 } else {
@@ -236,8 +237,11 @@ impl Agent {
             generation,
         }: UserPrompt,
     ) -> Result<()> {
-        self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
-            .await?;
+        self.handle_history(
+            generation,
+            history::HistoryUpdate::UserMessage(UserMessage::new(text)),
+        )
+        .await?;
         self.increment_generation().await?;
         if multiplier <= 1 {
             self.start_turn().await?;
@@ -259,9 +263,9 @@ impl Agent {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
                 self.execute_tool_calls(item);
             }
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
-            | HistoryUpdate::CompactResponse(AssistantEvent::Failed(msg)) => {
-                error!("response error in agent {}: {}", self.id, msg);
+            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. })
+            | HistoryUpdate::CompactResponse(AssistantEvent::Failed { message, .. }) => {
+                error!("response error in agent {}: {}", self.id, message);
             }
             HistoryUpdate::GenerationIncremented
             | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))

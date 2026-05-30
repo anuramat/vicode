@@ -8,7 +8,6 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantMessage;
 use crate::llm::history::message::AssistantStatus;
 use crate::llm::history::timing::Timing;
-use crate::llm::history::timing::now;
 use crate::llm::history::tokens::TokenCount;
 
 impl HistoryState {
@@ -30,11 +29,11 @@ impl HistoryState {
             AssistantEvent::Item(item) => {
                 self.push_item(*item)?;
             }
-            AssistantEvent::Completed(items) => {
-                self.complete_response(items)?;
+            AssistantEvent::Completed { items, ended_at } => {
+                self.complete_response(items, ended_at)?;
             }
-            AssistantEvent::Failed(msg) => {
-                self.fail_response(msg)?;
+            AssistantEvent::Failed { message, ended_at } => {
+                self.fail_response(message, ended_at)?;
             }
         }
         Ok(())
@@ -75,9 +74,10 @@ impl HistoryState {
     pub fn complete_response(
         &mut self,
         _items: Vec<AssistantItem>,
+        ended_at: u64,
     ) -> Result<()> {
         let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(now());
+        msg.touch_ended_at(ended_at);
         msg.status = AssistantStatus::Success;
         Ok(())
     }
@@ -85,9 +85,10 @@ impl HistoryState {
     pub fn fail_response(
         &mut self,
         error_msg: String,
+        ended_at: u64,
     ) -> Result<()> {
         let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(now());
+        msg.touch_ended_at(ended_at);
         match msg.status {
             AssistantStatus::Error(_) => return Ok(()), // keep the first error
             AssistantStatus::Success => {

@@ -21,8 +21,8 @@ impl Tab<'_> {
         generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        let input = if let HistoryUpdate::Pop(n) = event {
-            Some(self.combined_user_msgs(n))
+        let input = if let HistoryUpdate::Pop(n) = &event {
+            Some(self.combined_user_msgs(*n))
         } else {
             None
         };

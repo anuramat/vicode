@@ -18,6 +18,7 @@ use archive::ArchivedHistoryReason;
 pub use compact::Activity;
 use compact::CompactState;
 pub use event::AssistantEvent;
+pub use event::CompactStart;
 pub use event::HistoryGeneration;
 pub use event::HistoryUpdate;
 use instructions::Instructions;
@@ -116,9 +117,8 @@ impl History {
             HistoryUpdate::DeveloperMessage(msg) => {
                 self.normal_mut()?.push(Message::Developer(msg));
             }
-            HistoryUpdate::UserMessage(text) => {
-                self.normal_mut()?
-                    .push(Message::User(UserMessage::new(text)));
+            HistoryUpdate::UserMessage(msg) => {
+                self.normal_mut()?.push(Message::User(msg));
             }
             HistoryUpdate::Pop(n) => {
                 // TODO this condition should be computed smarter I think;
@@ -156,9 +156,9 @@ impl History {
             HistoryUpdate::TurnResponse(event) => {
                 self.normal_mut()?.handle_response(event)?;
             }
-            HistoryUpdate::CompactStart { n_drop } => self.init_compact(n_drop)?,
+            HistoryUpdate::CompactStart(start) => self.init_compact(start)?,
             HistoryUpdate::CompactResponse(event) => {
-                let completed = matches!(event, AssistantEvent::Completed(_));
+                let completed = matches!(event, AssistantEvent::Completed { .. });
                 self.compact_mut()?.state.handle_response(event)?;
                 if completed && self.apply_compact().is_err() {
                     self.abort_compact()?;

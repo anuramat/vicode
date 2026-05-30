@@ -19,6 +19,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::config::ApiCompatConfig;
 use crate::config::ModelConfig;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::message::AsMessageText;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
@@ -26,7 +27,6 @@ use crate::llm::history::message::Message;
 use crate::llm::history::message::UserMessage;
 use crate::llm::provider::api::Api;
 use crate::llm::provider::api::StartedAssistantStream;
-use crate::llm::provider::api::StreamEvent;
 use crate::llm::provider::assistant::ReasoningEffort;
 use crate::utils::now;
 
@@ -135,17 +135,26 @@ struct ResponsesStream {
 }
 
 impl Stream for ResponsesStream {
-    type Item = Result<StreamEvent, anyhow::Error>;
+    type Item = Result<AssistantEvent, anyhow::Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx).map(|e| match e {
-            Some(Ok(event)) => Some(event.try_into()),
-            Some(Err(err)) => Some(Err(anyhow::Error::from(err))),
-            None => None,
-        })
+        loop {
+            match self.inner.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(event))) => match assistant_event(event) {
+                    Ok(Some(event)) => return Poll::Ready(Some(Ok(event))),
+                    Ok(None) => {}
+                    Err(err) => return Poll::Ready(Some(Err(err))),
+                },
+                Poll::Ready(Some(Err(err))) => {
+                    return Poll::Ready(Some(Err(anyhow::Error::from(err))));
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
 }
 
@@ -184,45 +193,45 @@ fn output_items(items: Vec<responses::OutputItem>) -> Result<Vec<AssistantItem>>
     items.into_iter().map(AssistantItem::try_from).collect()
 }
 
-impl TryFrom<responses::ResponseStreamEvent> for StreamEvent {
-    type Error = anyhow::Error;
-
-    fn try_from(event: responses::ResponseStreamEvent) -> Result<Self> {
-        Ok(match event {
-            responses::ResponseStreamEvent::ResponseOutputTextDelta(event) => {
-                Self::Delta(event.into())
-            }
-            responses::ResponseStreamEvent::ResponseReasoningTextDelta(event) => {
-                Self::Delta(event.into())
-            }
-            responses::ResponseStreamEvent::ResponseReasoningSummaryTextDelta(event) => {
-                Self::Delta(event.into())
-            }
-            responses::ResponseStreamEvent::ResponseFailed(responses::ResponseFailedEvent {
-                response,
-                ..
-            })
-            | responses::ResponseStreamEvent::ResponseIncomplete(
-                responses::ResponseIncompleteEvent { response, .. },
-            ) => Self::Failed(failure_message(response)),
-            responses::ResponseStreamEvent::ResponseOutputItemDone(
-                responses::ResponseOutputItemDoneEvent { item, .. },
-            ) => Self::ItemDone(item.try_into()?),
-            responses::ResponseStreamEvent::ResponseOutputItemAdded(
-                responses::ResponseOutputItemAddedEvent { item, .. },
-            ) => {
-                if let responses::OutputItem::FunctionCall(_) = item {
-                    Self::Ignore
-                } else {
-                    Self::ItemAdded(item.try_into()?)
-                }
-            }
-            responses::ResponseStreamEvent::ResponseCompleted(event) => {
-                Self::Completed(output_items(event.response.output)?)
-            }
-            _ => Self::Ignore,
+fn assistant_event(event: responses::ResponseStreamEvent) -> Result<Option<AssistantEvent>> {
+    Ok(match event {
+        responses::ResponseStreamEvent::ResponseOutputTextDelta(event) => {
+            Some(AssistantEvent::Delta(event.into()))
+        }
+        responses::ResponseStreamEvent::ResponseReasoningTextDelta(event) => {
+            Some(AssistantEvent::Delta(event.into()))
+        }
+        responses::ResponseStreamEvent::ResponseReasoningSummaryTextDelta(event) => {
+            Some(AssistantEvent::Delta(event.into()))
+        }
+        responses::ResponseStreamEvent::ResponseFailed(responses::ResponseFailedEvent {
+            response,
+            ..
         })
-    }
+        | responses::ResponseStreamEvent::ResponseIncomplete(
+            responses::ResponseIncompleteEvent { response, .. },
+        ) => anyhow::bail!(failure_message(response)),
+        responses::ResponseStreamEvent::ResponseOutputItemDone(
+            responses::ResponseOutputItemDoneEvent { item, .. },
+        ) => {
+            let mut item: AssistantItem = item.try_into()?;
+            item.touch_ended_at_now();
+            Some(AssistantEvent::Item(Box::new(item)))
+        }
+        responses::ResponseStreamEvent::ResponseOutputItemAdded(
+            responses::ResponseOutputItemAddedEvent { item, .. },
+        ) => {
+            if let responses::OutputItem::FunctionCall(_) = item {
+                None
+            } else {
+                Some(AssistantEvent::Item(Box::new(item.try_into()?)))
+            }
+        }
+        responses::ResponseStreamEvent::ResponseCompleted(event) => Some(
+            AssistantEvent::completed(output_items(event.response.output)?),
+        ),
+        _ => None,
+    })
 }
 
 impl From<ReasoningEffort> for responses::ReasoningEffort {

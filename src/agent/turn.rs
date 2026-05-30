@@ -11,7 +11,6 @@ use crate::agent::task::sink::TurnType;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::Message;
-use crate::llm::provider::api::StreamEvent;
 
 // TODO should these ResponseFailed events also coincide with ParentEvent::Error? and if so, should we emit ParentEvent::Error right here or in the HistoryEvent handler in the agent event loop?
 
@@ -52,7 +51,7 @@ impl Agent {
                 if let Err(err) =
                     Self::turn(handle.clone(), &assistant, tools, instructions, messages).await
                 {
-                    handle.send(AssistantEvent::Failed(err.to_string())).await?;
+                    handle.send(AssistantEvent::failed(err.to_string())).await?;
                     return Err(err);
                 }
                 Ok(())
@@ -75,22 +74,11 @@ impl Agent {
         let mut stream = started.stream;
         while let Some(event) = stream.next().await {
             trace!(event = ?event, "Stream chunk received");
-            match event? {
-                StreamEvent::Delta(delta) => handle.send(AssistantEvent::Delta(delta)).await?,
-                StreamEvent::Failed(msg) => anyhow::bail!(msg),
-                StreamEvent::ItemDone(mut item) => {
-                    item.touch_ended_at_now();
-                    handle.send(AssistantEvent::Item(item.into())).await?;
-                }
-                StreamEvent::ItemAdded(item) => {
-                    handle.send(AssistantEvent::Item(item.into())).await?;
-                }
-                StreamEvent::Completed(items) => {
-                    handle.send(AssistantEvent::Completed(items)).await?;
-                    break;
-                    // TODO try dropping the break
-                }
-                StreamEvent::Ignore => {}
+            let event = event?;
+            let completed = matches!(event, AssistantEvent::Completed { .. });
+            handle.send(event).await?;
+            if completed {
+                break;
             }
         }
         Ok(())

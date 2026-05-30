@@ -16,12 +16,13 @@ use futures::Stream;
 use serde_json::Value;
 use tokio::sync::OwnedSemaphorePermit;
 
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
 use crate::llm::history::message::ReasoningItem;
-use crate::llm::provider::api::StreamEvent;
+use crate::utils::now;
 
 fn output_id(
     response_id: &str,
@@ -33,7 +34,7 @@ fn output_id(
 pub struct ChatCompletionsStream {
     inner: Pin<Box<dyn Stream<Item = Result<Value, OpenAIError>> + Send>>,
     state: StreamState,
-    pending: VecDeque<Result<StreamEvent>>,
+    pending: VecDeque<Result<AssistantEvent>>,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -56,7 +57,7 @@ impl ChatCompletionsStream {
 }
 
 impl Stream for ChatCompletionsStream {
-    type Item = Result<StreamEvent, anyhow::Error>;
+    type Item = Result<AssistantEvent, anyhow::Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -110,7 +111,7 @@ impl StreamState {
         &mut self,
         chunk: CreateChatCompletionStreamResponse,
         raw: Option<&Value>,
-    ) -> Vec<StreamEvent> {
+    ) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
         for (i, choice) in chunk.choices.into_iter().enumerate() {
             let raw_delta = raw.map(|r| &r["choices"][i]["delta"]);
@@ -124,7 +125,7 @@ impl StreamState {
         response_id: &str,
         choice: ChatChoiceStream,
         raw_delta: Option<&Value>,
-    ) -> Vec<StreamEvent> {
+    ) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
         let output_id = output_id(response_id, choice.index);
 
@@ -136,13 +137,14 @@ impl StreamState {
                     self.reasoning_outputs.entry(choice.index)
                 {
                     e.insert(true);
-                    events.push(StreamEvent::ItemAdded(AssistantItem::Reasoning(
+                    events.push(AssistantEvent::Item(Box::new(AssistantItem::Reasoning(
                         ReasoningItem::new(reasoning_id.clone()),
-                    )));
+                    ))));
                 }
-                events.push(StreamEvent::Delta(Delta {
+                events.push(AssistantEvent::Delta(Delta {
                     id: reasoning_id,
                     delta: DeltaContent::Reasoning(text.to_string()),
+                    received_at: now(),
                 }));
             }
         }
@@ -151,13 +153,14 @@ impl StreamState {
             if let std::collections::btree_map::Entry::Vacant(e) = self.outputs.entry(choice.index)
             {
                 e.insert(true);
-                events.push(StreamEvent::ItemAdded(AssistantItem::Output(
+                events.push(AssistantEvent::Item(Box::new(AssistantItem::Output(
                     OutputItem::new(output_id.clone()),
-                )));
+                ))));
             }
-            events.push(StreamEvent::Delta(Delta {
+            events.push(AssistantEvent::Delta(Delta {
                 id: output_id,
                 delta: DeltaContent::Output(content),
+                received_at: now(),
             }));
         }
 
@@ -200,7 +203,9 @@ impl StreamState {
                             },
                         );
                         if let Ok(item) = item.try_into() {
-                            events.push(StreamEvent::ItemDone(AssistantItem::ToolCall(item)));
+                            let mut item = AssistantItem::ToolCall(item);
+                            item.touch_ended_at_now();
+                            events.push(AssistantEvent::Item(Box::new(item)));
                         }
                     }
                 }
@@ -212,7 +217,7 @@ impl StreamState {
             None => false,
         };
         if completed {
-            events.push(StreamEvent::Completed(vec![]));
+            events.push(AssistantEvent::completed(vec![]));
         }
 
         events

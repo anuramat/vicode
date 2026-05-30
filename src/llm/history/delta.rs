@@ -13,6 +13,7 @@ use super::tokens::TokenCount;
 pub struct Delta {
     pub id: String,
     pub delta: DeltaContent,
+    pub received_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -27,11 +28,12 @@ impl AssistantMessage {
         &mut self,
         id: &str,
         delta: String,
+        started_at: u64,
     ) -> Option<()> {
         let item = self
             .content
             .entry(id.to_string())
-            .or_insert_with(|| ReasoningItem::new(id.to_string()).into());
+            .or_insert_with(|| ReasoningItem::new_at(id.to_string(), started_at).into());
         let AssistantItem::Reasoning(item) = item else {
             return None;
         };
@@ -43,11 +45,12 @@ impl AssistantMessage {
         &mut self,
         id: &str,
         delta: String,
+        started_at: u64,
     ) -> Option<()> {
         let item = self
             .content
             .entry(id.to_string())
-            .or_insert_with(|| ReasoningItem::new(id.to_string()).into());
+            .or_insert_with(|| ReasoningItem::new_at(id.to_string(), started_at).into());
         let AssistantItem::Reasoning(item) = item else {
             return None;
         };
@@ -59,11 +62,12 @@ impl AssistantMessage {
         &mut self,
         id: &str,
         delta: String,
+        started_at: u64,
     ) -> Option<()> {
         let item = self
             .content
             .entry(id.to_string())
-            .or_insert_with(|| OutputItem::new(id.to_string()).into());
+            .or_insert_with(|| OutputItem::new_at(id.to_string(), started_at).into());
         let AssistantItem::Output(item) = item else {
             return None;
         };
@@ -82,10 +86,14 @@ impl HistoryState {
             .and_then(|v| v.try_as_assistant_mut())
             .context("last message is not an assistant message")?;
         match item_delta.delta {
-            DeltaContent::Output(delta) => msg.push_output(&item_delta.id, delta),
-            DeltaContent::Reasoning(delta) => msg.push_reasoning(&item_delta.id, delta),
+            DeltaContent::Output(delta) => {
+                msg.push_output(&item_delta.id, delta, item_delta.received_at)
+            }
+            DeltaContent::Reasoning(delta) => {
+                msg.push_reasoning(&item_delta.id, delta, item_delta.received_at)
+            }
             DeltaContent::ReasoningSummary(delta) => {
-                msg.push_reasoning_summary(&item_delta.id, delta)
+                msg.push_reasoning_summary(&item_delta.id, delta, item_delta.received_at)
             }
         }
         .context("delta type mismatch")?;
@@ -94,9 +102,9 @@ impl HistoryState {
                 .content
                 .get_mut(&item_delta.id)
                 .context("item not found")?;
-            let touch_at = item.touch_ended_at_now();
+            item.set_ended_at(item_delta.received_at);
             item.recount();
-            touch_at
+            item_delta.received_at
         };
         msg.recount_shallow();
         msg.touch_ended_at(ended_at);

@@ -21,9 +21,16 @@ pub struct ReasoningItem {
 
 impl ReasoningItem {
     pub fn new(id: String) -> Self {
+        Self::new_at(id, now())
+    }
+
+    pub fn new_at(
+        id: String,
+        started_at: u64,
+    ) -> Self {
         Self {
             id,
-            started_at: now(),
+            started_at,
             ended_at: None,
             token_count: 0,
             content: None,

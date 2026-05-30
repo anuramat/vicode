@@ -1,6 +1,7 @@
 use std::iter;
 use std::mem;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use derive_more::Deref;
@@ -12,14 +13,11 @@ use super::CompactMessage;
 use super::DeveloperMessage;
 use super::History;
 use super::Message;
-use super::UserMessage;
 use super::archive::ArchivedHistory;
 use super::archive::ArchivedHistoryReason;
+use super::event::CompactStart;
 use super::state::HistoryState;
-use super::timing::now;
 use super::tokens::TokenCount;
-
-const COMPACT_PROMPT: &str = "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only.";
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]
 pub struct CompactState {
@@ -56,8 +54,13 @@ impl Default for Activity {
 impl History {
     pub fn init_compact(
         &mut self,
-        n_drop: usize,
+        start: CompactStart,
     ) -> Result<()> {
+        let CompactStart {
+            n_drop,
+            created_at,
+            prompt,
+        } = start;
         let Activity::Normal { state } = mem::take(&mut self.activity) else {
             bail!("compact already in progress");
         };
@@ -67,15 +70,13 @@ impl History {
             .iter()
             .take(n_drop)
             .cloned()
-            .chain(iter::once(Message::User(UserMessage::new(
-                COMPACT_PROMPT.into(),
-            ))))
+            .chain(iter::once(Message::User(prompt)))
             .collect();
         let compact = CompactState {
             state: HistoryState::from(compact_messages),
             n_drop,
             needs_another_turn,
-            created_at: now(),
+            created_at,
             started_at: None,
         };
         self.activity = Activity::Compacting { state, compact };
@@ -151,7 +152,7 @@ fn build_compacted(
         .state
         .last()
         .and_then(super::timing::Timing::ended_at)
-        .unwrap_or_else(now);
+        .context("compact response has no ended_at")?;
 
     let compact_msg = {
         let mut msg: Message = DeveloperMessage::Compact(CompactMessage {
