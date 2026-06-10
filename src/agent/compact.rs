@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::agent::Agent;
 use crate::agent::task::sink::TurnType;
 use crate::agent::tool::registry::ToolRegistry;
+use crate::llm::history::CompactStart;
 use crate::llm::history::HistoryUpdate;
 
 impl Agent {
@@ -14,7 +15,7 @@ impl Agent {
             return Ok(());
         }
         let g = self.history().generation();
-        self.handle_history(g, HistoryUpdate::CompactStart { n_drop })
+        self.handle_history(g, HistoryUpdate::CompactStart(CompactStart::new(n_drop)))
             .await?;
         Ok(())
     }
@@ -41,6 +42,7 @@ mod tests {
     use crate::agent::task::manager::AgentTaskManager;
     use crate::config::Config;
     use crate::llm::history::History;
+    use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
@@ -109,7 +111,10 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::UserMessage("short".into()))
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("short".into(), 0)),
+            )
             .unwrap();
 
         agent.init_compact(0).await.unwrap();
@@ -155,7 +160,7 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::CompactStart { n_drop: 0 })
+            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(0)))
             .unwrap();
 
         let entries = &agent.history().compact_turn_input().unwrap();

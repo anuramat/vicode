@@ -18,7 +18,6 @@ pub use toolcall::*;
 
 use crate::llm::history::timing::Timing;
 use crate::llm::history::timing::ambassador_impl_Timing;
-use crate::llm::history::timing::now;
 use crate::llm::history::timing::touch;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -152,7 +151,7 @@ impl AssistantItem {
         .clone()
     }
 
-    fn touch_ended_at(
+    pub fn touch_ended_at(
         &mut self,
         ms: u64,
     ) {
@@ -167,12 +166,6 @@ impl AssistantItem {
         }
     }
 
-    pub fn touch_ended_at_now(&mut self) -> u64 {
-        let now = now();
-        self.touch_ended_at(now);
-        now
-    }
-
     pub fn set_started_at(
         &mut self,
         ms: u64,
@@ -182,13 +175,6 @@ impl AssistantItem {
             Self::Reasoning(item) => item.started_at = ms,
             Self::ToolCall(item) => item.started_at = ms,
         }
-    }
-
-    pub fn set_ended_at(
-        &mut self,
-        ms: u64,
-    ) {
-        *self.ended_at_mut() = Some(ms);
     }
 }
 

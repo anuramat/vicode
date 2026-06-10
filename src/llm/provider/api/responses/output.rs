@@ -3,6 +3,7 @@ use async_openai::types::responses::{self};
 
 use crate::llm::history::message::OutputContent;
 use crate::llm::history::message::OutputItem;
+use crate::utils::now;
 
 impl From<&OutputItem> for responses::InputItem {
     fn from(item: &OutputItem) -> Self {
@@ -32,7 +33,7 @@ impl From<&OutputItem> for responses::InputItem {
 
 impl From<responses::OutputMessage> for OutputItem {
     fn from(value: responses::OutputMessage) -> Self {
-        let mut item = Self::new(value.id);
+        let mut item = Self::new(value.id, now());
         item.content = value
             .content
             .into_iter()

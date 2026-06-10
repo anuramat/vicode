@@ -8,7 +8,6 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantMessage;
 use crate::llm::history::message::AssistantStatus;
 use crate::llm::history::timing::Timing;
-use crate::llm::history::timing::now;
 use crate::llm::history::tokens::TokenCount;
 
 impl HistoryState {
@@ -17,12 +16,11 @@ impl HistoryState {
         event: AssistantEvent,
     ) -> Result<()> {
         match event {
-            AssistantEvent::Created(created_at) => {
+            AssistantEvent::Created { created_at } => {
                 self.push(AssistantMessage::new(created_at).into());
             }
-            AssistantEvent::Started(api_started_ms) => {
-                self.last_assistant_msg_mut()?
-                    .mark_started(api_started_ms)?;
+            AssistantEvent::Started { started_at } => {
+                self.last_assistant_msg_mut()?.mark_started(started_at)?;
             }
             AssistantEvent::Delta(item_delta) => {
                 self.push_delta(item_delta)?;
@@ -30,11 +28,11 @@ impl HistoryState {
             AssistantEvent::Item(item) => {
                 self.push_item(*item)?;
             }
-            AssistantEvent::Completed(items) => {
-                self.complete_response(items)?;
+            AssistantEvent::Completed { ended_at } => {
+                self.complete_response(ended_at)?;
             }
-            AssistantEvent::Failed(msg) => {
-                self.fail_response(msg)?;
+            AssistantEvent::Failed { message, ended_at } => {
+                self.fail_response(message, ended_at)?;
             }
         }
         Ok(())
@@ -48,13 +46,13 @@ impl HistoryState {
         new_item.recount();
         let msg = self.last_assistant_msg_mut()?;
 
-        // if item already exists -- preserve timing
+        // if item already exists -- preserve started_at, keep the latest ended_at
         if let Some(existing_item) = msg.content.get(&new_item.id()) {
             if let Some(started_at) = existing_item.started_at() {
                 new_item.set_started_at(started_at);
             }
             if let Some(ended_at) = existing_item.ended_at() {
-                new_item.set_ended_at(ended_at);
+                new_item.touch_ended_at(ended_at);
             }
         }
 
@@ -74,10 +72,10 @@ impl HistoryState {
 
     pub fn complete_response(
         &mut self,
-        _items: Vec<AssistantItem>,
+        ended_at: u64,
     ) -> Result<()> {
         let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(now());
+        msg.touch_ended_at(ended_at);
         msg.status = AssistantStatus::Success;
         Ok(())
     }
@@ -85,9 +83,10 @@ impl HistoryState {
     pub fn fail_response(
         &mut self,
         error_msg: String,
+        ended_at: u64,
     ) -> Result<()> {
         let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(now());
+        msg.touch_ended_at(ended_at);
         match msg.status {
             AssistantStatus::Error(_) => return Ok(()), // keep the first error
             AssistantStatus::Success => {
@@ -134,15 +133,26 @@ mod tests {
         HistoryUpdate::TurnResponse(event)
     }
 
+    fn completed() -> AssistantEvent {
+        AssistantEvent::Completed { ended_at: 9 }
+    }
+
+    fn failed(message: &str) -> AssistantEvent {
+        AssistantEvent::Failed {
+            message: message.into(),
+            ended_at: 9,
+        }
+    }
+
     fn output_item_at(
         id: &str,
-        queued_ms: u64,
-        last_modified_ms: Option<u64>,
+        started_at: u64,
+        ended_at: Option<u64>,
     ) -> AssistantItem {
         AssistantItem::Output(OutputItem {
             id: id.into(),
-            started_at: queued_ms,
-            ended_at: last_modified_ms,
+            started_at,
+            ended_at,
             token_count: 0,
             content: vec![],
         })
@@ -158,7 +168,7 @@ mod tests {
     fn response_queued_creates_empty_assistant_message() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(7)))
+            .handle(0, response(AssistantEvent::Created { created_at: 7 }))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -175,10 +185,10 @@ mod tests {
     fn response_started_flips_message_to_in_progress() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(7)))
+            .handle(0, response(AssistantEvent::Created { created_at: 7 }))
             .unwrap();
         history
-            .handle(0, response(AssistantEvent::Started(9)))
+            .handle(0, response(AssistantEvent::Started { started_at: 9 }))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -192,7 +202,7 @@ mod tests {
     fn item_added_does_not_touch_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(1)))
+            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
             .handle(
@@ -212,7 +222,7 @@ mod tests {
     fn item_done_without_delta_touches_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(1)))
+            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
             .handle(
@@ -231,10 +241,63 @@ mod tests {
     }
 
     #[test]
+    fn item_replacement_preserves_started_at_and_keeps_latest_ended_at() {
+        let mut history = History::new(String::new());
+        history
+            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
+            .unwrap();
+        history
+            .handle(
+                0,
+                response(AssistantEvent::Item(Box::new(output_item_at(
+                    "out",
+                    2,
+                    Some(9),
+                )))),
+            )
+            .unwrap();
+        history
+            .handle(
+                0,
+                response(AssistantEvent::Item(Box::new(output_item_at(
+                    "out",
+                    5,
+                    Some(7),
+                )))),
+            )
+            .unwrap();
+        let Some(Message::Assistant(msg)) = history.state().messages.first() else {
+            panic!("expected assistant message");
+        };
+        let AssistantItem::Output(item) = msg.content.get("out").unwrap() else {
+            panic!("expected output item");
+        };
+        assert_eq!((item.started_at, item.ended_at), (2, Some(9)));
+
+        history
+            .handle(
+                0,
+                response(AssistantEvent::Item(Box::new(output_item_at(
+                    "out",
+                    6,
+                    Some(11),
+                )))),
+            )
+            .unwrap();
+        let Some(Message::Assistant(msg)) = history.state().messages.first() else {
+            panic!("expected assistant message");
+        };
+        let AssistantItem::Output(item) = msg.content.get("out").unwrap() else {
+            panic!("expected output item");
+        };
+        assert_eq!((item.started_at, item.ended_at), (2, Some(11)));
+    }
+
+    #[test]
     fn delta_touches_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(1)))
+            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
             .handle(
@@ -250,6 +313,7 @@ mod tests {
                 response(AssistantEvent::Delta(Delta {
                     id: "out".into(),
                     delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
+                    timestamp: 3,
                 })),
             )
             .unwrap();
@@ -271,7 +335,7 @@ mod tests {
     fn response_completed_marks_message_success() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(0)))
+            .handle(0, response(AssistantEvent::Created { created_at: 0 }))
             .unwrap();
         history
             .handle(
@@ -281,16 +345,7 @@ mod tests {
                 )))),
             )
             .unwrap();
-        history
-            .handle(
-                0,
-                response(AssistantEvent::Completed(vec![output_item_at(
-                    "out",
-                    1,
-                    Some(2),
-                )])),
-            )
-            .unwrap();
+        history.handle(0, response(completed())).unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
         };
@@ -298,6 +353,7 @@ mod tests {
             panic!("expected output item");
         };
         assert_eq!(item.ended_at, None);
+        assert_eq!(msg.ended_at, Some(9));
         assert!(matches!(msg.status, AssistantStatus::Success));
     }
 
@@ -305,13 +361,10 @@ mod tests {
     fn response_failed_marks_message_error_for_abort() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(0)))
+            .handle(0, response(AssistantEvent::Created { created_at: 0 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Failed("aborted by user".into())),
-            )
+            .handle(0, response(failed("aborted by user")))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -320,5 +373,6 @@ mod tests {
             msg.status,
             AssistantStatus::Error(ref text) if text == "aborted by user"
         ));
+        assert_eq!(msg.ended_at, Some(9));
     }
 }

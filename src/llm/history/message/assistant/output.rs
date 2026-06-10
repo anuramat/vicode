@@ -2,7 +2,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::llm::history::timing::Timing;
-use crate::llm::history::timing::now;
 use crate::llm::history::tokens::TokenCount;
 use crate::llm::history::tokens::count_text_tokens;
 
@@ -40,10 +39,13 @@ impl TokenCount for OutputItem {
 }
 
 impl OutputItem {
-    pub fn new(id: String) -> Self {
+    pub fn new(
+        id: String,
+        started_at: u64,
+    ) -> Self {
         Self {
             id,
-            started_at: now(),
+            started_at,
             ended_at: None,
             token_count: 0,
             content: Vec::new(),

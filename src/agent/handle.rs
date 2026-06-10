@@ -25,6 +25,7 @@ use crate::llm::history::HistoryUpdate;
 use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
@@ -168,7 +169,7 @@ impl Agent {
                     .status()
                     .is_some_and(|s| s.failable())
                 {
-                    Some(HistoryUpdate::TurnResponse(AssistantEvent::Failed(
+                    Some(HistoryUpdate::TurnResponse(AssistantEvent::failed(
                         ABORTED_BY_USER.into(),
                     )))
                 } else {
@@ -236,8 +237,11 @@ impl Agent {
             generation,
         }: UserPrompt,
     ) -> Result<()> {
-        self.handle_history(generation, history::HistoryUpdate::UserMessage(text))
-            .await?;
+        self.handle_history(
+            generation,
+            history::HistoryUpdate::UserMessage(UserMessage::new(text, now())),
+        )
+        .await?;
         self.increment_generation().await?;
         if multiplier <= 1 {
             self.start_turn().await?;
@@ -259,9 +263,9 @@ impl Agent {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
                 self.execute_tool_calls(item);
             }
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))
-            | HistoryUpdate::CompactResponse(AssistantEvent::Failed(msg)) => {
-                error!("response error in agent {}: {}", self.id, msg);
+            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. })
+            | HistoryUpdate::CompactResponse(AssistantEvent::Failed { message, .. }) => {
+                error!("response error in agent {}: {}", self.id, message);
             }
             HistoryUpdate::GenerationIncremented
             | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
@@ -383,6 +387,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::config::Config;
+    use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
@@ -476,7 +481,10 @@ mod tests {
             .state
             .context
             .history
-            .handle(0, HistoryUpdate::TurnResponse(AssistantEvent::Created(0)))
+            .handle(
+                0,
+                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
+            )
             .unwrap();
         agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
             pending::<Result<()>>().await
@@ -498,7 +506,7 @@ mod tests {
             events.as_slice(),
             [
                 ParentEvent::HistoryUpdate(_, HistoryUpdate::GenerationIncremented),
-                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed(msg))),
+                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed { message: msg, .. })),
                 ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
                     crate::llm::history::TurnStatus::Failed(status),
                 )),
@@ -653,19 +661,19 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(0, HistoryUpdate::CompactStart { n_drop: 1 })
+            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1)))
             .unwrap();
         agent
             .handle_history(
                 0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Created(0)),
+                HistoryUpdate::CompactResponse(AssistantEvent::Created { created_at: 0 }),
             )
             .await
             .unwrap();
         agent
             .handle_history(
                 0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed("oops".into())),
+                HistoryUpdate::CompactResponse(AssistantEvent::failed("oops".into())),
             )
             .await
             .unwrap();

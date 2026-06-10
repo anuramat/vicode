@@ -43,10 +43,10 @@ impl Api for ChatCompletionsApi {
     ) -> Result<StartedAssistantStream> {
         let request = request::request(model, instructions, messages, tools, true, &self.compat)?;
         tracing::debug!(request = %request);
-        let started_at_ms = now();
+        let started_at = now();
         let inner = self.client.chat().create_stream_byot(request).await?;
         Ok(StartedAssistantStream {
-            started_at_ms,
+            started_at,
             stream: Box::pin(stream::ChatCompletionsStream::new(
                 inner,
                 permit,

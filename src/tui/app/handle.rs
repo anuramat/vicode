@@ -89,7 +89,12 @@ mod tests {
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
     use crate::config::Config;
+    use crate::llm::history::AssistantEvent;
     use crate::llm::history::History;
+    use crate::llm::history::HistoryUpdate;
+    use crate::llm::history::delta::Delta;
+    use crate::llm::history::delta::DeltaContent;
+    use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
     use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
@@ -193,6 +198,60 @@ mod tests {
 
         let tab = app.tab_mut_by_aid(&aid).unwrap();
         assert_eq!(tab.state.assistant.id, assistant.id);
+
+        std::fs::remove_dir_all(project.agent(&aid)).ok();
+    }
+
+    #[tokio::test]
+    async fn tab_history_replays_authoritative_history_updates_exactly() {
+        let project = crate::project::Project::new_test().unwrap();
+        let mut app = App::new(project.clone(), Default::default());
+        let aid = AgentId::from("deterministic-tab".to_string());
+        let state = AgentState {
+            status: AgentStatus::default(),
+            assistant: test_assistant().await,
+            max_depth: 1,
+            context: crate::agent::AgentContext {
+                commit: "".into(),
+                history: History::new("instructions".into()),
+            },
+        };
+        app.tabs.insert(
+            aid.clone(),
+            Tab::new(
+                Some(crate::agent::router::AgentRouter::test_handle()),
+                aid.clone(),
+                state.clone(),
+                &project,
+            ),
+        );
+        let events = vec![
+            HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 1)),
+            HistoryUpdate::GenerationIncremented,
+            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 2 }),
+            HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 3 }),
+            HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta {
+                id: "out".into(),
+                delta: DeltaContent::Output("hello".into()),
+                timestamp: 4,
+            })),
+            HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
+        ];
+        let mut expected = state.context.history.clone();
+
+        for event in events {
+            let generation = expected.generation();
+            expected.handle(generation, event.clone()).unwrap();
+            app.handle_parent_event(aid.clone(), ParentEvent::HistoryUpdate(generation, event))
+                .await
+                .unwrap();
+        }
+
+        let actual = &app.tab_mut_by_aid(&aid).unwrap().state.context.history;
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }

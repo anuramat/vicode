@@ -2,7 +2,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::llm::history::timing::Timing;
-use crate::llm::history::timing::now;
 use crate::llm::history::tokens::TokenCount;
 use crate::llm::history::tokens::count_text_tokens;
 
@@ -14,10 +13,13 @@ pub struct UserMessage {
 }
 
 impl UserMessage {
-    pub fn new(text: String) -> Self {
+    pub fn new(
+        text: String,
+        created_at: u64,
+    ) -> Self {
         let mut result = Self {
             text,
-            created_at: now(),
+            created_at,
             token_count: 0,
         };
         result.recount();

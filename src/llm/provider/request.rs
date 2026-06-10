@@ -11,6 +11,7 @@ use tracing::instrument;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::message::Message;
 use crate::llm::provider::api::StartedAssistantStream;
+use crate::llm::provider::api::until_completed;
 use crate::llm::provider::assistant::Assistant;
 
 impl Assistant {
@@ -21,7 +22,7 @@ impl Assistant {
         history: Vec<Message>,
         tools: ToolRegistry,
     ) -> Result<StartedAssistantStream> {
-        retry(
+        let mut started = retry(
             || async {
                 self.provider.ratelimiter.until_ready().await;
                 let permit = self.provider.semaphore.clone().acquire_owned().await?;
@@ -39,7 +40,9 @@ impl Assistant {
             self.provider.config.limits().backoff_ms,
             self.provider.config.limits().retries,
         )
-        .await
+        .await?;
+        started.stream = until_completed(started.stream);
+        Ok(started)
     }
 }
 

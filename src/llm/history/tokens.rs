@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn counts_user_message_tokens() {
-        let mut msg: Message = UserMessage::new("hello world".into()).into();
+        let mut msg: Message = UserMessage::new("hello world".into(), 0).into();
         msg.recount();
         assert_eq!(
             msg.token_count(),

@@ -1,6 +1,7 @@
 use std::iter;
 use std::mem;
 
+use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use derive_more::Deref;
@@ -21,6 +22,21 @@ use super::tokens::TokenCount;
 
 const COMPACT_PROMPT: &str = "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only.";
 
+#[derive(Debug, Clone)]
+pub struct CompactStart {
+    pub n_drop: usize,
+    pub created_at: u64,
+}
+
+impl CompactStart {
+    pub fn new(n_drop: usize) -> Self {
+        Self {
+            n_drop,
+            created_at: now(),
+        }
+    }
+}
+
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Deref, DerefMut)]
 pub struct CompactState {
     #[deref]
@@ -31,6 +47,18 @@ pub struct CompactState {
 
     pub created_at: u64,
     pub started_at: Option<u64>,
+}
+
+impl CompactState {
+    pub fn handle_response(
+        &mut self,
+        event: super::AssistantEvent,
+    ) -> Result<()> {
+        if let super::AssistantEvent::Started { started_at } = &event {
+            self.started_at.get_or_insert(*started_at);
+        }
+        self.state.handle_response(event)
+    }
 }
 
 // TODO rename
@@ -56,26 +84,26 @@ impl Default for Activity {
 impl History {
     pub fn init_compact(
         &mut self,
-        n_drop: usize,
+        start: CompactStart,
     ) -> Result<()> {
+        let CompactStart { n_drop, created_at } = start;
         let Activity::Normal { state } = mem::take(&mut self.activity) else {
             bail!("compact already in progress");
         };
         let needs_another_turn = state.needs_another_turn();
+        let prompt = UserMessage::new(COMPACT_PROMPT.into(), created_at);
         let compact_messages: Vec<_> = state
             .messages
             .iter()
             .take(n_drop)
             .cloned()
-            .chain(iter::once(Message::User(UserMessage::new(
-                COMPACT_PROMPT.into(),
-            ))))
+            .chain(iter::once(Message::User(prompt)))
             .collect();
         let compact = CompactState {
             state: HistoryState::from(compact_messages),
             n_drop,
             needs_another_turn,
-            created_at: now(),
+            created_at,
             started_at: None,
         };
         self.activity = Activity::Compacting { state, compact };
@@ -151,7 +179,7 @@ fn build_compacted(
         .state
         .last()
         .and_then(super::timing::Timing::ended_at)
-        .unwrap_or_else(now);
+        .context("compact response has no ended_at")?;
 
     let compact_msg = {
         let mut msg: Message = DeveloperMessage::Compact(CompactMessage {
@@ -159,7 +187,7 @@ fn build_compacted(
             needs_another_turn: compact.needs_another_turn,
             created_at: compact.created_at,
             started_at,
-            ready_at: ended_at,
+            ended_at,
             token_count: 0,
         })
         .into();
@@ -180,6 +208,7 @@ mod tests {
 
     use super::*;
     use crate::llm::history::AssistantEvent;
+    use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::message::AssistantItem;
@@ -194,11 +223,26 @@ mod tests {
         HistoryUpdate::CompactResponse(event)
     }
 
+    fn compact_start(n_drop: usize) -> HistoryUpdate {
+        HistoryUpdate::CompactStart(CompactStart::new(n_drop))
+    }
+
+    fn completed() -> AssistantEvent {
+        AssistantEvent::Completed { ended_at: 99 }
+    }
+
+    fn failed(message: &str) -> AssistantEvent {
+        AssistantEvent::Failed {
+            message: message.into(),
+            ended_at: 99,
+        }
+    }
+
     fn output_item(
         id: &str,
         text: Option<&str>,
     ) -> AssistantItem {
-        let mut item = OutputItem::new(id.into());
+        let mut item = OutputItem::new(id.into(), 0);
         if let Some(text) = text {
             item.content = vec![OutputContent::Text(text.into())];
         }
@@ -228,10 +272,10 @@ mod tests {
         let mut history = History::new(String::new());
         push(
             &mut history,
-            Message::User(UserMessage::new("first".into())),
+            Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("old reply"));
-        push(&mut history, Message::User(UserMessage::new("last".into())));
+        push(&mut history, Message::User(UserMessage::new("last".into(), 0)));
         if let Activity::Normal { state } = &mut history.activity {
             state.recount();
         } else {
@@ -239,11 +283,18 @@ mod tests {
         }
         let generation = history.generation();
 
+        history.handle(generation, compact_start(2)).unwrap();
         history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 2 })
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Created { created_at: 0 }),
+            )
             .unwrap();
         history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Started { started_at: 7 }),
+            )
             .unwrap();
         history
             .handle(
@@ -255,10 +306,7 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Completed(vec![output_item("out", None)])),
-            )
+            .handle(generation, compact_response(completed()))
             .unwrap();
 
         assert!(!history.compacting());
@@ -266,7 +314,7 @@ mod tests {
         assert_eq!(history.state().messages.len(), 2);
         assert!(matches!(
             &history.state().messages[0],
-            Message::Developer(DeveloperMessage::Compact(CompactMessage { text, .. })) if text == "summary"
+            Message::Developer(DeveloperMessage::Compact(CompactMessage { text, started_at: 7, .. })) if text == "summary"
         ));
         assert!(
             matches!(&history.state().messages[1], Message::User(UserMessage { text, .. }) if text == "last")
@@ -278,7 +326,7 @@ mod tests {
         let mut history = History::new(String::new());
         push(
             &mut history,
-            Message::User(UserMessage::new("first".into())),
+            Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("reply"));
         if let Activity::Normal { state } = &mut history.activity {
@@ -289,17 +337,15 @@ mod tests {
         let generation = history.generation();
         let total_tokens = history.state().token_count();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
-        history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
-            .unwrap();
+        history.handle(generation, compact_start(1)).unwrap();
         history
             .handle(
                 generation,
-                compact_response(AssistantEvent::Failed("oops".into())),
+                compact_response(AssistantEvent::Created { created_at: 0 }),
             )
+            .unwrap();
+        history
+            .handle(generation, compact_response(failed("oops")))
             .unwrap();
 
         assert!(history.compacting());
@@ -323,7 +369,7 @@ mod tests {
         let mut history = History::new(String::new());
         push(
             &mut history,
-            Message::User(UserMessage::new("first".into())),
+            Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("reply"));
         if let Activity::Normal { state } = &mut history.activity {
@@ -333,11 +379,12 @@ mod tests {
         }
         let generation = history.generation();
 
+        history.handle(generation, compact_start(1)).unwrap();
         history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
-        history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Created { created_at: 0 }),
+            )
             .unwrap();
         history
             .handle(
@@ -349,13 +396,13 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Failed("oops".into())),
-            )
+            .handle(generation, compact_response(failed("oops")))
             .unwrap();
         history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Created { created_at: 0 }),
+            )
             .unwrap();
         history
             .handle(
@@ -367,10 +414,7 @@ mod tests {
             )
             .unwrap();
         history
-            .handle(
-                generation,
-                compact_response(AssistantEvent::Completed(vec![output_item("out-2", None)])),
-            )
+            .handle(generation, compact_response(completed()))
             .unwrap();
 
         assert!(matches!(
@@ -384,7 +428,7 @@ mod tests {
         let mut history = History::new(String::new());
         push(
             &mut history,
-            Message::User(UserMessage::new("first".into())),
+            Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("reply"));
         if let Activity::Normal { state } = &mut history.activity {
@@ -395,18 +439,16 @@ mod tests {
         let generation = history.generation();
         let total_tokens = history.state().token_count();
 
-        history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 1 })
-            .unwrap();
-        history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
-            .unwrap();
-
+        history.handle(generation, compact_start(1)).unwrap();
         history
             .handle(
                 generation,
-                compact_response(AssistantEvent::Completed(vec![])),
+                compact_response(AssistantEvent::Created { created_at: 0 }),
             )
+            .unwrap();
+
+        history
+            .handle(generation, compact_response(completed()))
             .unwrap();
 
         assert!(!history.compacting());
@@ -430,17 +472,18 @@ mod tests {
         let mut history = History::new(String::new());
         push(
             &mut history,
-            Message::User(UserMessage::new("first".into())),
+            Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("old reply"));
-        push(&mut history, Message::User(UserMessage::new("last".into())));
+        push(&mut history, Message::User(UserMessage::new("last".into(), 0)));
         let generation = history.generation();
 
+        history.handle(generation, compact_start(2)).unwrap();
         history
-            .handle(generation, HistoryUpdate::CompactStart { n_drop: 2 })
-            .unwrap();
-        history
-            .handle(generation, compact_response(AssistantEvent::Created(0)))
+            .handle(
+                generation,
+                compact_response(AssistantEvent::Created { created_at: 0 }),
+            )
             .unwrap();
         history
             .handle(

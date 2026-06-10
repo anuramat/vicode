@@ -22,6 +22,7 @@ use crate::llm::history::message::OutputContent;
 use crate::llm::history::message::OutputItem;
 use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
+use crate::utils::now;
 
 pub fn request(
     assistant: ModelConfig,
@@ -47,7 +48,7 @@ pub fn request(
     if compat.developer_as_user {
         for message in &mut items {
             if let Message::Developer(dev_msg) = message {
-                *message = Message::User(UserMessage::new(dev_msg.as_message_text().to_string()));
+                *message = Message::User(UserMessage::new(dev_msg.as_message_text().to_string(), now()));
             }
         }
     }

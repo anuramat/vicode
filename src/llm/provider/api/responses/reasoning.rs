@@ -1,10 +1,11 @@
 use async_openai::types::responses;
 
 use crate::llm::history::message::ReasoningItem;
+use crate::utils::now;
 
 impl From<responses::ReasoningItem> for ReasoningItem {
     fn from(item: responses::ReasoningItem) -> Self {
-        let mut result = Self::new(item.id);
+        let mut result = Self::new(item.id, now());
         result.content = item
             .content
             .map(|c| c.into_iter().map(|s| s.text).collect());

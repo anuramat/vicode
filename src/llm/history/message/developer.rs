@@ -33,7 +33,7 @@ pub struct CompactMessage {
 
     pub created_at: u64,
     pub started_at: u64,
-    pub ready_at: u64,
+    pub ended_at: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -124,8 +124,8 @@ impl Timing for CompactMessage {
         Some(self.started_at)
     }
 
-    fn ready_at(&self) -> Option<u64> {
-        Some(self.ready_at)
+    fn ended_at(&self) -> Option<u64> {
+        Some(self.ended_at)
     }
 }
 

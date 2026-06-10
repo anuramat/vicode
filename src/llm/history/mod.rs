@@ -16,6 +16,7 @@ use anyhow::bail;
 use archive::ArchivedHistory;
 use archive::ArchivedHistoryReason;
 pub use compact::Activity;
+pub use compact::CompactStart;
 use compact::CompactState;
 pub use event::AssistantEvent;
 pub use event::HistoryGeneration;
@@ -116,9 +117,8 @@ impl History {
             HistoryUpdate::DeveloperMessage(msg) => {
                 self.normal_mut()?.push(Message::Developer(msg));
             }
-            HistoryUpdate::UserMessage(text) => {
-                self.normal_mut()?
-                    .push(Message::User(UserMessage::new(text)));
+            HistoryUpdate::UserMessage(msg) => {
+                self.normal_mut()?.push(Message::User(msg));
             }
             HistoryUpdate::Pop(n) => {
                 // TODO this condition should be computed smarter I think;
@@ -156,10 +156,10 @@ impl History {
             HistoryUpdate::TurnResponse(event) => {
                 self.normal_mut()?.handle_response(event)?;
             }
-            HistoryUpdate::CompactStart { n_drop } => self.init_compact(n_drop)?,
+            HistoryUpdate::CompactStart(start) => self.init_compact(start)?,
             HistoryUpdate::CompactResponse(event) => {
-                let completed = matches!(event, AssistantEvent::Completed(_));
-                self.compact_mut()?.state.handle_response(event)?;
+                let completed = matches!(event, AssistantEvent::Completed { .. });
+                self.compact_mut()?.handle_response(event)?;
                 if completed && self.apply_compact().is_err() {
                     self.abort_compact()?;
                 }
@@ -197,11 +197,22 @@ mod tests {
         HistoryUpdate::TurnResponse(event)
     }
 
+    fn user(text: &str) -> HistoryUpdate {
+        HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0))
+    }
+
+    fn user_at(
+        text: &str,
+        created_at: u64,
+    ) -> HistoryUpdate {
+        HistoryUpdate::UserMessage(UserMessage::new(text.into(), created_at))
+    }
+
     #[test]
     fn generation_changes_only_when_message_count_changes() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created(1)))
+            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         assert_eq!(history.generation(), 0);
         history
@@ -225,13 +236,12 @@ mod tests {
                 response(AssistantEvent::Delta(Delta {
                     id: "out".into(),
                     delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
+                    timestamp: 3,
                 })),
             )
             .unwrap();
         assert_eq!(history.generation(), 0);
-        history
-            .handle(0, HistoryUpdate::UserMessage("hi".into()))
-            .unwrap();
+        history.handle(0, user("hi")).unwrap();
         assert_eq!(history.generation(), 0);
         history.increment();
         assert_eq!(history.generation(), 1);
@@ -240,9 +250,7 @@ mod tests {
     #[test]
     fn stale_generation_is_rejected() {
         let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::UserMessage("hello".into()))
-            .unwrap();
+        history.handle(0, user("hello")).unwrap();
         history.increment();
         assert!(history.handle(0, HistoryUpdate::Pop(1)).is_err());
         assert_eq!(history.state().messages.len(), 1);
@@ -251,12 +259,8 @@ mod tests {
     #[test]
     fn pop_snapshots_pre_pop_state_for_undo() {
         let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::UserMessage("first".into()))
-            .unwrap();
-        history
-            .handle(0, HistoryUpdate::UserMessage("second".into()))
-            .unwrap();
+        history.handle(0, user("first")).unwrap();
+        history.handle(0, user("second")).unwrap();
         history.handle(0, HistoryUpdate::Pop(1)).unwrap();
 
         assert_eq!(history.state().messages.len(), 1);
@@ -275,9 +279,7 @@ mod tests {
     #[test]
     fn pop_zero_does_not_archive() {
         let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::UserMessage("only".into()))
-            .unwrap();
+        history.handle(0, user("only")).unwrap();
         history.handle(0, HistoryUpdate::Pop(0)).unwrap();
         assert!(history.archive.is_empty());
     }
@@ -295,14 +297,12 @@ mod tests {
     #[test]
     fn response_can_follow_generation_increment() {
         let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::UserMessage("hello".into()))
-            .unwrap();
+        history.handle(0, user("hello")).unwrap();
         history
             .handle(0, HistoryUpdate::GenerationIncremented)
             .unwrap();
         history
-            .handle(1, response(AssistantEvent::Created(7)))
+            .handle(1, response(AssistantEvent::Created { created_at: 7 }))
             .unwrap();
         assert_eq!(history.generation(), 1);
         assert_eq!(history.state().messages.len(), 2);
@@ -329,5 +329,34 @@ mod tests {
         let history = History::new(String::new());
 
         assert_eq!(history.token_count(), TOOL_REGISTRY.token_count());
+    }
+
+    #[test]
+    fn replayed_history_updates_are_serialized_identically() {
+        let events = vec![
+            user_at("hi", 1),
+            HistoryUpdate::GenerationIncremented,
+            response(AssistantEvent::Created { created_at: 2 }),
+            response(AssistantEvent::Started { started_at: 3 }),
+            response(AssistantEvent::Delta(Delta {
+                id: "out".into(),
+                delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
+                timestamp: 4,
+            })),
+            response(AssistantEvent::Completed { ended_at: 5 }),
+        ];
+        let mut left = History::new("instructions".into());
+        let mut right = History::new("instructions".into());
+        for event in events {
+            let generation = left.generation();
+            left.handle(generation, event.clone()).unwrap();
+            right.handle(generation, event).unwrap();
+        }
+
+        assert_eq!(left.generation(), right.generation());
+        assert_eq!(
+            serde_json::to_value(&left).unwrap(),
+            serde_json::to_value(&right).unwrap()
+        );
     }
 }

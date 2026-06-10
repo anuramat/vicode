@@ -147,6 +147,7 @@ mod tests {
 
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
+    use crate::llm::history::message::UserMessage;
     use crate::llm::history::tokens::TokenCount;
     use crate::llm::history::tokens::count_text_tokens;
 
@@ -154,7 +155,10 @@ mod tests {
     fn user_message_updates_token_cache() {
         let mut history = History::new(String::new());
         history
-            .handle(0, HistoryUpdate::UserMessage("hello".into()))
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
+            )
             .unwrap();
         assert_eq!(
             history.state().token_count(),
