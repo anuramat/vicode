@@ -9,12 +9,11 @@ use crate::agent::id::AgentId;
 use crate::git::checkout;
 use crate::git::worktree;
 use crate::project::Layout;
-use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::AGENT_WORKDIR_DIRNAME;
 use crate::project::layout::LayoutTrait;
 
 impl Overlay {
-    /// create and mount agent workdir, maybe with a git worktree
+    /// create agent workdir, maybe with a git worktree; the run loop owns mounting
     pub async fn init_overlay(
         &self,
         layout: &Layout,
@@ -28,22 +27,23 @@ impl Overlay {
 
         if !git {
             create_dir_all(layout.agent_workdir(aid)).await?;
-            self.mount_agent(layout, commit, aid).await?;
             return Ok(());
         }
 
         worktree(layout, aid, commit, false).await?;
+        // mixed reset only writes HEAD and the index, so it works before the
+        // overlay is mounted, while the worktree is still empty
+        {
+            let repo = Repository::open(layout.agent_workdir(aid))?;
+            let oid = git2::Oid::from_str(commit)?;
+            let target = repo.find_object(oid, None)?;
+            repo.reset(&target, git2::ResetType::Mixed, None)?;
+        }
         tokio::fs::rename(
             layout.agent_workdir(aid).join(".git"),
             self.overlay_upper(layout, aid).join(".git"),
         )
         .await?;
-
-        self.mount_agent(layout, commit, aid).await?;
-        let repo = Repository::open(layout.agent_workdir(aid))?;
-        let oid = git2::Oid::from_str(commit)?;
-        let target = repo.find_object(oid, None)?;
-        repo.reset(&target, git2::ResetType::Mixed, None)?;
 
         Ok(())
     }

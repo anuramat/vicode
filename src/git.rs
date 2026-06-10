@@ -1,6 +1,5 @@
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::ops::BitOr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr;
@@ -76,14 +75,8 @@ fn worktree_no_checkout(
                 &raw mut opts,
                 raw::GIT_WORKTREE_ADD_OPTIONS_VERSION,
             ))?;
-            // TODO is this line required?
-            check(raw::git_checkout_init_options(
-                &raw mut opts.checkout_options,
-                raw::GIT_CHECKOUT_OPTIONS_VERSION,
-            ))?;
             opts.reference = wt_ref.raw();
-            opts.checkout_options.checkout_strategy =
-                raw::GIT_CHECKOUT_NONE.bitor(raw::GIT_CHECKOUT_DONT_UPDATE_INDEX);
+            opts.checkout_options.checkout_strategy = raw::GIT_CHECKOUT_NONE;
         }
 
         // create the worktree
