@@ -74,9 +74,8 @@ impl WorkspaceBackend for Overlay {
             .mount_status(layout, &layout.agent_workdir(aid))
             .await?
         {
-            MountStatus::Mounted | MountStatus::Broken => {
-                self.unmount_agent(layout, aid).await?;
-            }
+            MountStatus::Mounted => return Ok(()),
+            MountStatus::Broken => self.unmount_agent(layout, aid).await?,
             MountStatus::Unmounted => (),
         }
 
@@ -101,7 +100,11 @@ impl WorkspaceBackend for Overlay {
         layout: &Layout,
         aid: &AgentId,
     ) -> Result<()> {
-        self.unmount(layout, &layout.agent_workdir(aid)).await
+        let path = layout.agent_workdir(aid);
+        match self.mount_status(layout, &path).await? {
+            MountStatus::Unmounted => Ok(()),
+            MountStatus::Mounted | MountStatus::Broken => self.unmount(layout, &path).await,
+        }
     }
 
     async fn unmount_all(
