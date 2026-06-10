@@ -48,7 +48,10 @@ pub fn request(
     if compat.developer_as_user {
         for message in &mut items {
             if let Message::Developer(dev_msg) = message {
-                *message = Message::User(UserMessage::new(dev_msg.as_message_text().to_string(), now()));
+                *message = Message::User(UserMessage::new(
+                    dev_msg.as_message_text().to_string(),
+                    now(),
+                ));
             }
         }
     }

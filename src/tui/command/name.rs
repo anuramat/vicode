@@ -44,8 +44,8 @@ pub enum CommandName {
     Scroll,
     /// set multiplier for the next prompt
     SetMultiplier,
-    /// delete the currently selected tab
-    TabDelete,
+    /// archive the currently selected tab (deleted later by `vc cleanup`)
+    TabArchive,
     /// duplicate the currently selected tab
     TabDuplicate,
     /// open new tab

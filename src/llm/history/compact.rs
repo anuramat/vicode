@@ -275,7 +275,10 @@ mod tests {
             Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("old reply"));
-        push(&mut history, Message::User(UserMessage::new("last".into(), 0)));
+        push(
+            &mut history,
+            Message::User(UserMessage::new("last".into(), 0)),
+        );
         if let Activity::Normal { state } = &mut history.activity {
             state.recount();
         } else {
@@ -475,7 +478,10 @@ mod tests {
             Message::User(UserMessage::new("first".into(), 0)),
         );
         push(&mut history, compact_summary("old reply"));
-        push(&mut history, Message::User(UserMessage::new("last".into(), 0)));
+        push(
+            &mut history,
+            Message::User(UserMessage::new("last".into(), 0)),
+        );
         let generation = history.generation();
 
         history.handle(generation, compact_start(2)).unwrap();

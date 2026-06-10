@@ -48,7 +48,7 @@ impl<'a> App<'a> {
             CommandName::SetMultiplier => self
                 .selected_tab_mut()?
                 .set_multiplier(command.args.as_deref())?,
-            CommandName::TabDelete => self.delete_tab().await?,
+            CommandName::TabArchive => self.archive_tab().await?,
             CommandName::TabDuplicate => self.duplicate_tab().await?,
             CommandName::TabNew => self.new_tab().await?,
             CommandName::TabNext => self.next_tab(),

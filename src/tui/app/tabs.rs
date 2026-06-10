@@ -7,7 +7,6 @@ use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::id::AgentId;
-use crate::git::is_workdir_clean;
 use crate::project::layout::LayoutTrait;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -132,27 +131,23 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    /// delete selected tab and corresponding agent
-    pub async fn delete_tab(&mut self) -> Result<()> {
+    /// archive selected tab: the agent stops running and disappears from the
+    /// UI, but its state row and workdir stay until `vc cleanup -f`
+    pub async fn archive_tab(&mut self) -> Result<()> {
         let idx = self
             .selected_tab_idx()
             .ok_or_else(|| anyhow::anyhow!("no tab selected"))?;
-        let (aid, tab) = self
+        let (_, tab) = self
             .tabs
             .get_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
         let router = tab.router()?.clone();
-        anyhow::ensure!(
-            is_workdir_clean(&self.project.agent_workdir(aid))?,
-            "workdir has uncommitted changes"
-        );
-        let (aid, tab) = self
+        let (aid, _) = self
             .tabs
             .shift_remove_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
-        let commit = tab.state.context.commit.clone();
         router.delete(aid.clone()).await?;
-        self.project.delete_agent(&aid, &commit).await?;
+        self.project.unmount_agent(&aid).await?;
         self.rebuild_tablist();
         self.save_app_state().await?;
         Ok(())
@@ -326,6 +321,44 @@ mod tests {
             }
             other => panic!("expected NewAgent, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn archive_tab_stops_agent_but_keeps_workdir() {
+        use futures::future::AbortHandle;
+        use tokio::sync::mpsc::channel;
+
+        use crate::agent::router::RuntimeHandle;
+
+        let project = crate::project::Project::new_test().unwrap();
+        let mut app = App::new(project.clone(), Default::default());
+        let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
+        let tab = Tab::new(
+            Some(app.router.clone()),
+            aid.clone(),
+            state().await,
+            &project,
+        );
+        app.tabs.insert(aid.clone(), tab);
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+        let (tx, _rx) = channel(8);
+        let (abort, _reg) = AbortHandle::new_pair();
+        app.router
+            .register(aid.clone(), RuntimeHandle::new(tx, abort))
+            .await
+            .unwrap();
+
+        app.archive_tab().await.unwrap();
+
+        assert!(app.tabs.is_empty());
+        // workdir survives until `vc cleanup -f`
+        assert!(project.agent(&aid).exists());
+        // runtime is gone
+        assert!(app.router.delete(aid.clone()).await.is_err());
+
+        std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
 
     #[tokio::test]

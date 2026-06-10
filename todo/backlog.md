@@ -10,12 +10,6 @@
 - grep for TODO XXX PERF TEST
 - better prompting in tool descriptions, check for inconsistencies
 
-### check
-
-- agent init is kinda fucked up, need clear boundaries on init status: when
-  overlay is mounted, when state is written to file
-- cleanup logic for stale agents/worktrees/etc
-
 ## UI
 
 - message spacing

@@ -11,7 +11,6 @@ use anyhow::bail;
 use git2::BranchType;
 use git2::ErrorCode;
 use git2::Repository;
-use git2::StatusOptions;
 use git2::WorktreeAddOptions;
 use git2::WorktreePruneOptions;
 use libgit2_sys::git_error_last;
@@ -159,14 +158,6 @@ unsafe fn check(code: i32) -> Result<()> {
         }
     }
     bail!("libgit2 error: code={code}, klass={klass:#?}, message={message:#?}");
-}
-
-pub fn is_workdir_clean(workdir: &Path) -> Result<bool> {
-    let repo = Repository::open(workdir)?;
-    let mut opts = StatusOptions::new();
-    opts.include_ignored(false).include_untracked(true);
-    let statuses = repo.statuses(Some(&mut opts))?;
-    Ok(statuses.is_empty())
 }
 
 pub fn prune_stale_worktrees(layout: &impl LayoutTrait) -> Result<()> {

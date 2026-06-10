@@ -23,7 +23,7 @@
 "r" = "refresh_info"
 
 "o" = "tab_new"
-"s-d" = "tab_delete"
+"s-d" = "tab_archive"
 "s-y" = "tab_duplicate"
 
 "s-r" = "turn_retry"

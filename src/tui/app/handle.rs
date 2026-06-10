@@ -27,7 +27,12 @@ impl App<'_> {
                 self.dirty = true;
             }
             NewAgent(agent_id, state) => {
-                self.new_agent(agent_id, *state).await?;
+                if let Err(e) = self.new_agent(agent_id.clone(), *state).await {
+                    // drop the preview tab instead of leaving a router-less zombie
+                    self.tabs.shift_remove(&agent_id);
+                    self.rebuild_tablist();
+                    return Err(e);
+                }
             }
             ParentEvent(agent_id, event) => {
                 self.handle_parent_event(agent_id, event).await?;

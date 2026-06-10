@@ -32,11 +32,15 @@ pub struct SubagentHandle {
 }
 
 impl SubagentHandle {
-    /// Await the subagent's turn and unconditionally delete its router entry.
+    /// Await the subagent's turn, delete its router entry, and unmount its
+    /// workdir; the state row stays in the store as an archived thread.
     pub async fn wait(self) -> Result<SubagentResult> {
         let aid = self.id.clone();
         let result = self.turn.await.context("subagent channel closed");
         drop(self.router.delete(aid.clone()).await);
+        if let Err(e) = self.project.unmount_agent(&aid).await {
+            tracing::warn!("failed to unmount subagent {aid}: {e}");
+        }
         let output = match result? {
             TurnResult::Success { last_text } => last_text.unwrap_or_default(),
             TurnResult::Failed(msg) => anyhow::bail!("subagent error: {msg}"),

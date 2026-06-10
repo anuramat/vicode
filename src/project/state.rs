@@ -111,13 +111,39 @@ impl StateStore {
         &self,
         id: &AgentId,
     ) -> Result<AgentState> {
+        Ok(serde_json::from_slice(&self.agent_bytes(id)?)?)
+    }
+
+    /// commit of an agent without deserializing the full state, which would
+    /// require an initialized assistant pool
+    pub fn agent_commit(
+        &self,
+        id: &AgentId,
+    ) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct Context {
+            commit: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct State {
+            context: Context,
+        }
+        Ok(serde_json::from_slice::<State>(&self.agent_bytes(id)?)?
+            .context
+            .commit)
+    }
+
+    fn agent_bytes(
+        &self,
+        id: &AgentId,
+    ) -> Result<Vec<u8>> {
         let value = self
             .agent_table()?
             .map(|t| t.get(id.to_string().as_str()))
             .transpose()?
             .flatten()
             .with_context(|| format!("agent {id} not found"))?;
-        Ok(serde_json::from_slice(value.value())?)
+        Ok(value.value().to_vec())
     }
 
     pub fn agent_ids(&self) -> Result<HashSet<AgentId>> {
@@ -181,5 +207,26 @@ impl StateStoreHandle {
         id: &AgentId,
     ) -> Result<()> {
         self.write(StateOp::DeleteAgent(id.to_string())).await
+    }
+}
+
+#[cfg(test)]
+impl StateStore {
+    pub fn save_agent_sync(
+        &self,
+        id: &AgentId,
+        state: &AgentState,
+    ) -> Result<()> {
+        self.apply(StateOp::SaveAgent(
+            id.to_string(),
+            serde_json::to_vec(state)?,
+        ))
+    }
+
+    pub fn save_app_sync(
+        &self,
+        state: &AppState,
+    ) -> Result<()> {
+        self.apply(StateOp::SaveApp(serde_json::to_vec(state)?))
     }
 }
