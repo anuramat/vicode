@@ -14,7 +14,7 @@ use crate::agent::id::AgentId;
 use crate::agent::router::SubagentSpawnSnapshot;
 use crate::agent::subagent;
 use crate::agent::subagent::replica;
-use crate::agent::task::manager::TaskId;
+use crate::agent::task::ledger::TaskId;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
 use crate::agent::tool::context::ToolRuntimeContext;
@@ -76,7 +76,7 @@ pub struct UserPrompt {
 
 impl Agent {
     pub fn derive_status(&self) -> AgentStatus {
-        let busy = !self.tskmgr.idle();
+        let busy = !self.ledger.idle();
         match self.history().activity() {
             history::Activity::Normal { state } => AgentStatus::Normal(state.turn_status(busy)),
             history::Activity::Compacting { compact, .. } => {
@@ -111,7 +111,7 @@ impl Agent {
                 ControlFlow::Continue(())
             }
             TaskEvent(tid, generation, event) => {
-                if self.tskmgr.pending(&tid) {
+                if self.ledger.pending(&tid) {
                     self.handle_history(generation, event).await?;
                 }
                 ControlFlow::Continue(())
@@ -132,7 +132,7 @@ impl Agent {
     }
 
     pub fn idle(&self) -> Result<()> {
-        anyhow::ensure!(self.tskmgr.idle(), "agent is busy");
+        anyhow::ensure!(self.ledger.idle(), "agent is busy");
         Ok(())
     }
 
@@ -158,7 +158,8 @@ impl Agent {
             }
             Abort => {
                 let done = self.pending_done.take();
-                self.tskmgr.abort().await;
+                self.ledger.clear();
+                self.executor.shutdown().await;
                 let g = self.increment_generation().await?;
                 let event = if self.history().compacting() {
                     Some(HistoryUpdate::CompactAbort)
@@ -303,19 +304,15 @@ impl Agent {
                 Err(e) => spawn_errors.push(e.to_string()),
             }
         }
-        self.tskmgr.spawn(
-            self.tx.clone(),
-            self.history().generation(),
-            move |task| async move {
-                let created_at = now();
-                let result = replica::run_replicas(handles, spawn_errors).await?;
-                task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
-                    result.report,
-                    created_at,
-                )))
-                .await
-            },
-        );
+        self.spawn_task(self.history().generation(), move |task| async move {
+            let created_at = now();
+            let result = replica::run_replicas(handles, spawn_errors).await?;
+            task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
+                result.report,
+                created_at,
+            )))
+            .await
+        });
         Ok(())
     }
 
@@ -348,20 +345,19 @@ impl Agent {
         let generation = self.history().generation();
         let ctx =
             ToolRuntimeContext::new(self.id.clone(), self.project.clone(), self.router.clone());
-        self.tskmgr
-            .spawn(self.tx.clone(), generation, move |task| async move {
-                let handle = TurnHandle {
-                    task,
-                    turn_type: TurnType::Default,
-                };
-                call.task.run(ctx).await;
-                call.touch_ready_at_now();
-                handle
-                    .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
-                        call,
-                    ))))
-                    .await
-            });
+        self.spawn_task(generation, move |task| async move {
+            let handle = TurnHandle {
+                task,
+                turn_type: TurnType::Default,
+            };
+            call.task.run(ctx).await;
+            call.touch_ready_at_now();
+            handle
+                .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+                    call,
+                ))))
+                .await
+        });
     }
 
     /// Drive the pending oneshot for the current turn, if any.
@@ -422,9 +418,7 @@ mod tests {
                 HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
             )
             .unwrap();
-        agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
-            pending::<Result<()>>().await
-        });
+        agent.spawn_task(0, |_| async move { pending::<Result<()>>().await });
         let (done_tx, done_rx) = oneshot::channel();
         agent.pending_done = Some(done_tx);
 
@@ -502,9 +496,7 @@ mod tests {
     #[tokio::test]
     async fn set_assistant_rejected_while_busy() {
         let (mut agent, _api, _parent_rx) = Agent::fake("set-assistant-busy").await;
-        agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
-            pending::<Result<()>>().await
-        });
+        agent.spawn_task(0, |_| async move { pending::<Result<()>>().await });
 
         let result = agent
             .handle_external(ExternalEvent::SetAssistant("test2".into()))

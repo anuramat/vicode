@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::handle::AgentEvent;
-use crate::agent::task::manager::TaskId;
+use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
@@ -56,11 +56,7 @@ impl TaskHandle {
         event: HistoryUpdate,
     ) -> Result<()> {
         self.tx
-            .send(AgentEvent::TaskEvent(
-                self.tid.clone(),
-                self.generation,
-                event,
-            ))
+            .send(AgentEvent::TaskEvent(self.tid, self.generation, event))
             .await?;
         Ok(())
     }

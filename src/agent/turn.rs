@@ -45,17 +45,16 @@ impl Agent {
         self.handle_history(generation, created).await?;
 
         let assistant = self.state.assistant.clone();
-        self.tskmgr
-            .spawn(self.tx.clone(), generation, move |task| async move {
-                let handle = TurnHandle { task, turn_type };
-                if let Err(err) =
-                    Self::turn(handle.clone(), &assistant, tools, instructions, messages).await
-                {
-                    handle.send(AssistantEvent::failed(err.to_string())).await?;
-                    return Err(err);
-                }
-                Ok(())
-            });
+        self.spawn_task(generation, move |task| async move {
+            let handle = TurnHandle { task, turn_type };
+            if let Err(err) =
+                Self::turn(handle.clone(), &assistant, tools, instructions, messages).await
+            {
+                handle.send(AssistantEvent::failed(err.to_string())).await?;
+                return Err(err);
+            }
+            Ok(())
+        });
         Ok(())
     }
 

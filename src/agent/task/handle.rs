@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::agent::handle::ParentEvent;
-use crate::agent::task::manager::TaskId;
+use crate::agent::task::ledger::TaskId;
 
 impl Agent {
     pub async fn handle_task_result(
@@ -13,11 +13,11 @@ impl Agent {
         if let Err(ref err) = event {
             self.emit(ParentEvent::Error(err.to_string())).await?;
         }
-        let applied = self.tskmgr.finish_task(&id);
+        let applied = self.ledger.finish(&id);
         if !applied {
             return Ok(());
         }
-        if self.tskmgr.idle() {
+        if self.ledger.idle() {
             if self.history().state().needs_another_turn() && !self.history().compacting() {
                 self.start_turn().await?;
             } else {
@@ -98,15 +98,13 @@ mod tests {
                 HistoryUpdate::CompactResponse(AssistantEvent::failed("oops".into())),
             )
             .unwrap();
-        agent
-            .tskmgr
-            .spawn(agent.tx.clone(), 0, |_| async { Ok(()) });
+        agent.spawn_task(0, |_| async { Ok(()) });
         let event = recv(&mut agent.rx, "task completion").await;
         assert!(matches!(event, AgentEvent::TaskDone(..)));
 
         let _ = agent.handle(event).await.unwrap();
 
-        assert!(agent.tskmgr.idle());
+        assert!(agent.ledger.idle());
         assert!(agent.state.context.history.compacting());
         let event = parent_event(recv(&mut parent_rx, "parent event").await);
         assert!(
@@ -149,9 +147,7 @@ mod tests {
             )
             .await
             .unwrap();
-        agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async {
-            Err(anyhow::anyhow!("oops"))
-        });
+        agent.spawn_task(0, |_| async { Err(anyhow::anyhow!("oops")) });
         let event = recv(&mut agent.rx, "task completion").await;
         assert!(matches!(event, AgentEvent::TaskDone(..)));
 

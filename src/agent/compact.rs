@@ -54,7 +54,7 @@ mod tests {
         agent.init_compact(0).await.unwrap();
         agent.compact_turn().await.err().unwrap();
 
-        assert!(agent.tskmgr.idle());
+        assert!(agent.ledger.idle());
         assert!(!agent.state.context.history.compacting());
     }
 

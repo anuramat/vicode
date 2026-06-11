@@ -234,7 +234,7 @@ async fn abort_mid_stream_fails_turn_and_fires_done() {
         &agent.state.status,
         AgentStatus::Normal(TurnStatus::Failed(msg)) if msg == "aborted by user"
     ));
-    assert!(agent.tskmgr.idle());
+    assert!(agent.ledger.idle());
     assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
@@ -296,7 +296,7 @@ async fn compact_failure_then_retry_compacts_history() {
         .handle(AgentEvent::External(ExternalEvent::Retry))
         .await
         .unwrap();
-    pump_until(&mut agent, |a| a.tskmgr.idle() && !a.history().compacting()).await;
+    pump_until(&mut agent, |a| a.ledger.idle() && !a.history().compacting()).await;
 
     assert!(matches!(
         agent.state.status,

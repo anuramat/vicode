@@ -23,7 +23,8 @@ use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::TurnResult;
 use crate::agent::router::AgentRouterHandle;
-use crate::agent::task::manager::AgentTaskManager;
+use crate::agent::task::executor::TaskExecutor;
+use crate::agent::task::ledger::TaskLedger;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::forward;
 use crate::llm::history::History;
@@ -44,8 +45,10 @@ pub struct Agent {
     // agent event loop
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,
-    /// manages jobs in the agent event loop
-    pub tskmgr: AgentTaskManager,
+    /// tracks jobs in flight in the agent event loop
+    pub ledger: TaskLedger,
+    /// runs those jobs on tokio tasks
+    pub executor: TaskExecutor,
     pub tools: ToolRegistry,
 }
 
@@ -128,6 +131,19 @@ pub struct AgentContext {
 impl Agent {
     forward! {
         history: History = self.state.context.history;
+    }
+
+    /// register a task in the ledger and run it on the executor
+    pub fn spawn_task<F, Fut>(
+        &mut self,
+        generation: crate::llm::history::HistoryGeneration,
+        task: F,
+    ) where
+        F: FnOnce(crate::agent::task::sink::TaskHandle) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let id = self.ledger.register();
+        self.executor.spawn(self.tx.clone(), id, generation, task);
     }
 
     pub async fn emit(

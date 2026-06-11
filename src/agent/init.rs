@@ -9,7 +9,6 @@ use crate::agent::AgentState;
 use crate::agent::AgentStatus;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::router::RuntimeHandle;
-use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::History;
@@ -34,7 +33,8 @@ impl Agent {
             router,
             pending_done: None,
             rx,
-            tskmgr: AgentTaskManager::new(),
+            ledger: Default::default(),
+            executor: Default::default(),
             tx,
             tools,
         }
