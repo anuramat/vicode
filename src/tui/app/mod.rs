@@ -1,6 +1,8 @@
 pub mod command;
 pub mod handle;
 pub mod key;
+#[cfg(test)]
+mod render_tests;
 pub mod run;
 pub mod tabs;
 

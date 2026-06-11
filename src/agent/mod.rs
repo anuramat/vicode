@@ -2,6 +2,8 @@ pub mod compact;
 pub mod handle;
 pub mod id;
 pub mod init;
+#[cfg(test)]
+mod loop_tests;
 pub mod router;
 pub mod run;
 pub mod subagent;

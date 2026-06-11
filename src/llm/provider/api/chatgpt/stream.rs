@@ -108,9 +108,17 @@ async fn send_once(
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+
+    use super::super::CHATGPT_AUTH_TYPE;
+    use super::super::CHATGPT_AUTH_VERSION;
     use super::super::OAUTH_CLIENT_ID;
+    use super::super::OAUTH_ISSUER;
+    use super::super::auth::AuthRecord;
     use super::super::auth::AuthStore;
     use super::*;
+    use crate::utils::now;
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vicode-stream-{}", uuid::Uuid::new_v4()));
@@ -125,6 +133,142 @@ mod tests {
             .input(responses::InputParam::Items(Vec::new()))
             .build()
             .unwrap()
+    }
+
+    fn logged_in_auth() -> ChatgptAuthManager {
+        let store = AuthStore::new_in(
+            temp_dir(),
+            "chatgpt",
+            OAUTH_ISSUER.into(),
+            OAUTH_CLIENT_ID.into(),
+        );
+        store
+            .save(&AuthRecord {
+                version: CHATGPT_AUTH_VERSION,
+                kind: CHATGPT_AUTH_TYPE.into(),
+                provider_id: "chatgpt".into(),
+                issuer: OAUTH_ISSUER.into(),
+                client_id: OAUTH_CLIENT_ID.into(),
+                access_token: "test-access-token".into(),
+                refresh_token: "test-refresh-token".into(),
+                expires_at_unix_ms: now() + 3_600_000,
+                account_id: None,
+                plan_type: None,
+                email: None,
+            })
+            .unwrap();
+        ChatgptAuthManager::with_store(store).unwrap()
+    }
+
+    /// one-shot HTTP server: drains the request, replies with the SSE body
+    async fn serve_sse(body: String) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = sock.read(&mut tmp).await.unwrap();
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(headers_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&buf[..headers_end]).to_lowercase();
+                    let content_length: usize = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .map(|v| v.trim().parse().unwrap())
+                        .unwrap_or(0);
+                    if buf.len() >= headers_end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            sock.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn sse_stream_to_assistant_events_snapshot() {
+        let fixture = concat!(
+            r#"data: {"type":"response.created","response":{"id":"resp_1","object":"response","output":[],"status":"in_progress"}}"#,
+            "\n\n",
+            r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress","content":[]}}"#,
+            "\n\n",
+            r#"data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"hel"}"#,
+            "\n\n",
+            r#"data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"lo"}"#,
+            "\n\n",
+            r#"data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"current\":\"testing\",\"entries\":[]}","call_id":"call_1","name":"todo"}}"#,
+            "\n\n",
+            r#"data: {"type":"response.completed","response":{"id":"resp_1","object":"response","output":[],"status":"completed"}}"#,
+            "\n\n",
+            "data: [DONE]\n\n",
+        );
+        let auth = logged_in_auth();
+        let base = serve_sse(fixture.into()).await;
+
+        let inner = run(&auth, &base, || Ok(body())).await.unwrap();
+        let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("semaphore closed");
+        let events: Vec<_> = crate::llm::provider::api::responses::started_stream(permit, inner)
+            .stream
+            .map(|event| event.map_err(|err| err.to_string()))
+            .collect()
+            .await;
+
+        insta::assert_yaml_snapshot!(events, {
+            ".**.timestamp" => "[ts]",
+            ".**.started_at" => "[ts]",
+            ".**.ended_at" => "[ts]",
+            ".**.ready_at" => "[ts]",
+        }, @r#"
+        - Ok:
+            Item:
+              Output:
+                id: msg_1
+                content: []
+                token_count: 0
+                started_at: "[ts]"
+                ended_at: "[ts]"
+        - Ok:
+            Delta:
+              id: msg_1
+              delta:
+                Output: hel
+              timestamp: "[ts]"
+        - Ok:
+            Delta:
+              id: msg_1
+              delta:
+                Output: lo
+              timestamp: "[ts]"
+        - Ok:
+            Item:
+              ToolCall:
+                id: ~
+                call_id: call_1
+                name: todo
+                arguments:
+                  current: testing
+                  entries: []
+                meta: ~
+                output: ~
+                token_count: 0
+                started_at: "[ts]"
+                ended_at: "[ts]"
+                ready_at: "[ts]"
+        - Ok:
+            Completed:
+              ended_at: "[ts]"
+        "#);
     }
 
     #[tokio::test]
