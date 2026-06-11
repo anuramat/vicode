@@ -141,7 +141,13 @@ pub async fn run(force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let project = Project::new(config, layout, lock, store.into_handle());
+    let project = Project::new(
+        config,
+        layout,
+        lock,
+        store.into_handle(),
+        Default::default(),
+    );
     project.unmount_all().await?;
     for (aid, commit) in &garbage.agents {
         project.delete_agent(aid, commit).await?;
@@ -166,44 +172,14 @@ mod tests {
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
     use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
-    use crate::llm::provider::assistant::AssistantPool;
+    use crate::llm::provider::assistant::Assistant;
     use crate::project::backend::Overlay;
     use crate::tui::app::AppState;
 
-    async fn state(commit: String) -> AgentState {
-        let pool = ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
+    fn state(commit: String) -> AgentState {
         AgentState {
             status: AgentStatus::default(),
-            assistant: pool.assistant("test").unwrap(),
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: AgentContext {
                 commit,
@@ -238,9 +214,7 @@ mod tests {
         let arch = AgentId::from("arch".to_string());
         let ghost = AgentId::from("ghost".to_string());
         for aid in [&vis, &arch, &ghost] {
-            store
-                .save_agent_sync(aid, &state(commit.clone()).await)
-                .unwrap();
+            store.save_agent_sync(aid, &state(commit.clone())).unwrap();
         }
         store
             .save_app_sync(&AppState {

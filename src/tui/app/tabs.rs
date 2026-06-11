@@ -53,11 +53,13 @@ impl<'a> App<'a> {
         let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
         let instructions = self.project.instructions(&aid).await?;
+        let assistant = self.project.assistants().next_primary()?;
         let state = AgentState::new(
+            assistant,
             commit,
             instructions,
             self.project.config().subagent_max_depth,
-        )?;
+        );
         self.insert_preview_tab(aid.clone(), state.clone());
         self.tx
             .send(AppEvent::NewAgent(aid, Box::new(state)))
@@ -240,50 +242,13 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentStatus;
-    use crate::config::Config;
     use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
 
-    async fn assistant() -> Assistant {
-        ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
-
-    async fn state() -> AgentState {
+    fn state() -> AgentState {
         AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -294,7 +259,6 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
-        assistant().await;
         let mut app = App::new(
             crate::project::Project::new_test().unwrap(),
             Default::default(),
@@ -334,12 +298,7 @@ mod tests {
         let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
-        let tab = Tab::new(
-            Some(app.router.clone()),
-            aid.clone(),
-            state().await,
-            &project,
-        );
+        let tab = Tab::new(Some(app.router.clone()), aid.clone(), state(), &project);
         app.tabs.insert(aid.clone(), tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
@@ -367,7 +326,7 @@ mod tests {
             crate::project::Project::new_test().unwrap(),
             Default::default(),
         );
-        let state = state().await;
+        let state = state();
         let project = app.project.clone();
         app.tabs = ["a", "b"]
             .into_iter()

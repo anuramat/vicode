@@ -13,7 +13,7 @@ use crate::agent::task::manager::AgentTaskManager;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::History;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
 
 const CHANNEL_CAPACITY: usize = 100;
@@ -87,23 +87,20 @@ fn tools_for_depth(max_depth: u32) -> ToolRegistry {
 impl AgentState {
     /// init a primary agent from scratch
     pub fn new(
+        assistant: Assistant,
         commit: String,
         instructions: String,
         max_depth: u32,
-    ) -> Result<Self> {
-        let state = Self {
+    ) -> Self {
+        Self {
             status: AgentStatus::default(),
-            assistant: ASSISTANT_POOL
-                .get()
-                .unwrap()
-                .assistant(&ASSISTANT_POOL.get().unwrap().next_primary())?,
+            assistant,
             max_depth,
             context: AgentContext {
                 commit,
                 history: History::new(instructions),
             },
-        };
-        Ok(state)
+        }
     }
 
     pub async fn save(
@@ -121,43 +118,7 @@ mod tests {
 
     use super::*;
     use crate::agent::router::AgentRouter;
-    use crate::config::Config;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
-
-    async fn assistant() -> crate::llm::provider::assistant::Assistant {
-        let pool = ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
-        pool.assistant(&pool.next_primary()).unwrap()
-    }
 
     #[tokio::test]
     async fn try_duplicate_registers_child_with_router() {
@@ -179,7 +140,7 @@ mod tests {
 
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: AgentContext {
                 commit: commit.clone(),

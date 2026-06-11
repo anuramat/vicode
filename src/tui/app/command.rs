@@ -200,46 +200,14 @@ mod tests {
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
-    use crate::config::Config;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::widgets::input::CompletionItem;
     use crate::tui::widgets::input::CompletionSource;
     use crate::tui::widgets::input::Input;
     use crate::tui::widgets::input::InputOpts;
-
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
@@ -249,7 +217,7 @@ mod tests {
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -303,7 +271,7 @@ mod tests {
         let project = app.project.clone();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

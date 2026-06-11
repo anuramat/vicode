@@ -1,4 +1,5 @@
 use std::future::pending;
+use std::sync::Arc;
 
 use anyhow::Result;
 use crossterm::event::DisableBracketedPaste;
@@ -16,7 +17,6 @@ use super::App;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::config::Config;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
 use crate::project::Layout;
 use crate::project::Project;
@@ -38,10 +38,7 @@ impl App<'_> {
         // make sure we're the only instance in this project
         let lock = ProjectLock::acquire(&layout)?;
 
-        // TODO move to AgentRouter?
-        ASSISTANT_POOL
-            .get_or_try_init(|| AssistantPool::from_config(&config))
-            .await?;
+        let assistants = Arc::new(AssistantPool::from_config(&config).await?);
 
         // read everything we need at startup, then hand the db to the writer task
         let store = StateStore::open(layout.state_db())?;
@@ -52,11 +49,15 @@ impl App<'_> {
                 .visible_order
                 .iter()
                 .filter(|aid| agent_ids.contains(aid))
-                .map(|aid| store.load_agent(aid).map(|state| (aid.clone(), state)))
+                .map(|aid| {
+                    store
+                        .load_agent(aid, &assistants)
+                        .map(|state| (aid.clone(), state))
+                })
                 .collect();
             agents?
         };
-        let project = Project::new(config, layout, lock, store.into_handle());
+        let project = Project::new(config, layout, lock, store.into_handle(), assistants);
         let mut app = Self::new(project, agent_ids);
         let term = app.setup_terminal()?;
         app.run(term, tab_agents).await?;

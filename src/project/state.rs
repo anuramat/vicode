@@ -15,7 +15,9 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::agent::AgentState;
+use crate::agent::RawAgentState;
 use crate::agent::id::AgentId;
+use crate::llm::provider::assistant::AssistantPool;
 use crate::tui::app::AppState;
 
 const APP_KEY: &str = "current";
@@ -110,12 +112,13 @@ impl StateStore {
     pub fn load_agent(
         &self,
         id: &AgentId,
+        assistants: &AssistantPool,
     ) -> Result<AgentState> {
-        Ok(serde_json::from_slice(&self.agent_bytes(id)?)?)
+        serde_json::from_slice::<RawAgentState>(&self.agent_bytes(id)?)?.resolve(assistants)
     }
 
-    /// commit of an agent without deserializing the full state, which would
-    /// require an initialized assistant pool
+    /// commit of an agent without resolving the full state, which would
+    /// require an assistant pool with the persisted assistant id
     pub fn agent_commit(
         &self,
         id: &AgentId,

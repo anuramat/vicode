@@ -29,6 +29,7 @@ use crate::forward;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
+use crate::llm::provider::assistant::AssistantPool;
 use crate::project::Project;
 
 #[derive(Debug)]
@@ -48,7 +49,7 @@ pub struct Agent {
     pub tools: ToolRegistry,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct AgentState {
     /// last emitted status for deduplication of status updates
     #[serde(skip)]
@@ -58,6 +59,29 @@ pub struct AgentState {
     /// subagents; the subagent tool is filtered out at construction.
     pub max_depth: u32,
     pub context: AgentContext,
+}
+
+/// field mirror of `AgentState` for deserialization: the persisted assistant
+/// id resolves to an `Assistant` through the pool
+#[derive(Deserialize)]
+pub struct RawAgentState {
+    assistant: String,
+    max_depth: u32,
+    context: AgentContext,
+}
+
+impl RawAgentState {
+    pub fn resolve(
+        self,
+        assistants: &AssistantPool,
+    ) -> anyhow::Result<AgentState> {
+        Ok(AgentState {
+            status: AgentStatus::default(),
+            assistant: assistants.assistant(&self.assistant)?,
+            max_depth: self.max_depth,
+            context: self.context,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
@@ -124,46 +148,14 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::config::Config;
-    use crate::llm::provider::assistant::AssistantPool;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn status_is_not_persisted() {
+    #[test]
+    fn status_is_not_persisted() {
         let state = AgentState {
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
             max_depth: 1,
-            context: crate::agent::AgentContext {
+            context: AgentContext {
                 commit: "".into(),
                 history: History::new("".into()),
             },
@@ -172,36 +164,10 @@ mod tests {
         let serialized = serde_json::to_value(&state).unwrap();
         assert!(serialized.get("status").is_none());
 
-        crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                        primary_assistant = ["test"]
-                        shell_cmd = ["bash", "-c"]
-
-                        [sandbox]
-                        kind = "bwrap"
-                        bin = "bwrap"
-                        args = []
-                        stages = []
-
-                        [providers.main]
-                        api = "responses"
-                        base_url = "https://api.example.com/v1"
-
-                        [assistants.test]
-                        provider = "main"
-                        model = "gpt-test"
-                        "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
-        let restored: AgentState = serde_json::from_value(serialized).unwrap();
+        let restored = serde_json::from_value::<RawAgentState>(serialized)
+            .unwrap()
+            .resolve(&AssistantPool::fake().0)
+            .unwrap();
         assert_eq!(restored.status, AgentStatus::default());
     }
 }

@@ -8,7 +8,6 @@ use git2::Repository;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::UserPrompt;
 use crate::llm::history::message::Message;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::layout::LayoutTrait;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
@@ -39,8 +38,9 @@ impl Tab<'_> {
         if !self.state.status.idle() {
             return Ok(());
         }
-        let pool = ASSISTANT_POOL.get().unwrap();
-        let id = pool
+        let id = self
+            .project
+            .assistants()
             .switch_assistant(&self.state.assistant.id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
         router
@@ -184,51 +184,19 @@ mod tests {
     use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
     use crate::agent::router::AgentRouter;
-    use crate::config::Config;
     use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
     use crate::tui::widgets::input::InputOpts;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
-    async fn tab() -> Tab<'static> {
+    fn tab() -> Tab<'static> {
         let project = Project::new_test().unwrap();
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -271,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn completion_accept_replaces_active_word_with_at_path() {
-        let mut tab = tab().await;
+        let mut tab = tab();
         tab.insert_mode(true);
         for ch in "open @sr".chars() {
             tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
@@ -300,7 +268,7 @@ mod tests {
         let aid = AgentId::from("preview-submit".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

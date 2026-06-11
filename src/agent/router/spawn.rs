@@ -1,4 +1,3 @@
-use anyhow::Context;
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -12,7 +11,6 @@ use crate::agent::AgentState;
 use crate::agent::AgentStatus;
 use crate::agent::handle::AgentEvent;
 use crate::llm::history::HistoryGeneration;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::project::Project;
 
 impl AgentRouter {
@@ -67,10 +65,7 @@ async fn spawn_subagent_async(
         let history = snap.history.subagent(inherit_context);
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: ASSISTANT_POOL
-                .get()
-                .context("assistant pool not initialized")?
-                .next_subagent(&snap.assistant_id)?,
+            assistant: project.assistants().next_subagent(&snap.assistant_id)?,
             max_depth: snap.max_depth - 1,
             context: AgentContext {
                 commit: snap.commit.clone(),

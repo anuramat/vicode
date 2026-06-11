@@ -40,44 +40,11 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::task::manager::AgentTaskManager;
-    use crate::config::Config;
     use crate::llm::history::History;
     use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
-
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 99999
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn compact_turn_is_noop_when_nothing_is_dropped() {
@@ -87,7 +54,7 @@ mod tests {
             .await
             .unwrap();
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
@@ -136,7 +103,7 @@ mod tests {
             .await
             .unwrap();
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),

@@ -97,7 +97,6 @@ mod tests {
     use super::*;
     use crate::agent::handle::UserPrompt;
     use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
 
@@ -223,40 +222,6 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_subagent_snapshots_parent_and_registers_child() {
-        use crate::config::Config;
-        use crate::llm::provider::assistant::AssistantPool;
-
-        ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
-
         let project = Project::new_test().unwrap();
         let parent_aid = AgentId::from(format!("parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);

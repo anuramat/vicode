@@ -10,15 +10,10 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_plain::derive_deserialize_from_fromstr;
 use serde_plain::derive_serialize_from_display;
-use tokio::sync::OnceCell;
 
 use super::Provider;
 use crate::config::Config;
-
-// TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
-pub static ASSISTANT_POOL: OnceCell<AssistantPool> = OnceCell::const_new();
 
 #[derive(Debug, Clone)]
 pub struct Assistant {
@@ -34,18 +29,6 @@ impl std::fmt::Display for Assistant {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         write!(f, "{}", self.id)
-    }
-}
-
-derive_deserialize_from_fromstr!(Assistant, "existing assistant id");
-impl std::str::FromStr for Assistant {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ASSISTANT_POOL
-            .get()
-            .context("assistant pool not initialized")?
-            .assistant(s)
     }
 }
 
@@ -76,18 +59,22 @@ pub struct ModelConfig {
     pub window: Option<usize>,
 }
 
+#[derive(Debug, Default)]
 pub struct AssistantPool {
     assistants: IndexMap<String, Assistant>,
     primary: RoundRobin,
     subagent: SubagentSelector,
 }
 
+#[derive(Debug, Default)]
 struct RoundRobin {
     ids: Vec<String>,
     next: AtomicUsize,
 }
 
+#[derive(Debug, Default)]
 enum SubagentSelector {
+    #[default]
     Inherit,
     RoundRobin(RoundRobin),
 }
@@ -146,8 +133,8 @@ impl AssistantPool {
             .with_context(|| format!("unknown assistant {id:?}"))
     }
 
-    pub fn next_primary(&self) -> String {
-        self.primary.next()
+    pub fn next_primary(&self) -> Result<Assistant> {
+        self.assistant(&self.primary.next())
     }
 
     pub fn switch_assistant(
@@ -177,6 +164,20 @@ impl AssistantPool {
             .get(&id)
             .cloned()
             .with_context(|| format!("failed to get assistant {id} for subagent"))
+    }
+}
+
+#[cfg(test)]
+impl AssistantPool {
+    /// pool with a single `"test"` assistant backed by a scripted `FakeApi`
+    pub fn fake() -> (Self, Arc<crate::llm::provider::api::fake::FakeApi>) {
+        let (assistant, api) = Assistant::fake();
+        let pool = Self {
+            assistants: IndexMap::from([(assistant.id.clone(), assistant)]),
+            primary: RoundRobin::new(vec!["test".into()]),
+            subagent: SubagentSelector::Inherit,
+        };
+        (pool, api)
     }
 }
 

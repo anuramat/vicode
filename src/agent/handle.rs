@@ -26,7 +26,6 @@ use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::UserMessage;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
 
@@ -323,7 +322,7 @@ impl Agent {
         &mut self,
         id: &str,
     ) -> Result<()> {
-        let new = ASSISTANT_POOL.get().unwrap().assistant(id)?;
+        let new = self.project.assistants().assistant(id)?;
         self.state.assistant = new.clone();
         self.save().await?;
         self.emit(ParentEvent::AssistantSet(new)).await?;
@@ -386,11 +385,8 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::config::Config;
     use crate::llm::history::CompactStart;
     use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
     use crate::tui::app::AppEvent;
@@ -414,40 +410,6 @@ mod tests {
         }
     }
 
-    async fn assistant() -> Assistant {
-        let pool = crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
-        pool.assistant("test").unwrap()
-    }
-
     #[tokio::test]
     async fn abort_emits_turn_complete_and_marks_history_failed() {
         let project = Project::new_test().unwrap();
@@ -457,7 +419,7 @@ mod tests {
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
@@ -537,7 +499,7 @@ mod tests {
             .await
             .unwrap();
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
@@ -591,7 +553,7 @@ mod tests {
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
@@ -633,7 +595,7 @@ mod tests {
             .await
             .unwrap();
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),

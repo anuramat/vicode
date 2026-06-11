@@ -93,7 +93,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
-    use crate::config::Config;
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
@@ -101,45 +100,9 @@ mod tests {
     use crate::llm::history::delta::DeltaContent;
     use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
     use crate::tui::tab::Tab;
-
-    async fn test_assistant() -> Assistant {
-        crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
 
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
@@ -150,7 +113,7 @@ mod tests {
         let aid = AgentId::from("a".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: test_assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -179,7 +142,7 @@ mod tests {
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
-        let assistant = test_assistant().await;
+        let assistant = Assistant::fake().0;
         let state = AgentState {
             status: AgentStatus::default(),
             assistant: assistant.clone(),
@@ -214,7 +177,7 @@ mod tests {
         let aid = AgentId::from("deterministic-tab".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: test_assistant().await,
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

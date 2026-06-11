@@ -6,6 +6,7 @@ pub mod state;
 
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ambassador::Delegate;
 use anyhow::Context;
@@ -16,6 +17,7 @@ use crate::agent::AgentId;
 use crate::config::Config;
 use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
+use crate::llm::provider::assistant::AssistantPool;
 use crate::project::backend::BackendKind;
 use crate::project::backend::WorkspaceBackend;
 use crate::project::layout::LayoutTrait;
@@ -32,6 +34,7 @@ pub struct Project {
     config: Config,
     _lock: ProjectLock,
     store: StateStoreHandle,
+    assistants: Arc<AssistantPool>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +81,7 @@ impl Project {
         layout: Layout,
         lock: ProjectLock,
         store: StateStoreHandle,
+        assistants: Arc<AssistantPool>,
     ) -> Self {
         let backend = BackendKind::from_config(&config);
         Self {
@@ -86,6 +90,7 @@ impl Project {
             config,
             _lock: lock,
             store,
+            assistants,
         }
     }
 
@@ -104,6 +109,10 @@ impl Project {
 
     pub fn store(&self) -> &StateStoreHandle {
         &self.store
+    }
+
+    pub fn assistants(&self) -> &AssistantPool {
+        &self.assistants
     }
 
     pub async fn mount_agent(
@@ -211,8 +220,7 @@ mod tests {
     use crate::agent::AgentState;
     use crate::agent::AgentStatus;
     use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
-    use crate::llm::provider::assistant::AssistantPool;
+    use crate::llm::provider::assistant::Assistant;
     use crate::project::lock::ProjectLock;
 
     impl Project {
@@ -246,43 +254,15 @@ mod tests {
                 config,
                 _lock,
                 store,
+                assistants: Arc::new(AssistantPool::fake().0),
             })
         }
     }
 
-    async fn agent_state(commit: String) -> AgentState {
-        let pool = ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
+    fn agent_state(commit: String) -> AgentState {
         AgentState {
             status: AgentStatus::default(),
-            assistant: pool.assistant(&pool.next_primary()).unwrap(),
+            assistant: Assistant::fake().0,
             max_depth: 1,
             context: AgentContext {
                 commit,
@@ -314,7 +294,7 @@ mod tests {
             .unwrap();
         project
             .store()
-            .save_agent(&aid, &agent_state(commit.clone()).await)
+            .save_agent(&aid, &agent_state(commit.clone()))
             .await
             .unwrap();
 

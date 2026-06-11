@@ -40,14 +40,12 @@ mod tests {
     use crate::agent::AgentState;
     use crate::agent::handle::AgentEvent;
     use crate::agent::handle::ParentEvent;
-    use crate::config::Config;
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::CompactStart;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::message::UserMessage;
     use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
     use crate::tui::app::AppEvent;
@@ -71,37 +69,6 @@ mod tests {
         }
     }
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 99999
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
     #[tokio::test]
     async fn compact_failure_does_not_start_normal_turn() {
         let project = Project::new_test().unwrap();
@@ -111,7 +78,7 @@ mod tests {
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
@@ -200,7 +167,7 @@ mod tests {
             .unwrap();
         let (parent_tx, mut parent_rx) = channel(8);
         let (tx, rx) = channel(8);
-        let assistant = assistant().await;
+        let assistant = Assistant::fake().0;
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
