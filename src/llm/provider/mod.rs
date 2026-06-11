@@ -104,19 +104,28 @@ impl ProviderConfig {
     pub fn is_chatgpt(&self) -> bool {
         matches!(self, Self::Chatgpt(_))
     }
+
+    /// runs `key_command` (if any) to resolve the API key
+    pub async fn resolve_key(&self) -> Result<Option<String>> {
+        match self {
+            Self::Responses(p) | Self::ChatCompletions(p) => key(p.key_command.as_deref()).await,
+            Self::Chatgpt(_) => Ok(None),
+        }
+    }
 }
 
 impl Provider {
-    async fn new(
+    fn new(
         provider_id: String,
         provider_config: ProviderConfig,
+        key: Option<String>,
     ) -> Result<Self> {
         let api: Arc<dyn Api> = match &provider_config {
             ProviderConfig::Responses(p) => {
-                Arc::new(ResponsesApi::new(openai_client(p).await?, p.compat.clone()))
+                Arc::new(ResponsesApi::new(openai_client(p, key)?, p.compat.clone()))
             }
             ProviderConfig::ChatCompletions(p) => Arc::new(ChatCompletionsApi::new(
-                openai_client(p).await?,
+                openai_client(p, key)?,
                 p.compat.clone(),
             )),
             ProviderConfig::Chatgpt(_) => {
@@ -139,10 +148,13 @@ impl Provider {
     }
 }
 
-async fn openai_client(p: &ApiKeyProvider) -> Result<Client<OpenAIConfig>> {
+fn openai_client(
+    p: &ApiKeyProvider,
+    key: Option<String>,
+) -> Result<Client<OpenAIConfig>> {
     let base = shellexpand::full(&p.base_url)?;
     let mut cfg = OpenAIConfig::new().with_api_base(&*base);
-    if let Some(k) = key(p.key_command.as_deref()).await? {
+    if let Some(k) = key {
         cfg = cfg.with_api_key(k);
     }
     Ok(Client::with_config(cfg))
@@ -168,4 +180,39 @@ async fn key(command: Option<&str>) -> Result<Option<String>> {
             .trim()
             .to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+
+    fn api_key_config(key_command: Option<&str>) -> ProviderConfig {
+        ProviderConfig::Responses(ApiKeyProvider {
+            key_command: key_command.map(Into::into),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_key_execs_and_trims() {
+        let key = api_key_config(Some("echo ' secret '"))
+            .resolve_key()
+            .await
+            .unwrap();
+        assert_eq!(key, Some("secret".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_key_errors_on_failing_command() {
+        assert!(api_key_config(Some("false")).resolve_key().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_key_none_without_command() {
+        assert_eq!(api_key_config(None).resolve_key().await.unwrap(), None);
+        let chatgpt = ProviderConfig::Chatgpt(ChatgptProvider::default());
+        assert_eq!(chatgpt.resolve_key().await.unwrap(), None);
+    }
 }

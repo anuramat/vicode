@@ -94,9 +94,10 @@ impl AssistantPool {
             // TODO stream::iter map buffered try_collect
             let futures = config.providers.iter().map(
                 async |(id, config)| -> Result<(String, Arc<Provider>)> {
+                    let key = config.resolve_key().await?;
                     Ok((
                         id.clone(),
-                        Arc::new(Provider::new(id.clone(), config.clone()).await?),
+                        Arc::new(Provider::new(id.clone(), config.clone(), key)?),
                     ))
                 },
             );
