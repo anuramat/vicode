@@ -19,6 +19,7 @@ use crate::agent::task::sink::TurnType;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::forward;
+use crate::llm::history::Activity;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::CompactStart;
 use crate::llm::history::History;
@@ -190,10 +191,8 @@ impl AgentCore {
     pub fn derive_status(&self) -> AgentStatus {
         let busy = !self.ledger.idle();
         match self.history().activity() {
-            crate::llm::history::Activity::Normal { state } => {
-                AgentStatus::Normal(state.turn_status(busy))
-            }
-            crate::llm::history::Activity::Compacting { compact, .. } => {
+            Activity::Normal { state } => AgentStatus::Normal(state.turn_status(busy)),
+            Activity::Compacting { compact, .. } => {
                 AgentStatus::Compact(compact.state.turn_status(busy))
             }
         }
@@ -492,6 +491,11 @@ fn tools_for_depth(max_depth: u32) -> ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::history::message::OutputContent;
+    use crate::llm::history::message::OutputItem;
+    use crate::tools::todo::TodoArguments;
+    use crate::tools::todo::TodoCall;
+    use crate::tools::todo::TodoResult;
 
     impl AgentCore {
         /// core over the fake assistant pool ("test" + "test2"), max_depth 1
@@ -531,6 +535,52 @@ mod tests {
             },
             true,
         )
+    }
+
+    /// id of the task the effects started
+    fn started_task(effects: &[Effect]) -> TaskId {
+        effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::StartTurn { id, .. }
+                | Effect::RunTool { id, .. }
+                | Effect::StartReplicas { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("no task-starting effect")
+    }
+
+    fn todo_call(output: Option<std::result::Result<TodoResult, String>>) -> HistoryUpdate {
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+            ToolCallItem {
+                id: Some("call-1".into()),
+                call_id: "call-1".into(),
+                task: Box::new(TodoCall {
+                    arguments: Some(TodoArguments::default()),
+                    meta: None,
+                    output,
+                }),
+                token_count: 0,
+                started_at: 2,
+                ended_at: Some(3),
+                ready_at: None,
+            },
+        ))))
+    }
+
+    fn text_output(
+        id: &str,
+        text: &str,
+    ) -> HistoryUpdate {
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
+            OutputItem {
+                id: id.into(),
+                content: vec![OutputContent::Text(text.into())],
+                token_count: 0,
+                started_at: 1,
+                ended_at: None,
+            },
+        ))))
     }
 
     macro_rules! assert_handled {
@@ -813,5 +863,462 @@ mod tests {
         - []
         ");
         assert_eq!(core.state.assistant.id, "test");
+    }
+
+    #[test]
+    fn set_assistant_resolves_to_single_effect() {
+        let mut core = AgentCore::fake();
+        assert_handled!(&mut core, 7, CoreEvent::SetAssistant("test2".into()), @"
+        - Normal: Idle
+        - - SetAssistant: test2
+        ");
+        // core state untouched: the shell applies it after the save succeeds
+        assert_eq!(core.state.assistant.id, "test");
+    }
+
+    #[test]
+    fn set_assistant_unknown_id_is_rejected() {
+        let mut core = AgentCore::fake();
+        assert_rejected!(&mut core, 7, CoreEvent::SetAssistant("nope".into()), @r#"
+        - "unknown assistant \"nope\""
+        - Normal: Idle
+        - []
+        "#);
+    }
+
+    #[test]
+    fn submit_replaces_pending_done() {
+        let mut core = AgentCore::fake();
+        core.pending_done = true;
+        assert_handled!(&mut core, 7, submit("hi", 1, 0), @"
+        - Normal: InProgress
+        - - ReplyDone:
+              Failed: aborted by user
+          - StoreDone
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - UserMessage:
+                    text: hi
+                    token_count: 1
+                    created_at: 7
+          - Save
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+          - Emit:
+              HistoryUpdate:
+                - 1
+                - TurnResponse:
+                    Created:
+                      created_at: 7
+          - Save
+          - StartTurn:
+              id: 0
+              generation: 1
+              turn_type: Default
+              assistant: test
+          - Emit:
+              StatusUpdate:
+                Normal: InProgress
+        ");
+        assert!(core.pending_done);
+    }
+
+    #[test]
+    fn submit_multiplier_starts_replicas() {
+        let mut core = AgentCore::fake();
+        assert_handled!(&mut core, 7, submit("hi", 3, 0), @"
+        - Normal: InProgress
+        - - StoreDone
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - UserMessage:
+                    text: hi
+                    token_count: 1
+                    created_at: 7
+          - Save
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+          - StartReplicas:
+              id: 0
+              generation: 1
+              n: 3
+          - Emit:
+              StatusUpdate:
+                Normal: InProgress
+        ");
+    }
+
+    #[test]
+    fn abort_while_compacting_aborts_compact() {
+        let mut core = AgentCore::fake();
+        core.history_mut()
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
+            )
+            .unwrap();
+        drive(&mut core, 5, CoreEvent::Compact(1)).0.unwrap();
+
+        assert_handled!(&mut core, 9, CoreEvent::Abort, @"
+        - Normal: Idle
+        - - AbortTasks
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+          - Emit:
+              HistoryUpdate:
+                - 1
+                - CompactAbort
+          - Save
+          - Emit:
+              StatusUpdate:
+                Normal: Idle
+        ");
+        assert!(!core.history().compacting());
+    }
+
+    #[test]
+    fn abort_while_idle_emits_no_history_event() {
+        let mut core = AgentCore::fake();
+        assert_handled!(&mut core, 9, CoreEvent::Abort, @"
+        - Normal: Idle
+        - - AbortTasks
+          - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+        ");
+    }
+
+    #[test]
+    fn task_failure_after_abort_surfaces_error_without_reply() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let tid = started_task(&effects);
+        drive(&mut core, 2, CoreEvent::Abort).0.unwrap();
+
+        assert_handled!(&mut core, 3, CoreEvent::TaskDone(tid, Err("stream closed".into())), @"
+        - Normal:
+            Failed: aborted by user
+        - - Emit:
+              Error: stream closed
+        ");
+    }
+
+    #[test]
+    fn task_event_after_abort_is_dropped() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let tid = started_task(&effects);
+        drive(&mut core, 2, CoreEvent::Abort).0.unwrap();
+
+        assert_handled!(&mut core, 3, CoreEvent::TaskEvent(tid, 1, text_output("out", "late")), @"
+        - Normal:
+            Failed: aborted by user
+        - []
+        ");
+    }
+
+    #[test]
+    fn task_done_starts_followup_turn_after_tool_resolves() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let turn = started_task(&effects);
+
+        let (result, effects) = drive(&mut core, 2, CoreEvent::TaskEvent(turn, 1, todo_call(None)));
+        result.unwrap();
+        let tool = started_task(&effects);
+        insta::assert_yaml_snapshot!(effects, @r#"
+        - Emit:
+            HistoryUpdate:
+              - 1
+              - TurnResponse:
+                  Item:
+                    ToolCall:
+                      id: call-1
+                      call_id: call-1
+                      name: todo
+                      arguments:
+                        current: ""
+                        entries: []
+                      meta: ~
+                      output: ~
+                      token_count: 0
+                      started_at: 2
+                      ended_at: 3
+                      ready_at: ~
+        - RunTool:
+            id: 1
+            generation: 1
+            call:
+              id: call-1
+              call_id: call-1
+              name: todo
+              arguments:
+                current: ""
+                entries: []
+              meta: ~
+              output: ~
+              token_count: 0
+              started_at: 2
+              ended_at: 3
+              ready_at: ~
+        - Save
+        "#);
+
+        drive(
+            &mut core,
+            3,
+            CoreEvent::TaskEvent(
+                turn,
+                1,
+                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
+            ),
+        )
+        .0
+        .unwrap();
+        // the turn task finishing leaves the tool task pending: no new turn yet
+        let (result, effects) = drive(&mut core, 4, CoreEvent::TaskDone(turn, Ok(())));
+        result.unwrap();
+        assert!(effects.is_empty());
+
+        drive(
+            &mut core,
+            5,
+            CoreEvent::TaskEvent(tool, 1, todo_call(Some(Ok(TodoResult {})))),
+        )
+        .0
+        .unwrap();
+        assert_handled!(&mut core, 6, CoreEvent::TaskDone(tool, Ok(())), @"
+        - Normal: InProgress
+        - - Emit:
+              HistoryUpdate:
+                - 1
+                - TurnResponse:
+                    Created:
+                      created_at: 6
+          - Save
+          - StartTurn:
+              id: 2
+              generation: 1
+              turn_type: Default
+              assistant: test
+        ");
+    }
+
+    #[test]
+    fn task_done_fires_done_with_last_text() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let tid = started_task(&effects);
+        drive(
+            &mut core,
+            2,
+            CoreEvent::TaskEvent(tid, 1, text_output("out", "done")),
+        )
+        .0
+        .unwrap();
+        drive(
+            &mut core,
+            3,
+            CoreEvent::TaskEvent(
+                tid,
+                1,
+                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
+            ),
+        )
+        .0
+        .unwrap();
+
+        assert_handled!(&mut core, 4, CoreEvent::TaskDone(tid, Ok(())), @"
+        - Normal: Idle
+        - - ReplyDone:
+              Success:
+                last_text: done
+          - Emit:
+              StatusUpdate:
+                Normal: Idle
+        ");
+        assert!(!core.pending_done);
+    }
+
+    #[test]
+    fn task_done_fires_done_with_derived_failure() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let tid = started_task(&effects);
+        drive(
+            &mut core,
+            2,
+            CoreEvent::TaskEvent(
+                tid,
+                1,
+                HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                    message: "boom".into(),
+                    ended_at: 2,
+                }),
+            ),
+        )
+        .0
+        .unwrap();
+
+        assert_handled!(&mut core, 3, CoreEvent::TaskDone(tid, Err("boom".into())), @"
+        - Normal:
+            Failed: boom
+        - - Emit:
+              Error: boom
+          - ReplyDone:
+              Failed: boom
+          - Emit:
+              StatusUpdate:
+                Normal:
+                  Failed: boom
+        ");
+    }
+
+    #[test]
+    fn resolved_tool_call_is_not_rerun() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, submit("hi", 1, 0));
+        let tid = started_task(&effects);
+
+        assert_handled!(
+            &mut core, 2,
+            CoreEvent::TaskEvent(tid, 1, todo_call(Some(Ok(TodoResult {})))),
+            @r#"
+        - Normal: InProgress
+        - - Emit:
+              HistoryUpdate:
+                - 1
+                - TurnResponse:
+                    Item:
+                      ToolCall:
+                        id: call-1
+                        call_id: call-1
+                        name: todo
+                        arguments:
+                          current: ""
+                          entries: []
+                        meta: ~
+                        output:
+                          Ok: {}
+                        token_count: 0
+                        started_at: 2
+                        ended_at: 3
+                        ready_at: ~
+          - Save
+        "#
+        );
+    }
+
+    #[test]
+    fn retry_failed_turn_starts_normal_turn() {
+        let mut core = AgentCore::fake();
+        let history = core.history_mut();
+        history
+            .handle(
+                0,
+                HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 0)),
+            )
+            .unwrap();
+        history
+            .handle(
+                0,
+                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
+            )
+            .unwrap();
+        history
+            .handle(
+                0,
+                HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                    message: "oops".into(),
+                    ended_at: 1,
+                }),
+            )
+            .unwrap();
+
+        assert_handled!(&mut core, 7, CoreEvent::Retry, @"
+        - Normal: InProgress
+        - - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+          - Emit:
+              HistoryUpdate:
+                - 1
+                - TurnResponse:
+                    Created:
+                      created_at: 7
+          - Save
+          - StartTurn:
+              id: 0
+              generation: 1
+              turn_type: Default
+              assistant: test
+          - Emit:
+              StatusUpdate:
+                Normal: InProgress
+        ");
+    }
+
+    #[test]
+    fn undo_pops_messages() {
+        let mut core = AgentCore::fake();
+        let history = core.history_mut();
+        for text in ["first", "second"] {
+            history
+                .handle(
+                    0,
+                    HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0)),
+                )
+                .unwrap();
+        }
+
+        assert_handled!(&mut core, 7, CoreEvent::Undo(1), @"
+        - Normal: Idle
+        - - Emit:
+              HistoryUpdate:
+                - 0
+                - GenerationIncremented
+          - Emit:
+              HistoryUpdate:
+                - 1
+                - Pop: 1
+          - Save
+        ");
+        assert_eq!(core.history().state().messages.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_serves_busy_parent() {
+        let mut core = AgentCore::fake();
+        core.ledger.register();
+        assert_handled!(&mut core, 7, CoreEvent::Snapshot, @r#"
+        - Normal: InProgress
+        - - ReplySnapshot:
+              commit: ""
+              assistant_id: test
+              history:
+                instructions:
+                  text: ""
+                  token_count: 0
+                activity:
+                  Normal:
+                    state:
+                      messages: []
+                      token_count: 0
+                archive: []
+              max_depth: 1
+          - Emit:
+              StatusUpdate:
+                Normal: InProgress
+        "#);
     }
 }
