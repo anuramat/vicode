@@ -216,15 +216,13 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
     use crate::project::lock::ProjectLock;
 
     impl Project {
-        pub fn new_test() -> Result<Self> {
+        /// fresh project on a temp git repo; the returned handle scripts the
+        /// fake pool's api
+        pub fn new_test() -> Result<(Self, Arc<crate::llm::provider::api::fake::FakeApi>)> {
             use crate::project::backend::Cow;
 
             let config = Config::test();
@@ -248,26 +246,18 @@ mod tests {
             });
             let _lock = ProjectLock::acquire(&layout)?;
             let store = crate::project::state::StateStore::open(layout.state_db())?.into_handle();
-            Ok(Self {
-                layout,
-                backend,
-                config,
-                _lock,
-                store,
-                assistants: Arc::new(AssistantPool::fake().0),
-            })
-        }
-    }
-
-    fn agent_state(commit: String) -> AgentState {
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: AgentContext {
-                commit,
-                history: History::new("".into()),
-            },
+            let (pool, api) = AssistantPool::fake();
+            Ok((
+                Self {
+                    layout,
+                    backend,
+                    config,
+                    _lock,
+                    store,
+                    assistants: Arc::new(pool),
+                },
+                api,
+            ))
         }
     }
 
@@ -284,7 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_agent_removes_workdir() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("delete-me".to_string());
         let commit = head_commit(&project);
 
@@ -294,7 +284,7 @@ mod tests {
             .unwrap();
         project
             .store()
-            .save_agent(&aid, &agent_state(commit.clone()))
+            .save_agent(&aid, &AgentState::fake(&project))
             .await
             .unwrap();
 
@@ -308,7 +298,7 @@ mod tests {
 
     #[test]
     fn project_holds_lock_until_dropped() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let layout = Layout {
             root: project.root().to_path_buf(),
             id: project.id().into(),

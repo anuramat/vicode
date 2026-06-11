@@ -92,14 +92,11 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::llm::history::AssistantEvent;
-    use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::delta::Delta;
     use crate::llm::history::delta::DeltaContent;
     use crate::llm::history::message::UserMessage;
-    use crate::llm::provider::assistant::Assistant;
     use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
     use crate::tui::tab::Tab;
@@ -107,19 +104,11 @@ mod tests {
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
             Default::default(),
         );
         let aid = AgentId::from("a".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake(&app.project);
         app.tabs.insert(
             aid.clone(),
             Tab::new(None, aid.clone(), state, &app.project),
@@ -136,22 +125,14 @@ mod tests {
 
     #[tokio::test]
     async fn assistant_set_updates_tab_state() {
-        let project = crate::project::Project::new_test().unwrap();
+        let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
-        let assistant = Assistant::fake().0;
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant.clone(),
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake(&project);
+        let assistant = state.assistant.clone();
         let tab = Tab::new(
             Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
@@ -172,18 +153,10 @@ mod tests {
 
     #[tokio::test]
     async fn tab_history_replays_authoritative_history_updates_exactly() {
-        let project = crate::project::Project::new_test().unwrap();
+        let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from("deterministic-tab".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("instructions".into()),
-            },
-        };
+        let state = AgentState::fake(&project);
         app.tabs.insert(
             aid.clone(),
             Tab::new(

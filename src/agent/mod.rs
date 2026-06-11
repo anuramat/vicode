@@ -146,6 +146,49 @@ impl Agent {
 }
 
 #[cfg(test)]
+mod fixtures {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::llm::provider::api::fake::FakeApi;
+    use crate::project::layout::LayoutTrait;
+    use crate::tui::app::AppEvent;
+
+    impl AgentState {
+        /// state resolved from the project's fake pool
+        pub fn fake(project: &Project) -> Self {
+            Self::new(
+                project.assistants().assistant("test").unwrap(),
+                "".into(),
+                "".into(),
+                1,
+            )
+        }
+    }
+
+    impl Agent {
+        /// agent on a fresh test project, with the pool's scripted api; keep
+        /// the receiver alive so `emit` doesn't fail on a closed app channel
+        pub async fn fake(name: &str) -> (Self, Arc<FakeApi>, Receiver<AppEvent>) {
+            let (project, api) = Project::new_test().unwrap();
+            let aid = AgentId::from(format!("{name}-{}", uuid::Uuid::new_v4()));
+            tokio::fs::create_dir_all(project.agent(&aid))
+                .await
+                .unwrap();
+            let (app_tx, app_rx) = tokio::sync::mpsc::channel(256);
+            let state = AgentState::fake(&project);
+            let agent = Self::new(
+                project,
+                router::AgentRouter::test_handle_with_app_tx(app_tx),
+                aid,
+                state,
+            );
+            (agent, api, app_rx)
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
 
@@ -153,15 +196,8 @@ mod tests {
 
     #[test]
     fn status_is_not_persisted() {
-        let state = AgentState {
-            assistant: Assistant::fake().0,
-            status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
-            max_depth: 1,
-            context: AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let mut state = AgentState::new(Assistant::fake().0, "".into(), "".into(), 1);
+        state.status = AgentStatus::Normal(TurnStatus::Failed("oops".into()));
 
         let serialized = serde_json::to_value(&state).unwrap();
         assert!(serialized.get("status").is_none());

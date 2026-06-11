@@ -1,27 +1,18 @@
 //! full agent-loop tests: scripted assistant turns through `FakeApi`, driven
 //! through the real `Agent::handle` event loop
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 use crate::agent::Agent;
-use crate::agent::AgentContext;
-use crate::agent::AgentState;
 use crate::agent::AgentStatus;
 use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ExternalEvent;
 use crate::agent::handle::TurnResult;
 use crate::agent::handle::UserPrompt;
-use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouter;
-use crate::agent::task::manager::AgentTaskManager;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::TurnStatus;
 use crate::llm::history::delta::Delta;
@@ -30,48 +21,10 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
 use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
-use crate::llm::provider::api::fake::FakeApi;
-use crate::llm::provider::assistant::Assistant;
-use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 use crate::tools::todo::TodoArguments;
 use crate::tools::todo::TodoCall;
-use crate::tui::app::AppEvent;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
-
-/// fresh agent backed by its own `FakeApi`; the receiver must be kept alive so
-/// `emit` doesn't fail on a closed app channel
-async fn agent(name: &str) -> (Agent, Arc<FakeApi>, Receiver<AppEvent>) {
-    let project = Project::new_test().unwrap();
-    let aid = AgentId::from(format!("{name}-{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(project.agent(&aid))
-        .await
-        .unwrap();
-    let (assistant, fake) = Assistant::fake();
-    let (parent_tx, parent_rx) = channel(256);
-    let (tx, rx) = channel(256);
-    let agent = Agent {
-        project,
-        id: aid,
-        state: AgentState {
-            status: Default::default(),
-            assistant,
-            max_depth: 1,
-            context: AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        },
-        router: AgentRouter::test_handle_with_app_tx(parent_tx),
-        pending_done: None,
-        tx,
-        rx,
-        tskmgr: AgentTaskManager::new(),
-        tools: Default::default(),
-    };
-    (agent, fake, parent_rx)
-}
 
 fn output(
     id: &str,
@@ -170,7 +123,7 @@ macro_rules! assert_messages_snapshot {
 
 #[tokio::test]
 async fn submit_runs_tool_call_and_second_turn_to_done() {
-    let (mut agent, fake, _parent_rx) = agent("loop-happy").await;
+    let (mut agent, fake, _parent_rx) = Agent::fake("loop-happy").await;
     fake.script_turn(vec![
         output("out-1", 1),
         delta("out-1", "let me check", 2),
@@ -254,7 +207,7 @@ async fn submit_runs_tool_call_and_second_turn_to_done() {
 
 #[tokio::test]
 async fn abort_mid_stream_fails_turn_and_fires_done() {
-    let (mut agent, fake, _parent_rx) = agent("loop-abort").await;
+    let (mut agent, fake, _parent_rx) = Agent::fake("loop-abort").await;
     fake.script_hanging_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
     let (done_tx, done_rx) = oneshot::channel();
@@ -309,7 +262,7 @@ async fn abort_mid_stream_fails_turn_and_fires_done() {
 
 #[tokio::test]
 async fn compact_failure_then_retry_compacts_history() {
-    let (mut agent, fake, _parent_rx) = agent("loop-compact").await;
+    let (mut agent, fake, _parent_rx) = Agent::fake("loop-compact").await;
     for text in ["first", "second"] {
         agent
             .history_mut()

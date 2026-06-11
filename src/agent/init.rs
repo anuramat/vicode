@@ -122,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_duplicate_registers_child_with_router() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let (app_tx, _app_rx) = channel(8);
         let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
 
@@ -138,15 +138,8 @@ mod tests {
             .id()
             .to_string();
 
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: AgentContext {
-                commit: commit.clone(),
-                history: History::new("".into()),
-            },
-        };
+        let mut state = AgentState::fake(&project);
+        state.context.commit = commit.clone();
         let parent = Agent::new(project.clone(), router.clone(), parent_aid.clone(), state);
 
         let child_aid = router.allocate_agent_id().await.unwrap();

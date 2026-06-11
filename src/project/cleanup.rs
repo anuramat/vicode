@@ -170,25 +170,10 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::llm::history::History;
     use crate::llm::provider::assistant::Assistant;
     use crate::project::backend::Overlay;
     use crate::tui::app::AppState;
-
-    fn state(commit: String) -> AgentState {
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: AgentContext {
-                commit,
-                history: History::new("".into()),
-            },
-        }
-    }
 
     #[tokio::test]
     async fn scan_finds_archived_orphans_stale_worktrees_and_snapshots() {
@@ -216,7 +201,8 @@ mod tests {
         let arch = AgentId::from("arch".to_string());
         let ghost = AgentId::from("ghost".to_string());
         for aid in [&vis, &arch, &ghost] {
-            store.save_agent_sync(aid, &state(commit.clone())).unwrap();
+            let state = AgentState::new(Assistant::fake().0, commit.clone(), "".into(), 1);
+            store.save_agent_sync(aid, &state).unwrap();
         }
         store
             .save_app_sync(&AppState {

@@ -198,10 +198,7 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
     use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::widgets::input::CompletionItem;
@@ -211,19 +208,11 @@ mod tests {
 
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
-        let project = crate::project::Project::new_test().unwrap();
+        let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake(&project);
         let mut tab = Tab::new(
             Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
@@ -265,19 +254,11 @@ mod tests {
     #[tokio::test]
     async fn tab_focus_owns_contextual_scroll_commands() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
             Default::default(),
         );
         let project = app.project.clone();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake(&project);
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| {

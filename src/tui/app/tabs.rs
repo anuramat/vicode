@@ -241,26 +241,11 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentStatus;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
-
-    fn state() -> AgentState {
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        }
-    }
 
     #[tokio::test]
     async fn new_tab_enqueues_agent_creation() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
             Default::default(),
         );
 
@@ -294,11 +279,16 @@ mod tests {
 
         use crate::agent::router::RuntimeHandle;
 
-        let project = crate::project::Project::new_test().unwrap();
+        let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default());
         let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
-        let tab = Tab::new(Some(app.router.clone()), aid.clone(), state(), &project);
+        let tab = Tab::new(
+            Some(app.router.clone()),
+            aid.clone(),
+            AgentState::fake(&project),
+            &project,
+        );
         app.tabs.insert(aid.clone(), tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
@@ -323,11 +313,11 @@ mod tests {
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
             Default::default(),
         );
-        let state = state();
         let project = app.project.clone();
+        let state = AgentState::fake(&project);
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| {

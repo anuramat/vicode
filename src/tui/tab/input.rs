@@ -181,28 +181,17 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
     use crate::agent::router::AgentRouter;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
     use crate::project::Project;
     use crate::project::layout::LayoutTrait;
     use crate::tui::widgets::input::InputOpts;
 
     fn tab() -> Tab<'static> {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake(&project);
         let mut tab = Tab::new(Some(AgentRouter::test_handle()), aid, state, &project);
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
@@ -252,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_reads_tracked_files() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("tab-refresh".to_string());
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
@@ -264,18 +253,9 @@ mod tests {
 
     #[tokio::test]
     async fn preview_submit_keeps_input() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("preview-submit".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: Assistant::fake().0,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
-        let mut tab = Tab::new(None, aid, state, &project);
+        let mut tab = Tab::new(None, aid, AgentState::fake(&project), &project);
         tab.input.textarea.insert_str("do work");
 
         drop(tab.submit().await);

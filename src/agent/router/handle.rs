@@ -111,7 +111,7 @@ mod tests {
         let (app_tx, app_rx) = channel(8);
         std::mem::forget(app_rx);
         let handle = AgentRouterHandle { tx, app_tx };
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         AgentRouter {
             agent_ids: Default::default(),
             runtimes: HashMap::new(),
@@ -222,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_subagent_snapshots_parent_and_registers_child() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let parent_aid = AgentId::from(format!("parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);
         tokio::fs::create_dir_all(&parent_workdir).await.unwrap();

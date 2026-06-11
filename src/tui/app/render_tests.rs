@@ -3,7 +3,6 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::agent::AgentContext;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
 use crate::agent::id::AgentId;
@@ -16,7 +15,6 @@ use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
 use crate::llm::history::message::UserMessage;
-use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
 use crate::tui::app::App;
 use crate::tui::tab::Tab;
@@ -35,19 +33,12 @@ fn app_with_tab(
     history: History,
     status: AgentStatus,
 ) -> App<'static> {
-    let mut app = App::new(Project::new_test().unwrap(), Default::default());
+    let mut app = App::new(Project::new_test().unwrap().0, Default::default());
     app.project_name = "demo".into();
-    let (mut assistant, _fake) = Assistant::fake();
-    assistant.config.window = Some(32000);
-    let state = AgentState {
-        status,
-        assistant,
-        max_depth: 1,
-        context: AgentContext {
-            commit: "".into(),
-            history,
-        },
-    };
+    let mut state = AgentState::fake(&app.project);
+    state.status = status;
+    state.context.history = history;
+    state.assistant.config.window = Some(32000);
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
     let tab = Tab::new(Some(app.router.clone()), aid.clone(), state, &project);
@@ -67,7 +58,7 @@ fn history(updates: impl IntoIterator<Item = HistoryUpdate>) -> History {
 
 #[tokio::test]
 async fn renders_logo_screen_without_tabs() {
-    let mut app = App::new(Project::new_test().unwrap(), Default::default());
+    let mut app = App::new(Project::new_test().unwrap().0, Default::default());
     app.project_name = "demo".into();
 
     insta::assert_snapshot!(render(&mut app, 80, 24), @r#"

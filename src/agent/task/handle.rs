@@ -31,23 +31,16 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc::Receiver;
-    use tokio::sync::mpsc::channel;
     use tokio::time::Duration;
     use tokio::time::timeout;
 
     use super::*;
-    use crate::agent::AgentId;
-    use crate::agent::AgentState;
     use crate::agent::handle::AgentEvent;
     use crate::agent::handle::ParentEvent;
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::CompactStart;
-    use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::message::UserMessage;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::project::Project;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
@@ -71,33 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_failure_does_not_start_normal_turn() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("compact-failed-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (parent_tx, mut parent_rx) = channel(8);
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: Default::default(),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, mut parent_rx) = Agent::fake("compact-failed").await;
         agent
             .state
             .context
@@ -152,43 +119,13 @@ mod tests {
             ),
             "{event:?}"
         );
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
     async fn pre_stream_failure_keeps_error_status_until_turn_complete() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("pre-stream-failed-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (parent_tx, mut parent_rx) = channel(8);
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: crate::agent::AgentStatus::Normal(
-                    crate::llm::history::TurnStatus::InProgress,
-                ),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, mut parent_rx) = Agent::fake("pre-stream-failed").await;
+        agent.state.status =
+            crate::agent::AgentStatus::Normal(crate::llm::history::TurnStatus::InProgress);
         agent
             .state
             .context
@@ -258,9 +195,5 @@ mod tests {
             ),
             "{events:?}"
         );
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 }

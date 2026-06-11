@@ -177,12 +177,20 @@ impl AssistantPool {
 
 #[cfg(test)]
 impl AssistantPool {
-    /// pool with a single `"test"` assistant backed by a scripted `FakeApi`
+    /// pool with assistants `"test"` (primary) and `"test2"` sharing one
+    /// scripted `FakeApi`, so switching assistants keeps the scripted turns
     pub fn fake() -> (Self, Arc<crate::llm::provider::api::fake::FakeApi>) {
         let (assistant, api) = Assistant::fake();
+        let second = Assistant {
+            id: "test2".into(),
+            ..assistant.clone()
+        };
         let pool = Self {
-            assistants: IndexMap::from([(assistant.id.clone(), assistant)]),
-            primary: RoundRobin::new(vec!["test".into()]),
+            primary: RoundRobin::new(vec![assistant.id.clone()]),
+            assistants: IndexMap::from([
+                (assistant.id.clone(), assistant),
+                (second.id.clone(), second),
+            ]),
             subagent: SubagentSelector::Inherit,
         };
         (pool, api)

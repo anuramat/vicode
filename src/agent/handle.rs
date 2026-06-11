@@ -379,16 +379,11 @@ impl Agent {
 mod tests {
     use futures::future::pending;
     use tokio::sync::mpsc::Receiver;
-    use tokio::sync::mpsc::channel;
     use tokio::time::Duration;
     use tokio::time::timeout;
 
     use super::*;
-    use crate::agent::AgentState;
     use crate::llm::history::CompactStart;
-    use crate::llm::history::History;
-    use crate::project::Project;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
@@ -412,33 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn abort_emits_turn_complete_and_marks_history_failed() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("abort-test-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (parent_tx, mut parent_rx) = channel(8);
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: Default::default(),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, mut parent_rx) = Agent::fake("abort-test").await;
         agent
             .state
             .context
@@ -485,40 +454,11 @@ mod tests {
             timeout(RX_TIMEOUT, done_rx).await.unwrap().unwrap(),
             TurnResult::Failed(msg) if msg == ABORTED_BY_USER
         ));
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
     async fn start_submit_failure_fires_pending_done_failed() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("submit-fail-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: Default::default(),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle(),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, _parent_rx) = Agent::fake("submit-fail").await;
 
         let (done_tx, done_rx) = oneshot::channel();
         let stale_generation = agent.history().generation() + 1;
@@ -538,41 +478,11 @@ mod tests {
             TurnResult::Failed(_)
         ));
         assert!(agent.pending_done.is_none());
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
     async fn set_assistant_emits_assistant_set_event() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("set-assistant-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (parent_tx, mut parent_rx) = channel(8);
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: Default::default(),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle_with_app_tx(parent_tx),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, mut parent_rx) = Agent::fake("set-assistant").await;
 
         agent.set_assistant("test").await.unwrap();
 
@@ -581,40 +491,11 @@ mod tests {
             matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test"),
             "{event:?}"
         );
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
     async fn retry_after_compact_failure_restarts_compaction() {
-        let project = Project::new_test().unwrap();
-        let aid = AgentId::from(format!("compact-retry-{}", uuid::Uuid::new_v4()));
-        tokio::fs::create_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
-        let (tx, rx) = channel(8);
-        let assistant = Assistant::fake().0;
-        let mut agent = Agent {
-            project: project.clone(),
-            id: aid.clone(),
-            state: AgentState {
-                status: Default::default(),
-                assistant: assistant.clone(),
-                max_depth: 1,
-                context: crate::agent::AgentContext {
-                    commit: "".into(),
-                    history: History::new("".into()),
-                },
-            },
-            router: crate::agent::router::AgentRouter::test_handle(),
-            pending_done: None,
-            tx,
-            rx,
-            tskmgr: crate::agent::task::manager::AgentTaskManager::new(),
-            tools: Default::default(),
-        };
+        let (mut agent, _api, _parent_rx) = Agent::fake("compact-retry").await;
         let history = &mut agent.state.context.history;
         history
             .handle(
@@ -643,9 +524,5 @@ mod tests {
         let _ = agent.handle_external(ExternalEvent::Retry).await.unwrap();
 
         assert!(agent.state.context.history.compacting());
-
-        tokio::fs::remove_dir_all(project.agent(&aid))
-            .await
-            .unwrap();
     }
 }
