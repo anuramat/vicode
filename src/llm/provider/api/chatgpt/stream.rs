@@ -111,12 +111,10 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
 
-    use super::super::CHATGPT_AUTH_TYPE;
-    use super::super::CHATGPT_AUTH_VERSION;
     use super::super::OAUTH_CLIENT_ID;
     use super::super::OAUTH_ISSUER;
-    use super::super::auth::AuthRecord;
     use super::super::auth::AuthStore;
+    use super::super::tokens::AuthRecord;
     use super::*;
     use crate::utils::now;
 
@@ -144,20 +142,11 @@ mod tests {
         );
         store
             .save(&AuthRecord {
-                version: CHATGPT_AUTH_VERSION,
-                kind: CHATGPT_AUTH_TYPE.into(),
-                provider_id: "chatgpt".into(),
-                issuer: OAUTH_ISSUER.into(),
-                client_id: OAUTH_CLIENT_ID.into(),
-                access_token: "test-access-token".into(),
-                refresh_token: "test-refresh-token".into(),
                 expires_at_unix_ms: now() + 3_600_000,
-                account_id: None,
-                plan_type: None,
-                email: None,
+                ..AuthRecord::fake()
             })
             .unwrap();
-        ChatgptAuthManager::with_store(store).unwrap()
+        ChatgptAuthManager::with_store(store)
     }
 
     /// one-shot HTTP server: drains the request, replies with the SSE body
@@ -279,7 +268,7 @@ mod tests {
             "http://127.0.0.1:1".into(),
             OAUTH_CLIENT_ID.into(),
         );
-        let auth = ChatgptAuthManager::with_store(store).unwrap();
+        let auth = ChatgptAuthManager::with_store(store);
         let err = run(&auth, "http://127.0.0.1:1", || Ok(body())).await;
         let err = match err {
             Ok(_) => panic!("expected missing-login error"),
