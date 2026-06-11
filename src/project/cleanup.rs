@@ -2,12 +2,14 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use git2::Repository;
 
 use crate::agent::AgentId;
 use crate::config::Config;
+use crate::llm::provider::assistant::AssistantPool;
 use crate::project::Layout;
 use crate::project::Project;
 use crate::project::backend::BackendKind;
@@ -146,7 +148,7 @@ pub async fn run(force: bool) -> Result<()> {
         layout,
         lock,
         store.into_handle(),
-        Default::default(),
+        Arc::new(AssistantPool::empty()),
     );
     project.unmount_all().await?;
     for (aid, commit) in &garbage.agents {

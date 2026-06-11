@@ -59,27 +59,36 @@ pub struct ModelConfig {
     pub window: Option<usize>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AssistantPool {
     assistants: IndexMap<String, Assistant>,
     primary: RoundRobin,
     subagent: SubagentSelector,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RoundRobin {
     ids: Vec<String>,
     next: AtomicUsize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 enum SubagentSelector {
-    #[default]
     Inherit,
     RoundRobin(RoundRobin),
 }
 
 impl AssistantPool {
+    /// pool that cannot resolve anything: for project contexts that never run
+    /// agents (`vc cleanup`)
+    pub fn empty() -> Self {
+        Self {
+            assistants: IndexMap::new(),
+            primary: RoundRobin::new(Vec::new()),
+            subagent: SubagentSelector::Inherit,
+        }
+    }
+
     pub async fn from_config(config: &Config) -> Result<Self> {
         let providers: HashMap<_, _> = {
             // TODO stream::iter map buffered try_collect
@@ -134,7 +143,7 @@ impl AssistantPool {
     }
 
     pub fn next_primary(&self) -> Result<Assistant> {
-        self.assistant(&self.primary.next())
+        self.assistant(&self.primary.next().context("no primary assistants")?)
     }
 
     pub fn switch_assistant(
@@ -158,12 +167,11 @@ impl AssistantPool {
     ) -> Result<Assistant> {
         let id = match &self.subagent {
             SubagentSelector::Inherit => parent.to_string(),
-            SubagentSelector::RoundRobin(selector) => selector.next(),
+            SubagentSelector::RoundRobin(selector) => {
+                selector.next().context("no subagent assistants")?
+            }
         };
-        self.assistants
-            .get(&id)
-            .cloned()
-            .with_context(|| format!("failed to get assistant {id} for subagent"))
+        self.assistant(&id)
     }
 }
 
@@ -189,9 +197,9 @@ impl RoundRobin {
         }
     }
 
-    fn next(&self) -> String {
+    fn next(&self) -> Option<String> {
         let idx = self.next.fetch_add(1, Ordering::Relaxed);
-        self.ids[idx % self.ids.len()].clone()
+        self.ids.get(idx % self.ids.len().max(1)).cloned()
     }
 }
 
@@ -207,9 +215,17 @@ mod tests {
     #[test]
     fn selector_round_robins() {
         let selector = RoundRobin::new(vec!["a".into(), "b".into()]);
-        assert_eq!(selector.next(), "a");
-        assert_eq!(selector.next(), "b");
-        assert_eq!(selector.next(), "a");
+        assert_eq!(selector.next().unwrap(), "a");
+        assert_eq!(selector.next().unwrap(), "b");
+        assert_eq!(selector.next().unwrap(), "a");
+    }
+
+    #[test]
+    fn empty_pool_resolution_errors() {
+        let pool = AssistantPool::empty();
+        assert!(pool.next_primary().is_err());
+        assert!(pool.next_subagent("x").is_err());
+        assert!(pool.assistant("x").is_err());
     }
 
     #[tokio::test]
