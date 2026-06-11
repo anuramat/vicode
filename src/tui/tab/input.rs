@@ -252,6 +252,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cycle_assistant_forwards_switch_only_when_idle() {
+        use crate::agent::AgentStatus;
+        use crate::agent::router::RouterCommand;
+        use crate::llm::history::TurnStatus;
+
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("cycle".to_string());
+        let (router, mut rx) = AgentRouter::test_handle_with_rx();
+        let mut tab = Tab::new(Some(router), aid, AgentState::fake(&project), &project);
+
+        tab.cycle_assistant(false).await.unwrap();
+        match rx.try_recv().unwrap() {
+            RouterCommand::Forward {
+                event: ExternalEvent::SetAssistant(id),
+                ..
+            } => assert_eq!(id, "test2"),
+            _ => panic!("expected SetAssistant forward"),
+        }
+
+        tab.state.status = AgentStatus::Normal(TurnStatus::InProgress);
+        tab.cycle_assistant(false).await.unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn preview_submit_keeps_input() {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("preview-submit".to_string());

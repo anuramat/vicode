@@ -203,6 +203,7 @@ impl Agent {
                 }
             }
             SetAssistant(id) => {
+                self.idle()?;
                 self.set_assistant(&id).await?;
             }
         }
@@ -323,8 +324,12 @@ impl Agent {
         id: &str,
     ) -> Result<()> {
         let new = self.project.assistants().assistant(id)?;
-        self.state.assistant = new.clone();
-        self.save().await?;
+        let old = std::mem::replace(&mut self.state.assistant, new.clone());
+        if let Err(e) = self.save().await {
+            // keep in-memory, persisted, and TUI-visible state in agreement
+            self.state.assistant = old;
+            return Err(e);
+        }
         self.emit(ParentEvent::AssistantSet(new)).await?;
         Ok(())
     }
@@ -481,16 +486,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_assistant_emits_assistant_set_event() {
+    async fn set_assistant_switches_and_emits() {
         let (mut agent, _api, mut parent_rx) = Agent::fake("set-assistant").await;
 
-        agent.set_assistant("test").await.unwrap();
+        agent.set_assistant("test2").await.unwrap();
 
         let event = parent_event(recv(&mut parent_rx, "parent event").await);
         assert!(
-            matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test"),
+            matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test2"),
             "{event:?}"
         );
+        assert_eq!(agent.state.assistant.id, "test2");
+    }
+
+    #[tokio::test]
+    async fn set_assistant_rejected_while_busy() {
+        let (mut agent, _api, _parent_rx) = Agent::fake("set-assistant-busy").await;
+        agent.tskmgr.spawn(agent.tx.clone(), 0, |_| async move {
+            pending::<Result<()>>().await
+        });
+
+        let result = agent
+            .handle_external(ExternalEvent::SetAssistant("test2".into()))
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(agent.state.assistant.id, "test");
     }
 
     #[tokio::test]

@@ -208,5 +208,14 @@ mod tests {
             std::mem::forget(rx);
             AgentRouterHandle { tx, app_tx }
         }
+
+        /// Like `test_handle` but caller keeps the command receiver so test code
+        /// can observe forwarded events.
+        pub fn test_handle_with_rx() -> (AgentRouterHandle, Receiver<RouterCommand>) {
+            let (tx, rx) = channel(CHANNEL_CAPACITY);
+            let (app_tx, app_rx) = channel(CHANNEL_CAPACITY);
+            std::mem::forget(app_rx);
+            (AgentRouterHandle { tx, app_tx }, rx)
+        }
     }
 }
