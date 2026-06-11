@@ -79,7 +79,7 @@ async fn spawn_subagent_async(
         agent.save().await?;
         agent
     };
-    let generation = agent.history().generation();
+    let generation = agent.core.history().generation();
     let runtime = agent.spawn();
     router.register(child_aid.clone(), runtime).await?;
     Ok((child_aid, generation))

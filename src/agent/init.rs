@@ -7,10 +7,9 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::AgentStatus;
+use crate::agent::core::AgentCore;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::router::RuntimeHandle;
-use crate::agent::tool::registry::TOOL_REGISTRY;
-use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
@@ -25,18 +24,15 @@ impl Agent {
         state: AgentState,
     ) -> Self {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let tools = tools_for_depth(state.max_depth);
         Self {
+            core: AgentCore::new(state, project.assistants_arc()),
             project,
             id,
-            state,
             router,
             pending_done: None,
             rx,
-            ledger: Default::default(),
             executor: Default::default(),
             tx,
-            tools,
         }
     }
 
@@ -52,7 +48,7 @@ impl Agent {
     }
 
     pub async fn save(&self) -> Result<()> {
-        self.state.save(&self.project, &self.id).await
+        self.core.state.save(&self.project, &self.id).await
     }
 
     /// clone agent to given id on manual request from UI
@@ -61,27 +57,19 @@ impl Agent {
         aid: AgentId,
     ) -> Result<()> {
         self.project
-            .duplicate_agent_workdir(&self.id, &aid, &self.state.context.commit, true)
+            .duplicate_agent_workdir(&self.id, &aid, &self.core.state.context.commit, true)
             .await?;
         let agent = Self::new(
             self.project.clone(),
             self.router.clone(),
             aid.clone(),
-            self.state.clone(),
+            self.core.state.clone(),
         );
         agent.save().await?;
         let runtime = agent.spawn();
         self.router.register(aid, runtime).await?;
         Ok(())
     }
-}
-
-/// Tool set for an agent with `max_depth` remaining subagent budget.
-fn tools_for_depth(max_depth: u32) -> ToolRegistry {
-    if max_depth > 0 {
-        return TOOL_REGISTRY.clone();
-    }
-    TOOL_REGISTRY.without([crate::tools::subagent::TOOL_NAME])
 }
 
 impl AgentState {

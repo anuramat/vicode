@@ -40,6 +40,7 @@ impl RuntimeHandle {
 
 /// Snapshot of parent state needed to build a hidden subagent.
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct SubagentSpawnSnapshot {
     pub commit: String,
     pub assistant_id: String,

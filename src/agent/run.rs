@@ -1,5 +1,3 @@
-use std::ops::ControlFlow;
-
 use anyhow::Result;
 
 use crate::agent::Agent;
@@ -15,18 +13,14 @@ impl Agent {
 
     async fn run_inner(&mut self) -> Result<()> {
         self.project
-            .mount_agent(&self.state.context.commit, &self.id)
+            .mount_agent(&self.core.state.context.commit, &self.id)
             .await?;
-        self.emit(ParentEvent::Started(Box::new(self.state.clone())))
+        self.emit(ParentEvent::Started(Box::new(self.core.state.clone())))
             .await?;
         while let Some(event) = self.rx.recv().await {
-            match self.handle(event).await {
-                Ok(ControlFlow::Continue(())) => {}
-                Ok(ControlFlow::Break(())) => break,
-                Err(e) => {
-                    tracing::error!("error in agent {}: {:?}", self.id, e);
-                    self.emit(ParentEvent::Error(e.to_string())).await?;
-                }
+            if let Err(e) = self.handle(event).await {
+                tracing::error!("error in agent {}: {:?}", self.id, e);
+                self.emit(ParentEvent::Error(e.to_string())).await?;
             }
         }
         Ok(())

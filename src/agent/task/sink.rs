@@ -21,6 +21,7 @@ pub struct TurnHandle {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum TurnType {
     Default,
     Compact,

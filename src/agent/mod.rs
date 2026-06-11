@@ -1,4 +1,4 @@
-pub mod compact;
+pub mod core;
 pub mod handle;
 pub mod id;
 pub mod init;
@@ -19,14 +19,12 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
+use crate::agent::core::AgentCore;
 use crate::agent::handle::AgentEvent;
 use crate::agent::handle::ParentEvent;
 use crate::agent::handle::TurnResult;
 use crate::agent::router::AgentRouterHandle;
 use crate::agent::task::executor::TaskExecutor;
-use crate::agent::task::ledger::TaskLedger;
-use crate::agent::tool::registry::ToolRegistry;
-use crate::forward;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
@@ -35,9 +33,10 @@ use crate::project::Project;
 
 #[derive(Debug)]
 pub struct Agent {
+    /// pure decision logic and agent state
+    pub core: AgentCore,
     pub project: Project,
     pub id: AgentId,
-    pub state: AgentState,
     /// router handle for spawning/submitting siblings and children
     pub router: AgentRouterHandle,
     /// pending oneshot for the current turn (set by `Submit` callers that want completion)
@@ -45,11 +44,8 @@ pub struct Agent {
     // agent event loop
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,
-    /// tracks jobs in flight in the agent event loop
-    pub ledger: TaskLedger,
-    /// runs those jobs on tokio tasks
+    /// runs the core's task effects on tokio tasks
     pub executor: TaskExecutor,
-    pub tools: ToolRegistry,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -90,6 +86,7 @@ impl RawAgentState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum AgentStatus {
     Normal(TurnStatus),
     #[display("compacting: {_0}")]
@@ -129,23 +126,6 @@ pub struct AgentContext {
 }
 
 impl Agent {
-    forward! {
-        history: History = self.state.context.history;
-    }
-
-    /// register a task in the ledger and run it on the executor
-    pub fn spawn_task<F, Fut>(
-        &mut self,
-        generation: crate::llm::history::HistoryGeneration,
-        task: F,
-    ) where
-        F: FnOnce(crate::agent::task::sink::TaskHandle) -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
-    {
-        let id = self.ledger.register();
-        self.executor.spawn(self.tx.clone(), id, generation, task);
-    }
-
     pub async fn emit(
         &self,
         event: ParentEvent,

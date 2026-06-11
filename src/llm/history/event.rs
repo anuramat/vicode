@@ -19,6 +19,7 @@ pub enum AssistantEvent {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum HistoryUpdate {
     CompactStart(CompactStart),
     CompactAbort,

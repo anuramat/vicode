@@ -1,15 +1,19 @@
-use std::ops::ControlFlow;
+//! agent wire types and the effects interpreter: every event is translated
+//! into a [`CoreEvent`], handed to the pure [`AgentCore`], and the resulting
+//! effects are drained fully and in order — even when the core or an effect
+//! fails, so the ledger and the TUI history mirror never desync.
 
 use anyhow::Result;
 use futures::StreamExt;
 use futures::stream;
 use tokio::sync::oneshot;
 use tracing::debug;
-use tracing::error;
 use tracing::instrument;
 
 use crate::agent::Agent;
 use crate::agent::AgentStatus;
+use crate::agent::core::CoreEvent;
+use crate::agent::core::Effect;
 use crate::agent::id::AgentId;
 use crate::agent::router::SubagentSpawnSnapshot;
 use crate::agent::subagent;
@@ -18,18 +22,13 @@ use crate::agent::task::ledger::TaskId;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::task::sink::TurnType;
 use crate::agent::tool::context::ToolRuntimeContext;
-use crate::llm::history;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
-use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
-
-const ABORTED_BY_USER: &str = "aborted by user";
 
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -41,6 +40,7 @@ pub enum AgentEvent {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum ParentEvent {
     Started(Box<crate::agent::AgentState>),
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
@@ -62,6 +62,7 @@ pub enum ExternalEvent {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum TurnResult {
     Success { last_text: Option<String> },
     Failed(String),
@@ -74,317 +75,190 @@ pub struct UserPrompt {
     pub generation: HistoryGeneration,
 }
 
+/// IO payloads stripped from the incoming event, consumed by the drain
+#[derive(Default)]
+struct Staged {
+    done: Option<oneshot::Sender<TurnResult>>,
+    snapshot: Option<oneshot::Sender<SubagentSpawnSnapshot>>,
+}
+
 impl Agent {
-    pub fn derive_status(&self) -> AgentStatus {
-        let busy = !self.ledger.idle();
-        match self.history().activity() {
-            history::Activity::Normal { state } => AgentStatus::Normal(state.turn_status(busy)),
-            history::Activity::Compacting { compact, .. } => {
-                AgentStatus::Compact(compact.state.turn_status(busy))
-            }
-        }
-    }
-
-    pub async fn sync_status(&mut self) -> Result<()> {
-        let new_status = self.derive_status();
-        if new_status == self.state.status {
-            return Ok(());
-        }
-        self.state.status = new_status.clone();
-        self.emit(ParentEvent::StatusUpdate(new_status)).await?;
-        Ok(())
-    }
-
     #[instrument(skip(self))]
     pub async fn handle(
         &mut self,
         event: AgentEvent,
-    ) -> Result<ControlFlow<()>> {
-        #[allow(clippy::enum_glob_use)]
-        use AgentEvent::*;
-
+    ) -> Result<()> {
         debug!(event = ?event, "handling agent event");
-
-        let result = match event {
-            TaskDone(tid, result) => {
-                self.handle_task_result(tid, result).await?;
-                ControlFlow::Continue(())
+        let mut staged = Staged::default();
+        let event = translate(event, &mut staged);
+        let mut effects = Vec::new();
+        let result = self.core.handle(now(), event, &mut effects);
+        let mut drain_err = None;
+        for effect in effects {
+            if let Err(e) = self.interpret(effect, &mut staged).await {
+                drain_err.get_or_insert(e);
             }
-            TaskEvent(tid, generation, event) => {
-                if self.ledger.pending(&tid) {
-                    self.handle_history(generation, event).await?;
+        }
+        result.and(drain_err.map_or(Ok(()), Err))
+    }
+
+    async fn interpret(
+        &mut self,
+        effect: Effect,
+        staged: &mut Staged,
+    ) -> Result<()> {
+        match effect {
+            Effect::Emit(event) => self.emit(event).await?,
+            Effect::Save => self.save().await?,
+            Effect::StartTurn {
+                id,
+                generation,
+                turn_type,
+                assistant,
+                tools,
+                instructions,
+                messages,
+            } => {
+                self.executor
+                    .spawn(self.tx.clone(), id, generation, move |task| async move {
+                        let handle = TurnHandle { task, turn_type };
+                        if let Err(err) =
+                            Self::turn(handle.clone(), &assistant, tools, instructions, messages)
+                                .await
+                        {
+                            handle.send(AssistantEvent::failed(err.to_string())).await?;
+                            return Err(err);
+                        }
+                        Ok(())
+                    });
+            }
+            Effect::RunTool {
+                id,
+                generation,
+                mut call,
+            } => {
+                let ctx = ToolRuntimeContext::new(
+                    self.id.clone(),
+                    self.project.clone(),
+                    self.router.clone(),
+                );
+                self.executor
+                    .spawn(self.tx.clone(), id, generation, move |task| async move {
+                        let handle = TurnHandle {
+                            task,
+                            turn_type: TurnType::Default,
+                        };
+                        call.task.run(ctx).await;
+                        call.touch_ready_at_now();
+                        handle
+                            .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+                                call,
+                            ))))
+                            .await
+                    });
+            }
+            Effect::StartReplicas { id, generation, n } => {
+                let router = self.router.clone();
+                let project = self.project.clone();
+                let aid = self.id.clone();
+                self.executor
+                    .spawn(self.tx.clone(), id, generation, move |task| async move {
+                        // spawning inside the task keeps the parent loop free
+                        // to answer the snapshot requests this triggers
+                        let results: Vec<_> = stream::iter(0..n)
+                            .map(|_| {
+                                subagent::spawn_and_submit(
+                                    &router,
+                                    &project,
+                                    &aid,
+                                    String::new(),
+                                    true,
+                                )
+                            })
+                            .buffered(16)
+                            .collect()
+                            .await;
+                        let mut handles = Vec::with_capacity(n);
+                        let mut spawn_errors = Vec::new();
+                        for r in results {
+                            match r {
+                                Ok(h) => handles.push(h),
+                                Err(e) => spawn_errors.push(e.to_string()),
+                            }
+                        }
+                        let created_at = now();
+                        let result = replica::run_replicas(handles, spawn_errors).await?;
+                        task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
+                            result.report,
+                            created_at,
+                        )))
+                        .await
+                    });
+            }
+            Effect::AbortTasks => self.executor.shutdown().await,
+            Effect::SetAssistant(new) => {
+                // state applied iff persisted: the TUI never sees an unsaved assistant
+                let mut state = self.core.state.clone();
+                state.assistant = new.clone();
+                state.save(&self.project, &self.id).await?;
+                self.core.state.assistant = new.clone();
+                self.emit(ParentEvent::AssistantSet(new)).await?;
+            }
+            Effect::ReplyDone(result) => {
+                if let Some(done) = self.pending_done.take() {
+                    drop(done.send(result));
                 }
-                ControlFlow::Continue(())
             }
-            External(event) => self.handle_external(event).await?,
-            SnapshotRequest(reply) => {
-                drop(reply.send(SubagentSpawnSnapshot {
-                    commit: self.state.context.commit.clone(),
-                    assistant_id: self.state.assistant.id.clone(),
-                    history: self.state.context.history.clone(),
-                    max_depth: self.state.max_depth,
-                }));
-                ControlFlow::Continue(())
-            }
-        };
-        self.sync_status().await?;
-        Ok(result)
-    }
-
-    pub fn idle(&self) -> Result<()> {
-        anyhow::ensure!(self.ledger.idle(), "agent is busy");
-        Ok(())
-    }
-
-    async fn increment_generation(&mut self) -> Result<HistoryGeneration> {
-        let generation = self.history().generation();
-        self.handle_history(generation, HistoryUpdate::GenerationIncremented)
-            .await?;
-        Ok(self.history().generation())
-    }
-
-    async fn handle_external(
-        &mut self,
-        event: ExternalEvent,
-    ) -> Result<ControlFlow<()>> {
-        #[allow(clippy::enum_glob_use)]
-        use ExternalEvent::*;
-
-        match event {
-            Undo(n) => {
-                self.idle()?;
-                let g = self.increment_generation().await?;
-                self.handle_history(g, HistoryUpdate::Pop(n)).await?;
-            }
-            Abort => {
-                let done = self.pending_done.take();
-                self.ledger.clear();
-                self.executor.shutdown().await;
-                let g = self.increment_generation().await?;
-                let event = if self.history().compacting() {
-                    Some(HistoryUpdate::CompactAbort)
-                } else if self
-                    .history()
-                    .state()
-                    .status()
-                    .is_some_and(|s| s.failable())
-                {
-                    Some(HistoryUpdate::TurnResponse(AssistantEvent::failed(
-                        ABORTED_BY_USER.into(),
-                    )))
-                } else {
-                    None
-                };
-                if let Some(event) = event {
-                    self.handle_history(g, event).await?;
-                }
-                if let Some(done) = done {
-                    drop(done.send(TurnResult::Failed(ABORTED_BY_USER.into())));
+            Effect::StoreDone => self.pending_done = staged.done.take(),
+            Effect::ReplySnapshot(snap) => {
+                if let Some(reply) = staged.snapshot.take() {
+                    drop(reply.send(snap));
                 }
             }
-            DuplicateRequest(aid) => {
-                self.idle()?;
-                self.try_duplicate(aid).await?;
-            }
-            Submit(prompt, done) => {
-                self.start_submit(prompt, done).await?;
-            }
-            Compact(n) => {
-                self.idle()?;
-                self.init_compact(n).await?;
-                self.compact_turn().await?;
-            }
-            Retry => {
-                self.idle()?;
-                self.increment_generation().await?;
-                if self.history().compacting() {
-                    self.compact_turn().await?;
-                } else {
-                    self.start_turn().await?;
-                }
-            }
-            SetAssistant(id) => {
-                self.idle()?;
-                self.set_assistant(&id).await?;
-            }
-        }
-        Ok(ControlFlow::Continue(()))
-    }
-
-    async fn start_submit(
-        &mut self,
-        prompt: UserPrompt,
-        done: Option<oneshot::Sender<TurnResult>>,
-    ) -> Result<()> {
-        self.idle()?;
-        if let Some(prev) = self.pending_done.take() {
-            drop(prev.send(TurnResult::Failed(ABORTED_BY_USER.into())));
-        }
-        self.pending_done = done;
-        if let Err(e) = self.start_submit_inner(prompt).await {
-            if let Some(done) = self.pending_done.take() {
-                drop(done.send(TurnResult::Failed(e.to_string())));
-            }
-            return Err(e);
+            Effect::Duplicate(aid) => self.try_duplicate(aid).await?,
         }
         Ok(())
     }
+}
 
-    async fn start_submit_inner(
-        &mut self,
-        UserPrompt {
-            text,
-            multiplier,
-            generation,
-        }: UserPrompt,
-    ) -> Result<()> {
-        self.handle_history(
-            generation,
-            history::HistoryUpdate::UserMessage(UserMessage::new(text, now())),
-        )
-        .await?;
-        self.increment_generation().await?;
-        if multiplier <= 1 {
-            self.start_turn().await?;
-        } else {
-            self.start_replica_turns(multiplier).await?;
+fn translate(
+    event: AgentEvent,
+    staged: &mut Staged,
+) -> CoreEvent {
+    match event {
+        AgentEvent::TaskDone(tid, result) => {
+            CoreEvent::TaskDone(tid, result.map_err(|e| e.to_string()))
         }
-        Ok(())
-    }
-
-    pub async fn handle_history(
-        &mut self,
-        generation: HistoryGeneration,
-        event: HistoryUpdate,
-    ) -> Result<()> {
-        self.history_mut().handle(generation, event.clone())?;
-        self.emit(ParentEvent::HistoryUpdate(generation, event.clone()))
-            .await?;
-        match event {
-            HistoryUpdate::TurnResponse(AssistantEvent::Item(ref item)) => {
-                self.execute_tool_calls(item);
+        AgentEvent::TaskEvent(tid, generation, update) => {
+            CoreEvent::TaskEvent(tid, generation, update)
+        }
+        AgentEvent::SnapshotRequest(reply) => {
+            staged.snapshot = Some(reply);
+            CoreEvent::Snapshot
+        }
+        AgentEvent::External(event) => match event {
+            ExternalEvent::Submit(prompt, done) => {
+                let has_done = done.is_some();
+                staged.done = done;
+                CoreEvent::Submit(prompt, has_done)
             }
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. })
-            | HistoryUpdate::CompactResponse(AssistantEvent::Failed { message, .. }) => {
-                error!("response error in agent {}: {}", self.id, message);
-            }
-            HistoryUpdate::GenerationIncremented
-            | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
-            | HistoryUpdate::CompactResponse(AssistantEvent::Delta(_)) => return Ok(()),
-            _ => {}
-        }
-        // TODO save less often; save on errors
-        self.save().await?;
-        Ok(())
-    }
-
-    async fn start_replica_turns(
-        &mut self,
-        n: usize,
-    ) -> Result<()> {
-        let results: Vec<_> = stream::iter(0..n)
-            .map(async |_| {
-                subagent::spawn_and_submit(
-                    &self.router,
-                    &self.project,
-                    &self.id,
-                    String::new(),
-                    true,
-                )
-                .await
-            })
-            .buffered(16)
-            .collect()
-            .await;
-        let mut handles = Vec::with_capacity(n);
-        let mut spawn_errors = Vec::new();
-        for r in results {
-            match r {
-                Ok(h) => handles.push(h),
-                Err(e) => spawn_errors.push(e.to_string()),
-            }
-        }
-        self.spawn_task(self.history().generation(), move |task| async move {
-            let created_at = now();
-            let result = replica::run_replicas(handles, spawn_errors).await?;
-            task.send(HistoryUpdate::DeveloperMessage(DeveloperMessage::subagent(
-                result.report,
-                created_at,
-            )))
-            .await
-        });
-        Ok(())
-    }
-
-    pub async fn set_assistant(
-        &mut self,
-        id: &str,
-    ) -> Result<()> {
-        let new = self.project.assistants().assistant(id)?;
-        let old = std::mem::replace(&mut self.state.assistant, new.clone());
-        if let Err(e) = self.save().await {
-            // keep in-memory, persisted, and TUI-visible state in agreement
-            self.state.assistant = old;
-            return Err(e);
-        }
-        self.emit(ParentEvent::AssistantSet(new)).await?;
-        Ok(())
-    }
-
-    pub fn execute_tool_calls(
-        &mut self,
-        item: &AssistantItem,
-    ) {
-        let AssistantItem::ToolCall(call) = item else {
-            return;
-        };
-        if call.task.output().is_some() {
-            return;
-        }
-        let mut call = call.clone();
-        let generation = self.history().generation();
-        let ctx =
-            ToolRuntimeContext::new(self.id.clone(), self.project.clone(), self.router.clone());
-        self.spawn_task(generation, move |task| async move {
-            let handle = TurnHandle {
-                task,
-                turn_type: TurnType::Default,
-            };
-            call.task.run(ctx).await;
-            call.touch_ready_at_now();
-            handle
-                .send(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
-                    call,
-                ))))
-                .await
-        });
-    }
-
-    /// Drive the pending oneshot for the current turn, if any.
-    pub fn fire_pending_done(&mut self) {
-        let Some(done) = self.pending_done.take() else {
-            return;
-        };
-        let result = match self.derive_status() {
-            AgentStatus::Normal(TurnStatus::Failed(msg))
-            | AgentStatus::Compact(TurnStatus::Failed(msg)) => TurnResult::Failed(msg),
-            _ => TurnResult::Success {
-                last_text: self.history().state().last_text_output().ok(),
-            },
-        };
-        drop(done.send(result));
+            ExternalEvent::Compact(n) => CoreEvent::Compact(n),
+            ExternalEvent::Retry => CoreEvent::Retry,
+            ExternalEvent::Abort => CoreEvent::Abort,
+            ExternalEvent::Undo(n) => CoreEvent::Undo(n),
+            ExternalEvent::SetAssistant(id) => CoreEvent::SetAssistant(id),
+            ExternalEvent::DuplicateRequest(aid) => CoreEvent::Duplicate(aid),
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use futures::future::pending;
     use tokio::sync::mpsc::Receiver;
     use tokio::time::Duration;
     use tokio::time::timeout;
 
     use super::*;
-    use crate::llm::history::CompactStart;
     use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
@@ -407,60 +281,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn abort_emits_turn_complete_and_marks_history_failed() {
-        let (mut agent, _api, mut parent_rx) = Agent::fake("abort-test").await;
-        agent
-            .state
-            .context
-            .history
-            .handle(
-                0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
-            )
-            .unwrap();
-        agent.spawn_task(0, |_| async move { pending::<Result<()>>().await });
-        let (done_tx, done_rx) = oneshot::channel();
-        agent.pending_done = Some(done_tx);
-
-        let _ = agent
-            .handle(AgentEvent::External(ExternalEvent::Abort))
-            .await
-            .unwrap();
-
-        let events = [
-            parent_event(recv(&mut parent_rx, "parent event").await),
-            parent_event(recv(&mut parent_rx, "parent event").await),
-            parent_event(recv(&mut parent_rx, "parent event").await),
-        ];
-        assert!(matches!(
-            events.as_slice(),
-            [
-                ParentEvent::HistoryUpdate(_, HistoryUpdate::GenerationIncremented),
-                ParentEvent::HistoryUpdate(_, HistoryUpdate::TurnResponse(AssistantEvent::Failed { message: msg, .. })),
-                ParentEvent::StatusUpdate(crate::agent::AgentStatus::Normal(
-                    crate::llm::history::TurnStatus::Failed(status),
-                )),
-            ] if msg == ABORTED_BY_USER && status == ABORTED_BY_USER
-        ));
-        assert!(matches!(
-            agent.state.context.history.state().last(),
-            Some(crate::llm::history::message::Message::Assistant(crate::llm::history::message::AssistantMessage {
-                status: crate::llm::history::message::AssistantStatus::Error(msg),
-                ..
-            })) if msg == ABORTED_BY_USER
-        ));
-        assert!(matches!(
-            timeout(RX_TIMEOUT, done_rx).await.unwrap().unwrap(),
-            TurnResult::Failed(msg) if msg == ABORTED_BY_USER
-        ));
-    }
-
-    #[tokio::test]
-    async fn start_submit_failure_fires_pending_done_failed() {
+    async fn submit_failure_fires_staged_done_failed() {
         let (mut agent, _api, _parent_rx) = Agent::fake("submit-fail").await;
 
         let (done_tx, done_rx) = oneshot::channel();
-        let stale_generation = agent.history().generation() + 1;
+        let stale_generation = agent.core.history().generation() + 1;
         let result = agent
             .handle(AgentEvent::External(ExternalEvent::Submit(
                 UserPrompt {
@@ -477,65 +302,25 @@ mod tests {
             TurnResult::Failed(_)
         ));
         assert!(agent.pending_done.is_none());
+        assert!(!agent.core.pending_done);
     }
 
     #[tokio::test]
     async fn set_assistant_switches_and_emits() {
         let (mut agent, _api, mut parent_rx) = Agent::fake("set-assistant").await;
 
-        agent.set_assistant("test2").await.unwrap();
+        agent
+            .handle(AgentEvent::External(ExternalEvent::SetAssistant(
+                "test2".into(),
+            )))
+            .await
+            .unwrap();
 
         let event = parent_event(recv(&mut parent_rx, "parent event").await);
         assert!(
             matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test2"),
             "{event:?}"
         );
-        assert_eq!(agent.state.assistant.id, "test2");
-    }
-
-    #[tokio::test]
-    async fn set_assistant_rejected_while_busy() {
-        let (mut agent, _api, _parent_rx) = Agent::fake("set-assistant-busy").await;
-        agent.spawn_task(0, |_| async move { pending::<Result<()>>().await });
-
-        let result = agent
-            .handle_external(ExternalEvent::SetAssistant("test2".into()))
-            .await;
-
-        assert!(result.is_err());
-        assert_eq!(agent.state.assistant.id, "test");
-    }
-
-    #[tokio::test]
-    async fn retry_after_compact_failure_restarts_compaction() {
-        let (mut agent, _api, _parent_rx) = Agent::fake("compact-retry").await;
-        let history = &mut agent.state.context.history;
-        history
-            .handle(
-                0,
-                HistoryUpdate::DeveloperMessage(DeveloperMessage::misc("x".repeat(2000))),
-            )
-            .unwrap();
-        history
-            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1)))
-            .unwrap();
-        agent
-            .handle_history(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Created { created_at: 0 }),
-            )
-            .await
-            .unwrap();
-        agent
-            .handle_history(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::failed("oops".into())),
-            )
-            .await
-            .unwrap();
-
-        let _ = agent.handle_external(ExternalEvent::Retry).await.unwrap();
-
-        assert!(agent.state.context.history.compacting());
+        assert_eq!(agent.core.state.assistant.id, "test2");
     }
 }

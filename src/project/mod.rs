@@ -115,6 +115,10 @@ impl Project {
         &self.assistants
     }
 
+    pub fn assistants_arc(&self) -> Arc<AssistantPool> {
+        self.assistants.clone()
+    }
+
     pub async fn mount_agent(
         &self,
         commit: &str,

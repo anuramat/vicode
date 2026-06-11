@@ -14,6 +14,7 @@ use crate::llm::history::message::Message;
 use crate::llm::history::tokens::TokenCount;
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum TurnStatus {
     #[display("idle")]
     Idle,

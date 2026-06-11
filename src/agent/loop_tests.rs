@@ -145,12 +145,12 @@ async fn submit_runs_tool_call_and_second_turn_to_done() {
         "{result:?}"
     );
     assert!(matches!(
-        agent.state.status,
+        agent.core.state.status,
         AgentStatus::Normal(TurnStatus::Idle)
     ));
     // second request must carry the executed tool call back to the assistant
     assert_eq!(fake.requests().len(), 2);
-    assert_messages_snapshot!(&agent.history().state().messages, @r#"
+    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -213,7 +213,8 @@ async fn abort_mid_stream_fails_turn_and_fires_done() {
     let (done_tx, done_rx) = oneshot::channel();
     let _ = agent.handle(submit(done_tx)).await.unwrap();
     pump_until(&mut agent, |a| {
-        a.history()
+        a.core
+            .history()
             .state()
             .last_text_output()
             .is_ok_and(|text| text == "partial")
@@ -231,11 +232,11 @@ async fn abort_mid_stream_fails_turn_and_fires_done() {
         "{result:?}"
     );
     assert!(matches!(
-        &agent.state.status,
+        &agent.core.state.status,
         AgentStatus::Normal(TurnStatus::Failed(msg)) if msg == "aborted by user"
     ));
-    assert!(agent.ledger.idle());
-    assert_messages_snapshot!(&agent.history().state().messages, @r#"
+    assert!(agent.core.ledger.idle());
+    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -260,11 +261,81 @@ async fn abort_mid_stream_fails_turn_and_fires_done() {
     "#);
 }
 
+/// would deadlock before replica spawning moved into the executor task: the
+/// parent loop inline-awaited a subagent spawn whose snapshot request only
+/// the parent loop itself could answer
+#[tokio::test]
+async fn multiplier_submit_consolidates_replicas_without_deadlock() {
+    use crate::agent::AgentId;
+    use crate::agent::AgentState;
+    use crate::agent::router::AgentRouter;
+    use crate::project::Project;
+    use crate::project::layout::LayoutTrait;
+
+    let (project, fake) = Project::new_test().unwrap();
+    let (app_tx, mut app_rx) = tokio::sync::mpsc::channel(256);
+    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
+    let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
+
+    let aid = AgentId::from(format!("replica-submit-{}", uuid::Uuid::new_v4()));
+    let commit = git2::Repository::open(project.root())
+        .unwrap()
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+        .to_string();
+    project
+        .new_agent_workdir(&commit, &aid, true)
+        .await
+        .unwrap();
+    let mut state = AgentState::fake(&project);
+    state.context.commit = commit;
+    let agent = Agent::new(project.clone(), router.clone(), aid.clone(), state);
+    router.register(aid.clone(), agent.spawn()).await.unwrap();
+
+    // both replicas fail fast (skipping the workdir diff); the parent then
+    // runs a consolidation turn over their report
+    for _ in 0..2 {
+        fake.script_turn(vec![AssistantEvent::Failed {
+            message: "replica boom".into(),
+            ended_at: 1,
+        }]);
+    }
+    fake.script_turn(vec![
+        output("sum-1", 1),
+        delta("sum-1", "consolidated", 2),
+        AssistantEvent::Completed { ended_at: 3 },
+    ]);
+
+    let done = router
+        .submit_oneshot(
+            aid,
+            UserPrompt {
+                text: "go".into(),
+                multiplier: 2,
+                generation: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let result = timeout(TIMEOUT, done)
+        .await
+        .expect("deadlocked: replica spawn blocked the parent loop")
+        .unwrap();
+    assert!(
+        matches!(&result, TurnResult::Success { last_text: Some(text) } if text == "consolidated"),
+        "{result:?}"
+    );
+}
+
 #[tokio::test]
 async fn compact_failure_then_retry_compacts_history() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-compact").await;
     for text in ["first", "second"] {
         agent
+            .core
             .history_mut()
             .handle(
                 0,
@@ -287,22 +358,25 @@ async fn compact_failure_then_retry_compacts_history() {
         .await
         .unwrap();
     pump_until(&mut agent, |a| {
-        matches!(&a.state.status, AgentStatus::Compact(TurnStatus::Failed(msg)) if msg == "rate limited")
+        matches!(&a.core.state.status, AgentStatus::Compact(TurnStatus::Failed(msg)) if msg == "rate limited")
     })
     .await;
-    assert!(agent.history().compacting());
+    assert!(agent.core.history().compacting());
 
     let _ = agent
         .handle(AgentEvent::External(ExternalEvent::Retry))
         .await
         .unwrap();
-    pump_until(&mut agent, |a| a.ledger.idle() && !a.history().compacting()).await;
+    pump_until(&mut agent, |a| {
+        a.core.ledger.idle() && !a.core.history().compacting()
+    })
+    .await;
 
     assert!(matches!(
-        agent.state.status,
+        agent.core.state.status,
         AgentStatus::Normal(TurnStatus::Idle)
     ));
-    assert_messages_snapshot!(&agent.history().state().messages, @r#"
+    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
     - role: developer
       Compact:
         text: a concise summary
