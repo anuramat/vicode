@@ -1,6 +1,7 @@
 use std::future::pending;
 use std::sync::Arc;
 
+use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::EnableBracketedPaste;
@@ -53,6 +54,7 @@ impl App<'_> {
                     store
                         .load_agent(aid, &assistants)
                         .map(|state| (aid.clone(), state))
+                        .with_context(|| format!("failed to restore agent {aid}"))
                 })
                 .collect();
             agents?

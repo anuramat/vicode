@@ -62,12 +62,14 @@ pub struct AgentState {
 }
 
 /// field mirror of `AgentState` for deserialization: the persisted assistant
-/// id resolves to an `Assistant` through the pool
+/// id resolves to an `Assistant` through the pool; `deny_unknown_fields`
+/// catches fields added to `AgentState` but not mirrored here
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RawAgentState {
     assistant: String,
     max_depth: u32,
-    context: AgentContext,
+    pub context: AgentContext,
 }
 
 impl RawAgentState {

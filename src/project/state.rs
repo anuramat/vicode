@@ -117,23 +117,17 @@ impl StateStore {
         serde_json::from_slice::<RawAgentState>(&self.agent_bytes(id)?)?.resolve(assistants)
     }
 
-    /// commit of an agent without resolving the full state, which would
-    /// require an assistant pool with the persisted assistant id
+    /// commit of an agent without resolving the persisted assistant id
+    /// against a pool
     pub fn agent_commit(
         &self,
         id: &AgentId,
     ) -> Result<String> {
-        #[derive(serde::Deserialize)]
-        struct Context {
-            commit: String,
-        }
-        #[derive(serde::Deserialize)]
-        struct State {
-            context: Context,
-        }
-        Ok(serde_json::from_slice::<State>(&self.agent_bytes(id)?)?
-            .context
-            .commit)
+        Ok(
+            serde_json::from_slice::<RawAgentState>(&self.agent_bytes(id)?)?
+                .context
+                .commit,
+        )
     }
 
     fn agent_bytes(
