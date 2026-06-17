@@ -34,6 +34,7 @@ pub struct Agent {
     pub project: Project,
     pub id: AgentId,
     pub state: AgentState,
+    pub assistant: Assistant,
     /// router handle for spawning/submitting siblings and children
     pub router: AgentRouterHandle,
     /// pending oneshot for the current turn (set by `Submit` callers that want completion)
@@ -51,7 +52,8 @@ pub struct AgentState {
     /// last emitted status for deduplication of status updates
     #[serde(skip)]
     pub status: AgentStatus,
-    pub assistant: Assistant,
+    /// TODO rename to assistant_id?
+    pub assistant: String,
     /// Remaining subagent-spawn budget. 0 means this agent cannot spawn
     /// subagents; the subagent tool is filtered out at construction.
     pub max_depth: u32,
@@ -158,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn status_is_not_persisted() {
         let state = AgentState {
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
             max_depth: 1,
             context: crate::agent::AgentContext {

@@ -73,6 +73,7 @@ impl App<'_> {
             }
             AssistantSet(assistant) => {
                 tab.state.assistant = assistant;
+                tab.refresh_assistant_config();
                 self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
             }
         }
@@ -145,7 +146,7 @@ mod tests {
         let aid = AgentId::from("a".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: test_assistant().await,
+            assistant: test_assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -174,10 +175,9 @@ mod tests {
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
-        let assistant = test_assistant().await;
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant.clone(),
+            assistant: "test".into(),
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -192,12 +192,12 @@ mod tests {
         );
         app.tabs.insert(aid.clone(), tab);
 
-        app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet(assistant.clone()))
+        app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet("test".into()))
             .await
             .unwrap();
 
         let tab = app.tab_mut_by_aid(&aid).unwrap();
-        assert_eq!(tab.state.assistant.id, assistant.id);
+        assert_eq!(tab.state.assistant, "test");
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
@@ -209,7 +209,7 @@ mod tests {
         let aid = AgentId::from("deterministic-tab".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: test_assistant().await,
+            assistant: test_assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

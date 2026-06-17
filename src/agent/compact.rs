@@ -91,9 +91,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
@@ -140,9 +141,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),

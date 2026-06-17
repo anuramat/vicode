@@ -70,7 +70,8 @@ async fn spawn_subagent_async(
             assistant: ASSISTANT_POOL
                 .get()
                 .context("assistant pool not initialized")?
-                .next_subagent(&snap.assistant_id)?,
+                .next_subagent(&snap.assistant_id)?
+                .id,
             max_depth: snap.max_depth - 1,
             context: AgentContext {
                 commit: snap.commit.clone(),
@@ -80,7 +81,7 @@ async fn spawn_subagent_async(
         project
             .duplicate_agent_workdir(&parent_aid, &child_aid, &snap.commit, false)
             .await?;
-        let agent = Agent::new(project, router.clone(), child_aid.clone(), state);
+        let agent = Agent::new(project, router.clone(), child_aid.clone(), state)?;
         agent.save().await?;
         agent
     };

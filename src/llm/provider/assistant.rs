@@ -10,8 +10,6 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_plain::derive_deserialize_from_fromstr;
-use serde_plain::derive_serialize_from_display;
 use tokio::sync::OnceCell;
 
 use super::Provider;
@@ -25,28 +23,6 @@ pub struct Assistant {
     pub id: String,
     pub provider: Arc<Provider>,
     pub config: ModelConfig,
-}
-
-derive_serialize_from_display!(Assistant);
-impl std::fmt::Display for Assistant {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        write!(f, "{}", self.id)
-    }
-}
-
-derive_deserialize_from_fromstr!(Assistant, "existing assistant id");
-impl std::str::FromStr for Assistant {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ASSISTANT_POOL
-            .get()
-            .context("assistant pool not initialized")?
-            .assistant(s)
-    }
 }
 
 #[derive(Deserialize, Debug, Clone, Serialize, JsonSchema)]

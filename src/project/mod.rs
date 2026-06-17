@@ -280,7 +280,7 @@ mod tests {
             .await;
         AgentState {
             status: AgentStatus::default(),
-            assistant: pool.assistant(&pool.next_primary()).unwrap(),
+            assistant: pool.next_primary(),
             max_depth: 1,
             context: AgentContext {
                 commit,

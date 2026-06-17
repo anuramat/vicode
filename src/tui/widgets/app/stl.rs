@@ -39,10 +39,9 @@ impl<'a> App<'a> {
             #[allow(clippy::cast_precision_loss)]
             let tokens = {
                 let window = tab
-                    .state
-                    .assistant
-                    .config
-                    .window
+                    .assistant_config
+                    .as_ref()
+                    .and_then(|config| config.window)
                     .map(|window| format!(" / {:.1}", window as f64 / 1000.0))
                     .unwrap_or_default();
                 format!(
@@ -54,7 +53,7 @@ impl<'a> App<'a> {
 
             let right_part = format!(
                 "{} | {} | {}",
-                tokens, tab.state.status, tab.state.assistant.id
+                tokens, tab.state.status, tab.state.assistant
             );
             // TODO +3 move to a const
             if right_part.len() + 3 < remaining_width {

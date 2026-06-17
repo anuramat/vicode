@@ -10,6 +10,8 @@ use crate::agent::id::AgentId;
 use crate::agent::router::AgentRouterHandle;
 use crate::forward;
 use crate::llm::history::History;
+use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::provider::assistant::ModelConfig;
 use crate::project::Project;
 use crate::tui::command::parse_arg;
 use crate::tui::widgets::container::scroll::ScrollElements;
@@ -27,6 +29,8 @@ pub struct Tab<'a> {
     pub router: Option<AgentRouterHandle>,
     pub aid: AgentId,
     pub state: AgentState,
+    /// assistant cached for ui
+    pub assistant_config: Option<ModelConfig>,
     pub project: Project,
 
     pub scroll: ScrollElements,
@@ -47,10 +51,11 @@ impl Tab<'_> {
         state: AgentState,
         project: &Project,
     ) -> Self {
-        Self {
+        let mut tab = Self {
             router,
             aid,
             state,
+            assistant_config: None,
             project: project.clone(),
             scroll: ScrollElements::default(),
             input: MessageInput {
@@ -63,7 +68,16 @@ impl Tab<'_> {
             },
             info: InfoWidget::default(),
             multiplier: 1,
-        }
+        };
+        tab.refresh_assistant_config();
+        tab
+    }
+
+    pub fn refresh_assistant_config(&mut self) {
+        self.assistant_config = ASSISTANT_POOL
+            .get()
+            .and_then(|pool| pool.assistant(&self.state.assistant).ok())
+            .map(|assistant| assistant.config.clone());
     }
 
     pub fn label(&self) -> String {

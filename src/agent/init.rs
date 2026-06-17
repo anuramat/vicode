@@ -1,3 +1,4 @@
+use anyhow::Context;
 use anyhow::Result;
 use futures::future::Abortable;
 use tokio::sync::mpsc::channel;
@@ -24,20 +25,25 @@ impl Agent {
         router: AgentRouterHandle,
         id: AgentId,
         state: AgentState,
-    ) -> Self {
+    ) -> Result<Self> {
+        let assistant = ASSISTANT_POOL
+            .get()
+            .context("assistant pool not initialized")?
+            .assistant(&state.assistant)?;
         let (tx, rx) = channel(CHANNEL_CAPACITY);
         let tools = tools_for_depth(state.max_depth);
-        Self {
+        Ok(Self {
             project,
             id,
             state,
+            assistant,
             router,
             pending_done: None,
             rx,
             tskmgr: AgentTaskManager::new(),
             tx,
             tools,
-        }
+        })
     }
 
     /// Spawn the agent's run loop, returning the runtime handle the router
@@ -68,7 +74,7 @@ impl Agent {
             self.router.clone(),
             aid.clone(),
             self.state.clone(),
-        );
+        )?;
         agent.save().await?;
         let runtime = agent.spawn();
         self.router.register(aid, runtime).await?;
@@ -90,20 +96,16 @@ impl AgentState {
         commit: String,
         instructions: String,
         max_depth: u32,
-    ) -> Result<Self> {
-        let state = Self {
+    ) -> Self {
+        Self {
             status: AgentStatus::default(),
-            assistant: ASSISTANT_POOL
-                .get()
-                .unwrap()
-                .assistant(&ASSISTANT_POOL.get().unwrap().next_primary())?,
+            assistant: ASSISTANT_POOL.get().unwrap().next_primary(),
             max_depth,
             context: AgentContext {
                 commit,
                 history: History::new(instructions),
             },
-        };
-        Ok(state)
+        }
     }
 
     pub async fn save(
@@ -179,14 +181,15 @@ mod tests {
 
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: AgentContext {
                 commit: commit.clone(),
                 history: History::new("".into()),
             },
         };
-        let parent = Agent::new(project.clone(), router.clone(), parent_aid.clone(), state);
+        let parent =
+            Agent::new(project.clone(), router.clone(), parent_aid.clone(), state).unwrap();
 
         let child_aid = router.allocate_agent_id().await.unwrap();
         parent.try_duplicate(child_aid.clone()).await.unwrap();

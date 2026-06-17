@@ -27,7 +27,6 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
 
 const ABORTED_BY_USER: &str = "aborted by user";
@@ -46,7 +45,7 @@ pub enum ParentEvent {
     Started(Box<crate::agent::AgentState>),
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
     StatusUpdate(AgentStatus),
-    AssistantSet(Assistant),
+    AssistantSet(String),
     Error(String),
 }
 
@@ -121,7 +120,7 @@ impl Agent {
             SnapshotRequest(reply) => {
                 drop(reply.send(SubagentSpawnSnapshot {
                     commit: self.state.context.commit.clone(),
-                    assistant_id: self.state.assistant.id.clone(),
+                    assistant_id: self.state.assistant.clone(),
                     history: self.state.context.history.clone(),
                     max_depth: self.state.max_depth,
                 }));
@@ -323,10 +322,10 @@ impl Agent {
         &mut self,
         id: &str,
     ) -> Result<()> {
-        let new = ASSISTANT_POOL.get().unwrap().assistant(id)?;
-        self.state.assistant = new.clone();
+        self.assistant = ASSISTANT_POOL.get().unwrap().assistant(id)?;
+        self.state.assistant = id.to_string();
         self.save().await?;
-        self.emit(ParentEvent::AssistantSet(new)).await?;
+        self.emit(ParentEvent::AssistantSet(id.to_string())).await?;
         Ok(())
     }
 
@@ -461,9 +460,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
@@ -541,9 +541,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
@@ -595,9 +596,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),
@@ -616,7 +618,7 @@ mod tests {
 
         let event = parent_event(recv(&mut parent_rx, "parent event").await);
         assert!(
-            matches!(event, ParentEvent::AssistantSet(ref a) if a.id == "test"),
+            matches!(event, ParentEvent::AssistantSet(ref a) if a == "test"),
             "{event:?}"
         );
 
@@ -637,9 +639,10 @@ mod tests {
         let mut agent = Agent {
             project: project.clone(),
             id: aid.clone(),
+            assistant: assistant.clone(),
             state: AgentState {
                 status: Default::default(),
-                assistant: assistant.clone(),
+                assistant: assistant.id.clone(),
                 max_depth: 1,
                 context: crate::agent::AgentContext {
                     commit: "".into(),

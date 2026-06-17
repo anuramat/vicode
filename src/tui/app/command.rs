@@ -249,7 +249,7 @@ mod tests {
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -303,7 +303,7 @@ mod tests {
         let project = app.project.clone();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

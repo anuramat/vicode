@@ -41,7 +41,7 @@ impl<'a> App<'a> {
                 self.router.clone(),
                 aid.clone(),
                 state,
-            );
+            )?;
             let runtime = agent.spawn();
             self.router.register(aid, runtime).await?;
         }
@@ -58,7 +58,7 @@ impl<'a> App<'a> {
             commit,
             instructions,
             self.project.config().subagent_max_depth,
-        )?;
+        );
         self.insert_preview_tab(aid.clone(), state.clone());
         self.tx
             .send(AppEvent::NewAgent(aid, Box::new(state)))
@@ -92,7 +92,7 @@ impl<'a> App<'a> {
             self.router.clone(),
             aid.clone(),
             state,
-        );
+        )?;
         let runtime = agent.spawn();
         self.router.register(aid, runtime).await?;
         Ok(())
@@ -106,6 +106,7 @@ impl<'a> App<'a> {
         let router = self.router.clone();
         let tab = self.tab_mut_by_aid(aid)?;
         tab.state = state;
+        tab.refresh_assistant_config();
         tab.router = Some(router);
         tab.refresh_file_completion()?;
         tab.refresh_info().await?;
@@ -288,7 +289,7 @@ mod tests {
     async fn state() -> AgentState {
         AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

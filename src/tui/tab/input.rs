@@ -41,7 +41,7 @@ impl Tab<'_> {
         }
         let pool = ASSISTANT_POOL.get().unwrap();
         let id = pool
-            .switch_assistant(&self.state.assistant.id, prev)
+            .switch_assistant(&self.state.assistant, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
         router
             .forward(self.aid.clone(), ExternalEvent::SetAssistant(id))
@@ -228,7 +228,7 @@ mod tests {
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),
@@ -300,7 +300,7 @@ mod tests {
         let aid = AgentId::from("preview-submit".to_string());
         let state = AgentState {
             status: AgentStatus::default(),
-            assistant: assistant().await,
+            assistant: assistant().await.id,
             max_depth: 1,
             context: crate::agent::AgentContext {
                 commit: "".into(),

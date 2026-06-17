@@ -44,7 +44,7 @@ impl Agent {
         let generation = self.history().generation();
         self.handle_history(generation, created).await?;
 
-        let assistant = self.state.assistant.clone();
+        let assistant = self.assistant.clone();
         self.tskmgr
             .spawn(self.tx.clone(), generation, move |task| async move {
                 let handle = TurnHandle { task, turn_type };
