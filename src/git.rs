@@ -154,6 +154,7 @@ unsafe fn check(code: i32) -> Result<()> {
     bail!("libgit2 error: code={code}, klass={klass:#?}, message={message:#?}");
 }
 
+// TODO use when we add periodic archive cleanup, the dead-code warning is intentional
 pub fn is_workdir_clean(workdir: &Path) -> Result<bool> {
     let repo = Repository::open(workdir)?;
     let mut opts = StatusOptions::new();

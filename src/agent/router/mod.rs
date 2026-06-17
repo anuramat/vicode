@@ -65,7 +65,7 @@ pub enum RouterCommand {
     Allocate {
         done: oneshot::Sender<Result<AgentId>>,
     },
-    Delete {
+    Shutdown {
         aid: AgentId,
         done: oneshot::Sender<Result<()>>,
     },
@@ -152,12 +152,14 @@ impl AgentRouterHandle {
         Ok(rx)
     }
 
-    pub async fn delete(
+    /// Abort the agent's live runtime and drop it from the registry; the
+    /// persisted state row and workdir are untouched.
+    pub async fn shutdown(
         &self,
         aid: AgentId,
     ) -> Result<()> {
         let (done, rx) = oneshot::channel();
-        self.tx.send(RouterCommand::Delete { aid, done }).await?;
+        self.tx.send(RouterCommand::Shutdown { aid, done }).await?;
         rx.await?
     }
 }

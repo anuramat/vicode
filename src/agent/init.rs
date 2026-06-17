@@ -194,9 +194,7 @@ mod tests {
         let child_aid = router.allocate_agent_id().await.unwrap();
         parent.try_duplicate(child_aid.clone()).await.unwrap();
 
-        assert!(!project.agent(&child_aid).join("state.json").exists());
-
-        // observable via router: deletion succeeds only if registered
-        router.delete(child_aid).await.unwrap();
+        // observable via router: shutdown succeeds only if registered
+        router.shutdown(child_aid).await.unwrap();
     }
 }

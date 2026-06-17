@@ -22,7 +22,7 @@ impl AgentRouter {
                 reply,
             } => self.dispatch_spawn_subagent(parent, inherit_context, reply),
             RouterCommand::Allocate { done } => self.handle_allocate(done),
-            RouterCommand::Delete { aid, done } => self.handle_delete(&aid, done),
+            RouterCommand::Shutdown { aid, done } => self.handle_shutdown(&aid, done),
         }
     }
 
@@ -68,7 +68,7 @@ impl AgentRouter {
         }
     }
 
-    fn handle_delete(
+    fn handle_shutdown(
         &mut self,
         aid: &AgentId,
         done: oneshot::Sender<Result<()>>,
@@ -168,9 +168,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_aborts_runtime_and_removes_entry() {
+    async fn shutdown_aborts_runtime_and_removes_entry() {
         let mut router = empty_router();
-        let aid = AgentId::from("live-delete".to_string());
+        let aid = AgentId::from("live-shutdown".to_string());
         let (tx, _rx) = channel(8);
         let (abort, reg) = AbortHandle::new_pair();
         let pending = futures::future::Abortable::new(futures::future::pending::<()>(), reg);
@@ -181,7 +181,7 @@ mod tests {
 
         let (done, done_rx) = oneshot::channel();
         router
-            .handle(RouterCommand::Delete {
+            .handle(RouterCommand::Shutdown {
                 aid: aid.clone(),
                 done,
             })
@@ -193,11 +193,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_unknown_agent_errors() {
+    async fn shutdown_unknown_agent_errors() {
         let mut router = empty_router();
         let (done, done_rx) = oneshot::channel();
         router
-            .handle(RouterCommand::Delete {
+            .handle(RouterCommand::Shutdown {
                 aid: AgentId::from("missing".to_string()),
                 done,
             })
@@ -301,8 +301,8 @@ mod tests {
         parent_task.await.unwrap();
 
         assert_ne!(child_aid, parent_aid);
-        // registered child is observable via successful delete
-        handle.delete(child_aid).await.unwrap();
+        // registered child is observable via successful shutdown
+        handle.shutdown(child_aid).await.unwrap();
     }
 
     #[tokio::test]

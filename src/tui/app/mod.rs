@@ -86,7 +86,7 @@ pub struct App<'a> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppState {
-    visible_order: Vec<AgentId>,
+    pub visible_order: Vec<AgentId>,
 }
 
 const CHANNEL_CAPACITY: usize = 100;

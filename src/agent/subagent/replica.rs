@@ -118,7 +118,7 @@ mod tests {
 
         // every aid should now be absent from the router
         for aid in aids {
-            assert!(router.delete(aid).await.is_err());
+            assert!(router.shutdown(aid).await.is_err());
         }
     }
 

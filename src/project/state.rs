@@ -111,13 +111,18 @@ impl StateStore {
         &self,
         id: &AgentId,
     ) -> Result<AgentState> {
-        let value = self
-            .agent_table()?
-            .map(|t| t.get(id.to_string().as_str()))
-            .transpose()?
-            .flatten()
+        let table = self.agent_table()?.context("no agents yet")?;
+        let value = table
+            .get(id.to_string().as_str())?
             .with_context(|| format!("agent {id} not found"))?;
         Ok(serde_json::from_slice(value.value())?)
+    }
+
+    pub fn agent_commit(
+        &self,
+        id: &AgentId,
+    ) -> Result<String> {
+        Ok(self.load_agent(id)?.context.commit)
     }
 
     pub fn agent_ids(&self) -> Result<HashSet<AgentId>> {
@@ -181,5 +186,26 @@ impl StateStoreHandle {
         id: &AgentId,
     ) -> Result<()> {
         self.write(StateOp::DeleteAgent(id.to_string())).await
+    }
+}
+
+#[cfg(test)]
+impl StateStore {
+    pub fn save_agent_sync(
+        &self,
+        id: &AgentId,
+        state: &AgentState,
+    ) -> Result<()> {
+        self.apply(StateOp::SaveAgent(
+            id.to_string(),
+            serde_json::to_vec(state)?,
+        ))
+    }
+
+    pub fn save_app_sync(
+        &self,
+        state: &AppState,
+    ) -> Result<()> {
+        self.apply(StateOp::SaveApp(serde_json::to_vec(state)?))
     }
 }

@@ -6,7 +6,9 @@ use derive_more::Into;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(
+    From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct AgentId(String);
 
 static GENERATOR: std::sync::LazyLock<petname::Petnames<'static>> =
