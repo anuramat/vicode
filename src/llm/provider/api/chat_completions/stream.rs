@@ -245,6 +245,135 @@ mod tests {
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::message::AssistantItem;
 
+    /// SSE fixture text in, parsed event sequence out
+    async fn fixture_events(fixture: &str) -> Vec<Result<AssistantEvent, String>> {
+        let chunks: Vec<Result<serde_json::Value, async_openai::error::OpenAIError>> = fixture
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .take_while(|data| *data != "[DONE]")
+            .map(|data| Ok(serde_json::from_str(data).unwrap()))
+            .collect();
+        let permit = Arc::new(Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("semaphore closed");
+        ChatCompletionsStream::new(
+            Box::pin(futures::stream::iter(chunks)),
+            permit,
+            "reasoning_content".into(),
+        )
+        .map(|event| event.map_err(|err| err.to_string()))
+        .collect()
+        .await
+    }
+
+    macro_rules! assert_events_snapshot {
+        ($events:expr, @$snapshot:literal) => {
+            insta::assert_yaml_snapshot!($events, {
+                ".**.timestamp" => "[ts]",
+                ".**.started_at" => "[ts]",
+                ".**.ended_at" => "[ts]",
+                ".**.ready_at" => "[ts]",
+            }, @$snapshot);
+        };
+    }
+
+    #[tokio::test]
+    async fn sse_reasoning_and_text_snapshot() {
+        let events = fixture_events(concat!(
+            r#"data: {"id":"resp-1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"pondering"},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"resp-1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"resp-1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+
+        assert_events_snapshot!(events, @r#"
+        - Ok:
+            Item:
+              Reasoning:
+                id: "resp-1:reasoning:0"
+                content: ~
+                summary: []
+                encrypted: ~
+                token_count: 0
+                started_at: "[ts]"
+                ended_at: "[ts]"
+        - Ok:
+            Delta:
+              id: "resp-1:reasoning:0"
+              delta:
+                Reasoning: pondering
+              timestamp: "[ts]"
+        - Ok:
+            Item:
+              Output:
+                id: "resp-1:message:0"
+                content: []
+                token_count: 0
+                started_at: "[ts]"
+                ended_at: "[ts]"
+        - Ok:
+            Delta:
+              id: "resp-1:message:0"
+              delta:
+                Output: Hello
+              timestamp: "[ts]"
+        - Ok:
+            Delta:
+              id: "resp-1:message:0"
+              delta:
+                Output: " world"
+              timestamp: "[ts]"
+        - Ok:
+            Completed:
+              ended_at: "[ts]"
+        "#);
+    }
+
+    #[tokio::test]
+    async fn sse_split_tool_call_snapshot() {
+        let events = fixture_events(concat!(
+            r#"data: {"id":"resp-1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"todo","arguments":"{\"current\":\"test"}}]},"finish_reason":null}]}"#,
+            "\n\n",
+            r#"data: {"id":"resp-1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ing\",\"entries\":[]}"}}]},"finish_reason":"tool_calls"}]}"#,
+            "\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+
+        assert_events_snapshot!(events, @r#"
+        - Ok:
+            Item:
+              ToolCall:
+                id: call-1
+                call_id: call-1
+                name: todo
+                arguments:
+                  current: testing
+                  entries: []
+                meta: ~
+                output: ~
+                token_count: 0
+                started_at: "[ts]"
+                ended_at: "[ts]"
+                ready_at: "[ts]"
+        - Ok:
+            Completed:
+              ended_at: "[ts]"
+        "#);
+    }
+
+    #[tokio::test]
+    async fn sse_malformed_chunk_snapshot() {
+        let events = fixture_events("data: {\"bogus\":true}\n\n").await;
+
+        assert_events_snapshot!(events, @r#"- Err: "missing field `id`""#);
+    }
+
     #[test]
     fn chat_text_chunk_creates_output_before_delta() {
         let mut state = StreamState::default();

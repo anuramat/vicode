@@ -11,6 +11,7 @@ use super::timing::now;
 use super::tokens::TokenCount;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct Delta {
     pub id: String,
     pub delta: DeltaContent,
@@ -20,6 +21,7 @@ pub struct Delta {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum DeltaContent {
     Output(String),
     Reasoning(String),

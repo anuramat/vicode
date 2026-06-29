@@ -8,6 +8,7 @@ use crate::llm::history::timing::now;
 pub type HistoryGeneration = u64;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum AssistantEvent {
     Created { created_at: u64 },
     Started { started_at: u64 },

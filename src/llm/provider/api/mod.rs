@@ -17,6 +17,8 @@ pub mod chat_completions;
 /// SLOP `chatgpt` module is vibecoded
 #[allow(deprecated, clippy::pedantic, clippy::nursery, clippy::style)]
 pub mod chatgpt;
+#[cfg(test)]
+pub mod fake;
 pub mod responses;
 
 pub type AssistantStream =
