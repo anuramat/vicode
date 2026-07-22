@@ -1,6 +1,6 @@
 #:schema ./schema.json
 
-primary_assistant = ["cerebras"]
+primary_assistant = "cerebras"
 
 [assistants.cerebras]
 provider = "cerebras"

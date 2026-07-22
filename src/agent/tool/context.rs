@@ -4,9 +4,10 @@ use anyhow::Result;
 
 use crate::agent::id::AgentId;
 use crate::agent::router::AgentRouterHandle;
+use crate::agent::task::sink::OutputSink;
 use crate::config::Config;
+use crate::llm::history::History;
 use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 use crate::sandbox::SandboxRunner;
 
 #[derive(Clone, Debug)]
@@ -14,6 +15,9 @@ pub struct ToolRuntimeContext {
     pub agent_id: AgentId,
     pub project: Project,
     pub router: AgentRouterHandle,
+    pub output: OutputSink,
+    /// parent history for `spawn` calls with inherit=true
+    pub capture: Option<History>,
 }
 
 impl ToolRuntimeContext {
@@ -21,20 +25,20 @@ impl ToolRuntimeContext {
         agent_id: AgentId,
         project: Project,
         router: AgentRouterHandle,
+        output: OutputSink,
+        capture: Option<History>,
     ) -> Self {
         Self {
             agent_id,
             project,
             router,
+            output,
+            capture,
         }
     }
 
     pub fn workdir(&self) -> PathBuf {
         self.project.agent_workdir(&self.agent_id)
-    }
-
-    pub fn diff_root(&self) -> PathBuf {
-        self.project.agent_diff_root(&self.agent_id)
     }
 
     pub fn sandbox_runner(&self) -> Result<SandboxRunner> {

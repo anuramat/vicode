@@ -90,8 +90,7 @@ mod tests {
                 command: "echo hello".into(),
             }),
             output: Some(Ok(BashResult {
-                stdout: "hello\n".into(),
-                stderr: "".into(),
+                output: "hello\n".into(),
                 exit_status: None,
                 signal: None,
             })),
@@ -121,7 +120,7 @@ mod tests {
           },
           {
             "call_id": "call_id_2",
-            "output": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "output": "{\"output\":\"hello\\n\",\"exit_status\":null,\"signal\":null}",
             "type": "function_call_output"
           }
         ]

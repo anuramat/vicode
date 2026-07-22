@@ -42,8 +42,6 @@ pub enum CommandName {
     RefreshInfo,
     /// scroll the focused pane
     Scroll,
-    /// set multiplier for the next prompt
-    SetMultiplier,
     /// archive the currently selected tab
     TabArchive,
     /// duplicate the currently selected tab

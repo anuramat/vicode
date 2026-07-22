@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -39,6 +41,8 @@ struct FakeTurn {
     events: Vec<AssistantEvent>,
     /// keep the stream open (pending forever) after replaying all events
     hang: bool,
+    /// panic while streaming, after replaying all events (H6)
+    panic: bool,
 }
 
 impl FakeApi {
@@ -49,6 +53,7 @@ impl FakeApi {
         self.turns.lock().unwrap().push_back(FakeTurn {
             events,
             hang: false,
+            panic: false,
         });
     }
 
@@ -56,10 +61,24 @@ impl FakeApi {
         &self,
         events: Vec<AssistantEvent>,
     ) {
-        self.turns
-            .lock()
-            .unwrap()
-            .push_back(FakeTurn { events, hang: true });
+        self.turns.lock().unwrap().push_back(FakeTurn {
+            events,
+            hang: true,
+            panic: false,
+        });
+    }
+
+    /// replay the events, then panic mid-stream — exercises the turn-panic
+    /// path (H6)
+    pub fn script_panicking_turn(
+        &self,
+        events: Vec<AssistantEvent>,
+    ) {
+        self.turns.lock().unwrap().push_back(FakeTurn {
+            events,
+            hang: false,
+            panic: true,
+        });
     }
 
     pub fn requests(&self) -> Vec<Vec<Message>> {
@@ -85,7 +104,9 @@ impl Api for FakeApi {
             .pop_front()
             .context("no scripted turn")?;
         let events = stream::iter(turn.events.into_iter().map(Ok));
-        let stream: AssistantStream = if turn.hang {
+        let stream: AssistantStream = if turn.panic {
+            Box::pin(events.chain(stream::once(async { panic!("scripted turn panic") })))
+        } else if turn.hang {
             Box::pin(events.chain(stream::pending()))
         } else {
             Box::pin(events)

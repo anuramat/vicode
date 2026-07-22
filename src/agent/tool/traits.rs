@@ -20,6 +20,22 @@ pub trait ToolCall: Send + Sync {
         &mut self,
         ctx: ToolRuntimeContext,
     );
+
+    /// should be no-op if output exists
+    fn fail_unresolved(
+        &mut self,
+        msg: &str,
+    );
+
+    fn compose(
+        &mut self,
+        _streamed: String,
+    ) {
+    }
+
+    fn inherit_history(&self) -> bool {
+        false
+    }
 }
 
 #[async_trait::async_trait]
@@ -28,4 +44,14 @@ pub trait Function<TMeta = (), TResult = ()>: Send + Sync {
         &self,
         ctx: ToolRuntimeContext,
     ) -> Result<(TResult, TMeta)>;
+
+    fn inherit_history(&self) -> bool {
+        false
+    }
+
+    fn compose(
+        _result: &mut TResult,
+        _streamed: String,
+    ) {
+    }
 }

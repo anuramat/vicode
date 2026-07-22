@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -10,13 +8,9 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::OnceCell;
 
 use super::Provider;
 use crate::config::Config;
-
-// TODO .get().unwrap() is kinda ugly; maybe wrap in helper functions? should we keep unwrapping or do proper error handling?
-pub static ASSISTANT_POOL: OnceCell<AssistantPool> = OnceCell::const_new();
 
 #[derive(Debug, Clone)]
 pub struct Assistant {
@@ -52,20 +46,12 @@ pub struct ModelConfig {
     pub window: Option<usize>,
 }
 
+#[derive(Debug)]
 pub struct AssistantPool {
     assistants: IndexMap<String, Assistant>,
-    primary: RoundRobin,
-    subagent: SubagentSelector,
-}
-
-struct RoundRobin {
-    ids: Vec<String>,
-    next: AtomicUsize,
-}
-
-enum SubagentSelector {
-    Inherit,
-    RoundRobin(RoundRobin),
+    primary: String,
+    /// if unset, subagents inherit their parent's assistant
+    subagent: Option<String>,
 }
 
 impl AssistantPool {
@@ -74,9 +60,10 @@ impl AssistantPool {
             // TODO stream::iter map buffered try_collect
             let futures = config.providers.iter().map(
                 async |(id, config)| -> Result<(String, Arc<Provider>)> {
+                    let key = config.resolve_key().await?;
                     Ok((
                         id.clone(),
-                        Arc::new(Provider::new(id.clone(), config.clone()).await?),
+                        Arc::new(Provider::new(id.clone(), config.clone(), key)?),
                     ))
                 },
             );
@@ -103,12 +90,8 @@ impl AssistantPool {
 
         Ok(Self {
             assistants,
-            primary: RoundRobin::new(config.primary_assistant.clone()),
-            subagent: if config.subagent_assistant.is_empty() {
-                SubagentSelector::Inherit
-            } else {
-                SubagentSelector::RoundRobin(RoundRobin::new(config.subagent_assistant.clone()))
-            },
+            primary: config.primary_assistant.clone(),
+            subagent: config.subagent_assistant.clone(),
         })
     }
 
@@ -122,8 +105,8 @@ impl AssistantPool {
             .with_context(|| format!("unknown assistant {id:?}"))
     }
 
-    pub fn next_primary(&self) -> String {
-        self.primary.next()
+    pub fn primary(&self) -> Result<Assistant> {
+        self.assistant(&self.primary)
     }
 
     pub fn switch_assistant(
@@ -141,32 +124,11 @@ impl AssistantPool {
         Some(self.assistants.get_index(new)?.0.clone())
     }
 
-    pub fn next_subagent(
+    pub fn subagent(
         &self,
         parent: &str,
     ) -> Result<Assistant> {
-        let id = match &self.subagent {
-            SubagentSelector::Inherit => parent.to_string(),
-            SubagentSelector::RoundRobin(selector) => selector.next(),
-        };
-        self.assistants
-            .get(&id)
-            .cloned()
-            .with_context(|| format!("failed to get assistant {id} for subagent"))
-    }
-}
-
-impl RoundRobin {
-    fn new(ids: Vec<String>) -> Self {
-        Self {
-            ids,
-            next: AtomicUsize::new(0),
-        }
-    }
-
-    fn next(&self) -> String {
-        let idx = self.next.fetch_add(1, Ordering::Relaxed);
-        self.ids[idx % self.ids.len()].clone()
+        self.assistant(self.subagent.as_deref().unwrap_or(parent))
     }
 }
 
@@ -179,19 +141,42 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    #[test]
-    fn selector_round_robins() {
-        let selector = RoundRobin::new(vec!["a".into(), "b".into()]);
-        assert_eq!(selector.next(), "a");
-        assert_eq!(selector.next(), "b");
-        assert_eq!(selector.next(), "a");
+    /// snapshots render an assistant as its id
+    impl serde::Serialize for Assistant {
+        fn serialize<S: serde::Serializer>(
+            &self,
+            serializer: S,
+        ) -> std::result::Result<S::Ok, S::Error> {
+            serializer.serialize_str(&self.id)
+        }
+    }
+
+    impl AssistantPool {
+        /// pool with assistants `"test"` (primary) and `"test2"` sharing one
+        /// scripted `FakeApi`, so switching assistants keeps the scripted turns
+        pub fn fake() -> (Self, Arc<crate::llm::provider::api::fake::FakeApi>) {
+            let (assistant, api) = Assistant::fake();
+            let second = Assistant {
+                id: "test2".into(),
+                ..assistant.clone()
+            };
+            let pool = Self {
+                primary: assistant.id.clone(),
+                assistants: IndexMap::from([
+                    (assistant.id.clone(), assistant),
+                    (second.id.clone(), second),
+                ]),
+                subagent: None,
+            };
+            (pool, api)
+        }
     }
 
     #[tokio::test]
     async fn assistants_share_provider() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast", "deep"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -224,15 +209,16 @@ mod tests {
         let fast = pool.assistant("fast").unwrap();
         let deep = pool.assistant("deep").unwrap();
         assert!(Arc::ptr_eq(&fast.provider, &deep.provider));
-        assert_eq!(pool.next_subagent("fast").unwrap().id, "fast");
+        assert_eq!(pool.primary().unwrap().id, "fast");
+        assert_eq!(pool.subagent("fast").unwrap().id, "fast");
     }
 
     #[tokio::test]
-    async fn subagents_round_robin_over_subset() {
+    async fn subagents_use_configured_assistant() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
-            subagent_assistant = ["deep", "fast"]
+            primary_assistant = "fast"
+            subagent_assistant = "deep"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -261,15 +247,14 @@ mod tests {
         )
         .unwrap();
         let pool = AssistantPool::from_config(&config).await.unwrap();
-        assert_eq!(pool.next_subagent("fast").unwrap().id, "deep");
-        assert_eq!(pool.next_subagent("fast").unwrap().id, "fast");
+        assert_eq!(pool.subagent("fast").unwrap().id, "deep");
     }
 
     #[tokio::test]
     async fn switch_assistant_steps_forward_through_full_order() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -316,7 +301,7 @@ mod tests {
     async fn switch_assistant_steps_backward_through_full_order() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]

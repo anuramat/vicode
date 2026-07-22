@@ -20,7 +20,6 @@ pub trait AsMessageText {
 #[delegate(Timing)]
 pub enum DeveloperMessage {
     Compact(CompactMessage),
-    SubagentReport(SubagentReportMessage),
     Misc(MiscMessage),
 }
 
@@ -34,15 +33,6 @@ pub struct CompactMessage {
     pub created_at: u64,
     pub started_at: u64,
     pub ended_at: u64,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct SubagentReportMessage {
-    text: String,
-    token_count: usize,
-
-    created_at: u64,
-    ready_at: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -62,20 +52,6 @@ impl DeveloperMessage {
         result.recount();
         result
     }
-
-    pub fn subagent(
-        text: String,
-        created_at: u64,
-    ) -> Self {
-        let mut result = Self::SubagentReport(SubagentReportMessage {
-            text,
-            created_at,
-            ready_at: Some(now()),
-            token_count: 0,
-        });
-        result.recount();
-        result
-    }
 }
 
 impl TokenCount for DeveloperMessage {
@@ -83,7 +59,6 @@ impl TokenCount for DeveloperMessage {
         let token_count = count_text_tokens(self.as_message_text());
         match self {
             Self::Compact(msg) => msg.token_count = token_count,
-            Self::SubagentReport(msg) => msg.token_count = token_count,
             Self::Misc(msg) => msg.token_count = token_count,
         }
     }
@@ -91,19 +66,12 @@ impl TokenCount for DeveloperMessage {
     fn token_count(&self) -> usize {
         match self {
             Self::Compact(msg) => msg.token_count,
-            Self::SubagentReport(msg) => msg.token_count,
             Self::Misc(msg) => msg.token_count,
         }
     }
 }
 
 impl AsMessageText for CompactMessage {
-    fn as_message_text(&self) -> &str {
-        &self.text
-    }
-}
-
-impl AsMessageText for SubagentReportMessage {
     fn as_message_text(&self) -> &str {
         &self.text
     }
@@ -126,16 +94,6 @@ impl Timing for CompactMessage {
 
     fn ended_at(&self) -> Option<u64> {
         Some(self.ended_at)
-    }
-}
-
-impl Timing for SubagentReportMessage {
-    fn created_at(&self) -> u64 {
-        self.created_at
-    }
-
-    fn ready_at(&self) -> Option<u64> {
-        self.ready_at
     }
 }
 

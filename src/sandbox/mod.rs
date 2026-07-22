@@ -2,7 +2,6 @@ pub mod bwrap;
 pub mod sbe;
 
 use std::path::PathBuf;
-use std::process::Output;
 
 use anyhow::Result;
 use dyn_clone::DynClone;
@@ -70,18 +69,20 @@ impl Sandbox for SandboxConfig {
 }
 
 impl SandboxRunner {
-    pub async fn exec(
+    pub fn spawn(
         &self,
         mut shell_cmd: Vec<String>,
         script: String,
-    ) -> Result<Output> {
+    ) -> Result<tokio::process::Child> {
         shell_cmd.push(script);
-        let mut cmd = tokio::process::Command::new(&self.bin);
-        Ok(cmd
+        Ok(tokio::process::Command::new(&self.bin)
             .current_dir(&self.cwd)
             .args(&self.args)
-            .args(shell_cmd.into_iter())
-            .output()
-            .await?)
+            .args(shell_cmd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?)
     }
 }
