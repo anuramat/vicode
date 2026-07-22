@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use super::Overlay;
 use crate::agent::id::AgentId;
-use crate::project::Layout;
-use crate::project::layout::LayoutTrait;
+use crate::project::Paths;
 
 const OVERLAY_DIRNAME: &str = ".overlay";
 const OVERLAY_UPPER_DIRNAME: &str = "upper";
@@ -14,47 +13,47 @@ const SHARED_DIRNAME: &str = "shared";
 impl Overlay {
     pub fn overlay(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         aid: &AgentId,
     ) -> PathBuf {
-        layout.agent(aid).join(OVERLAY_DIRNAME)
+        paths.agent(aid).join(OVERLAY_DIRNAME)
     }
 
     pub fn overlay_workdir(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         aid: &AgentId,
     ) -> PathBuf {
-        self.overlay(layout, aid).join(OVERLAY_WORKDIR_DIRNAME)
+        self.overlay(paths, aid).join(OVERLAY_WORKDIR_DIRNAME)
     }
 
     pub fn overlay_upper(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         aid: &AgentId,
     ) -> PathBuf {
-        self.overlay(layout, aid).join(OVERLAY_UPPER_DIRNAME)
+        self.overlay(paths, aid).join(OVERLAY_UPPER_DIRNAME)
     }
 
     pub fn shared(
         &self,
-        layout: &Layout,
+        paths: &Paths,
     ) -> PathBuf {
-        layout.data.join(SHARED_DIRNAME)
+        paths.data.join(SHARED_DIRNAME)
     }
 
     pub fn snapshots(
         &self,
-        layout: &Layout,
+        paths: &Paths,
     ) -> PathBuf {
-        layout.data.join(SNAPSHOTS_DIRNAME)
+        paths.data.join(SNAPSHOTS_DIRNAME)
     }
 
     pub fn snapshot(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         commit: &str,
     ) -> PathBuf {
-        self.snapshots(layout).join(commit)
+        self.snapshots(paths).join(commit)
     }
 }

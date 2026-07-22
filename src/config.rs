@@ -116,11 +116,10 @@ pub struct Config {
     // #[schemars(with = "HashMap<String, AssistantConfig>")]
     pub assistants: IndexMap<String, AssistantConfig>,
 
-    // TODO maybe collapse into a struct or something?
-    /// list of assistants for new tabs (round robin)
-    pub primary_assistant: Vec<String>,
-    /// if empty, inherits from its parent
-    pub subagent_assistant: Vec<String>,
+    /// assistant for new tabs
+    pub primary_assistant: String,
+    /// if unset, inherits from its parent
+    pub subagent_assistant: Option<String>,
 
     #[serde(default)]
     pub keymap: Keymap,
@@ -128,12 +127,6 @@ pub struct Config {
     #[default("git -c color.status=always status --short")]
     pub info_cmd: String,
     pub compact: CompactConfig,
-
-    /// Max subagent recursion depth. Primary agents start at this value; each
-    /// subagent inherits parent_depth - 1. Agents at depth 0 can't spawn
-    /// subagents (the subagent tool is hidden from them).
-    #[default = 1]
-    pub subagent_max_depth: u32,
 }
 
 impl std::fmt::Display for Config {
@@ -150,15 +143,14 @@ impl std::fmt::Display for Config {
 }
 
 impl Config {
-    // TODO check if schema is up to date, rewrite if not
     fn put_schema() -> Result<()> {
         let filepath = DIRS.place_config_file(SCHEMA_FILENAME)?;
-        if !filepath.exists() {
-            let schema = schema_for!(Self);
-            std::fs::write(&filepath, serde_json::to_string_pretty(&schema)?).with_context(
-                || format!("failed to write config schema to {}", filepath.display()),
-            )?;
+        let schema = serde_json::to_string_pretty(&schema_for!(Self))?;
+        if std::fs::read_to_string(&filepath).is_ok_and(|old| old == schema) {
+            return Ok(());
         }
+        std::fs::write(&filepath, schema)
+            .with_context(|| format!("failed to write config schema to {}", filepath.display()))?;
         Ok(())
     }
 
@@ -180,18 +172,26 @@ impl Config {
         use crate::sandbox::Sandbox;
 
         let mut config: Self = toml::from_str(s)?;
+        // normalize paths
+        for path in &mut config.shared {
+            *path = path
+                .trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_string();
+        }
         config.keymap.merge_default();
         config.sandbox.merge_default();
         config.validate()?;
         Ok(config)
     }
 
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self::parse_with_defaults(DEFAULT_CONFIG).unwrap()
-    }
-
     fn validate(&self) -> Result<()> {
+        for path in &self.shared {
+            anyhow::ensure!(
+                std::path::Path::new(path).is_relative(),
+                "shared path must be relative to project root: {path:?}"
+            );
+        }
         for (id, assistant) in &self.assistants {
             anyhow::ensure!(
                 self.providers.contains_key(&assistant.provider),
@@ -201,23 +201,21 @@ impl Config {
         }
 
         self.validate_assistant(&self.primary_assistant)?;
-        if !self.subagent_assistant.is_empty() {
-            self.validate_assistant(&self.subagent_assistant)?;
+        if let Some(assistant) = &self.subagent_assistant {
+            self.validate_assistant(assistant)?;
         }
         Ok(())
     }
 
     fn validate_assistant(
         &self,
-        assistant: &Vec<String>,
+        assistant: &str,
     ) -> Result<()> {
         anyhow::ensure!(!assistant.is_empty(), "assistant must not be empty");
-        for id in assistant {
-            anyhow::ensure!(
-                self.assistants.contains_key(id),
-                "unknown assistant '{id:?}'"
-            );
-        }
+        anyhow::ensure!(
+            self.assistants.contains_key(assistant),
+            "unknown assistant '{assistant:?}'"
+        );
         Ok(())
     }
 }
@@ -228,6 +226,12 @@ mod tests {
 
     use super::*;
 
+    impl Config {
+        pub fn test() -> Self {
+            Self::parse_with_defaults(DEFAULT_CONFIG).unwrap()
+        }
+    }
+
     #[test]
     fn parses_default_config() {
         let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
@@ -235,10 +239,18 @@ mod tests {
     }
 
     #[test]
+    fn rejects_absolute_shared_path() {
+        let mut config = Config::test();
+        config.shared = vec!["/etc".into()];
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("relative"));
+    }
+
+    #[test]
     fn rejects_unknown_assistant_reference() {
         let err = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["missing"]
+            primary_assistant = "missing"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -280,7 +292,7 @@ mod tests {
     fn clear_keymap_replaces_defaults() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
 
             [sandbox]
             kind = "bwrap"
@@ -317,7 +329,7 @@ mod tests {
     fn parses_chatgpt_provider() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -355,7 +367,7 @@ mod tests {
         ] {
             let toml = format!(
                 r#"
-                primary_assistant = ["fast"]
+                primary_assistant = "fast"
                 shell_cmd = ["bash", "-c"]
 
                 [sandbox]
@@ -384,7 +396,7 @@ mod tests {
     fn parses_multiple_chatgpt_providers() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]

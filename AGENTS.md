@@ -37,6 +37,11 @@ basic ideas:
 - if snapshots are a bad fit, instead of built-in `assert_eq!()` macro you MUST
   use `similar_asserts::assert_eq!()`; when possible, you MUST compare the
   entire struct at once using assert_eq, instead of checking field by field
+- test-only files MUST instead start with an inner `#![cfg(test)]`; the `mod`
+  declaration in the parent stays unconditional
+- a normal file MUST contain at most one `#[cfg(test)]` item: a `mod tests`
+  block at the end of the file
+  - exception: test-only enum variants and their match arms are gated in place
 
 ## build
 

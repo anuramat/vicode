@@ -14,6 +14,7 @@ use crate::llm::history::message::Message;
 use crate::llm::history::tokens::TokenCount;
 
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum TurnStatus {
     #[display("idle")]
     Idle,
@@ -79,7 +80,6 @@ impl HistoryState {
             }
             Message::Developer(msg) => match msg {
                 DeveloperMessage::Compact(compact) => compact.needs_another_turn,
-                DeveloperMessage::SubagentReport(_) => true,
                 DeveloperMessage::Misc(_) => false,
             },
             Message::User(_) => false,
@@ -105,6 +105,27 @@ impl HistoryState {
                 _ => None,
             })
             .collect()
+    }
+
+    /// give matching tool call(s) an error output
+    pub fn fail_tool_calls(
+        &mut self,
+        call_id: Option<&str>,
+        msg: &str,
+    ) {
+        for message in &mut self.messages {
+            let Message::Assistant(m) = message else {
+                continue;
+            };
+            for item in m.content.values_mut() {
+                if let AssistantItem::ToolCall(call) = item
+                    && call_id.is_none_or(|id| call.call_id == id)
+                {
+                    call.task.fail_unresolved(msg);
+                }
+            }
+        }
+        self.recount();
     }
 
     pub fn has_unresolved_tool_calls(&self) -> bool {

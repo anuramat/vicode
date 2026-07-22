@@ -1,5 +1,7 @@
 mod agent;
-mod layout;
+mod copy;
+mod mount_tests;
+mod paths;
 mod shared;
 
 use std::path::Path;
@@ -12,9 +14,8 @@ use thiserror::Error;
 use super::Overlay;
 use crate::agent::id::AgentId;
 use crate::deps;
-use crate::project::Layout;
-use crate::project::backend::WorkspaceBackend;
-use crate::project::layout::LayoutTrait;
+use crate::project::Paths;
+use crate::project::backend::BackendOps;
 use crate::sandbox::Sandbox;
 use crate::sandbox::SandboxRunner;
 
@@ -26,16 +27,18 @@ enum MountStatus {
 
 // TODO move more agent logic to ./agent.rs
 
-#[async_trait::async_trait]
-impl WorkspaceBackend for Overlay {
-    fn agent_diff_root(
+impl Overlay {
+    fn base_layers(
         &self,
-        layout: &Layout,
-        aid: &AgentId,
-    ) -> PathBuf {
-        self.overlay_upper(layout, aid)
+        paths: &Paths,
+        commit: &str,
+    ) -> Vec<PathBuf> {
+        vec![self.snapshot(paths, commit), self.shared(paths)]
     }
+}
 
+#[async_trait::async_trait]
+impl BackendOps for Overlay {
     fn sandbox_runner(
         &self,
         cwd: PathBuf,
@@ -46,100 +49,106 @@ impl WorkspaceBackend for Overlay {
 
     async fn init(
         &self,
-        layout: &Layout,
-        config: &crate::config::Config,
+        paths: &Paths,
     ) -> Result<()> {
-        self.unmount_all(layout).await?;
-        self.init_shared(layout, &config.shared).await?;
+        self.unmount_all(paths).await?;
+        self.init_shared(paths).await?;
         Ok(())
     }
 
     async fn new_agent_workdir(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         commit: &str,
         aid: &AgentId,
-        git: bool,
     ) -> Result<()> {
-        self.init_overlay(layout, commit, aid, git).await
+        self.init_overlay(paths, commit, aid).await
     }
 
     async fn mount_agent(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         commit: &str,
         aid: &AgentId,
     ) -> Result<()> {
-        match self
-            .mount_status(layout, &layout.agent_workdir(aid))
-            .await?
-        {
+        match self.mount_status(paths, &paths.agent_workdir(aid)).await? {
             MountStatus::Mounted => return Ok(()),
-            MountStatus::Broken => self.unmount_agent(layout, aid).await?,
+            MountStatus::Broken => self.unmount_agent(paths, aid).await?,
             MountStatus::Unmounted => (),
         }
 
+        self.ensure_snapshot(paths, commit).await?;
         let options = Self::overlay_options(
-            &self.snapshot(layout, commit),
-            &self.shared(layout),
-            &self.overlay_upper(layout, aid),
-            &self.overlay_workdir(layout, aid),
+            &self.base_layers(paths, commit),
+            &self.overlay_upper(paths, aid),
+            &self.overlay_workdir(paths, aid),
         );
         let args = [
             "-o".to_string(),
             options,
-            layout.agent_workdir(aid).to_string_lossy().to_string(),
+            paths.agent_workdir(aid).to_string_lossy().to_string(),
         ];
-        let status = layout.bash(deps::FUSE_OVERLAYFS, args).await?.status;
+        let status = paths.run(deps::FUSE_OVERLAYFS, args).await?.status;
         anyhow::ensure!(status.success(), "fuse-overlayfs failed: {status}");
+        // mounting invalidates stat cache, so we refresh eagerly
+        let workdir = paths.agent_workdir(aid);
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || crate::git::refresh_index(&workdir)).await?
+        {
+            tracing::warn!("git index refresh for {aid} failed: {error:#}");
+        }
         Ok(())
     }
 
     async fn unmount_agent(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         aid: &AgentId,
     ) -> Result<()> {
-        let path = layout.agent_workdir(aid);
-        match self.mount_status(layout, &path).await? {
+        let path = paths.agent_workdir(aid);
+        match self.mount_status(paths, &path).await? {
             MountStatus::Unmounted => Ok(()),
-            MountStatus::Mounted | MountStatus::Broken => self.unmount(layout, &path).await,
+            MountStatus::Mounted | MountStatus::Broken => self.unmount(paths, &path).await,
         }
     }
 
     async fn unmount_all(
         &self,
-        layout: &Layout,
+        paths: &Paths,
     ) -> Result<()> {
-        self.unmount_shared(layout).await?;
-        self.unmount_agents(layout).await?;
+        self.unmount_shared(paths).await?;
+        self.unmount_agents(paths).await?;
         Ok(())
     }
 
     async fn duplicate_agent_workdir(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         src_aid: &AgentId,
         dst_aid: &AgentId,
         commit: &str,
-        git: bool,
     ) -> Result<()> {
-        let src = self.overlay_upper(layout, src_aid);
-        let dst = self.overlay_upper(layout, dst_aid);
-        crate::git::copy_without_dot_git(&src, dst).await?;
-        self.init_overlay(layout, commit, dst_aid, git).await?;
-        Ok(())
+        let src_upper = self.overlay_upper(paths, src_aid);
+        let dst_upper = self.overlay_upper(paths, dst_aid);
+        let tmp = dst_upper.with_extension("tmp");
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            copy::copy_layer(&src_upper, &tmp)?;
+            std::fs::rename(&tmp, &dst_upper)?;
+            Ok(())
+        })
+        .await??;
+        self.init_overlay(paths, commit, dst_aid).await
     }
 }
 
 impl Overlay {
     async fn mount_status(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         path: &Path,
     ) -> Result<MountStatus> {
-        let output = layout
-            .bash(deps::MOUNTPOINT, [path.to_string_lossy().to_string()])
+        let output = paths
+            .run(deps::MOUNTPOINT, [path.to_string_lossy().to_string()])
             .await?;
         let status = match output.status.code() {
             Some(0) => MountStatus::Mounted,
@@ -154,18 +163,18 @@ impl Overlay {
 
     async fn unmount(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         path: &Path,
     ) -> Result<()> {
-        layout
-            .try_bash(deps::UMOUNT, [path.to_string_lossy().to_string()])
+        paths
+            .try_run(deps::UMOUNT, [path.to_string_lossy().to_string()])
             .await?;
         Ok(())
     }
 }
 
-impl Layout {
-    async fn bash<I, S>(
+impl Paths {
+    async fn run<I, S>(
         &self,
         command: &str,
         args: I,
@@ -183,7 +192,7 @@ impl Layout {
         Ok(output)
     }
 
-    async fn try_bash<I, S>(
+    async fn try_run<I, S>(
         &self,
         program: &str,
         args: I,
@@ -199,7 +208,7 @@ impl Layout {
             .output()
             .await?;
         if !output.status.success() {
-            return Err(BashError {
+            return Err(RunError {
                 program: program.to_string(),
                 args: args.into_iter().map(Into::into).collect(),
                 status: output.status,
@@ -214,10 +223,108 @@ impl Layout {
 
 #[derive(Debug, Error)]
 #[error("command {program} with args {:?} failed with status {}", .args, .status)]
-struct BashError {
+struct RunError {
     program: String,
     args: Vec<String>,
     status: std::process::ExitStatus,
     stdout: String,
     stderr: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use similar_asserts::assert_eq;
+
+    use super::*;
+
+    fn rig() -> (Paths, Overlay, String) {
+        let root = std::env::temp_dir().join(format!("vicode-overlay-{}", uuid::Uuid::new_v4()));
+        let data = root.join(".vicode");
+        fs::create_dir_all(&data).unwrap();
+        let repo = git2::Repository::init(&root).unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let commit = repo
+            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap()
+            .to_string();
+        let paths = Paths {
+            id: "test".into(),
+            root,
+            data,
+        };
+        let overlay = Overlay::test();
+        // pre-created snapshot so init_overlay skips the git checkout
+        fs::create_dir_all(overlay.snapshot(&paths, &commit)).unwrap();
+        (paths, overlay, commit)
+    }
+
+    /// each spawn seeds the child's upper from the parent's upper — the
+    /// whole inherited delta lives in one layer, with the child's own
+    /// worktree pointer on top, and the mount stays constant-depth
+    /// ([upper | snapshot | shared]) at any spawn depth
+    #[tokio::test]
+    async fn duplicate_seeds_the_child_upper_at_constant_depth() {
+        let (paths, overlay, commit) = rig();
+        let (parent, child, grandchild) = (
+            AgentId::from("parent".to_string()),
+            AgentId::from("child".to_string()),
+            AgentId::from("grandchild".to_string()),
+        );
+        let parent_upper = overlay.overlay_upper(&paths, &parent);
+        fs::create_dir_all(&parent_upper).unwrap();
+        fs::write(parent_upper.join("delta.txt"), "parent delta").unwrap();
+
+        overlay
+            .duplicate_agent_workdir(&paths, &parent, &child, &commit)
+            .await
+            .unwrap();
+
+        let child_upper = overlay.overlay_upper(&paths, &child);
+        assert_eq!(
+            fs::read_to_string(child_upper.join("delta.txt")).unwrap(),
+            "parent delta"
+        );
+        // the .git in the seeded upper is the child's own worktree pointer
+        assert!(child_upper.join(".git").is_file());
+
+        // nesting: the grandchild's upper carries the whole inherited delta
+        fs::write(child_upper.join("child.txt"), "child delta").unwrap();
+        overlay
+            .duplicate_agent_workdir(&paths, &child, &grandchild, &commit)
+            .await
+            .unwrap();
+        let gc_upper = overlay.overlay_upper(&paths, &grandchild);
+        assert_eq!(
+            fs::read_to_string(gc_upper.join("delta.txt")).unwrap(),
+            "parent delta"
+        );
+        assert_eq!(
+            fs::read_to_string(gc_upper.join("child.txt")).unwrap(),
+            "child delta"
+        );
+        assert!(!overlay.overlay(&paths, &grandchild).join("lowers").exists());
+
+        // the mount's read-only side is the same two layers at any depth
+        let options = Overlay::overlay_options(
+            &overlay.base_layers(&paths, &commit),
+            &gc_upper,
+            &overlay.overlay_workdir(&paths, &grandchild),
+        );
+        assert_eq!(
+            options,
+            format!(
+                "lowerdir={}:{},upperdir={},workdir={}",
+                overlay.snapshot(&paths, &commit).display(),
+                overlay.shared(&paths).display(),
+                gc_upper.display(),
+                overlay.overlay_workdir(&paths, &grandchild).display(),
+            )
+        );
+
+        fs::remove_dir_all(paths.root).ok();
+    }
 }

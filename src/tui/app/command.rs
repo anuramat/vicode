@@ -45,9 +45,6 @@ impl<'a> App<'a> {
                     .ok_or_else(|| anyhow::anyhow!("missing argument"))?;
                 self.scroll(op)?;
             }
-            CommandName::SetMultiplier => self
-                .selected_tab_mut()?
-                .set_multiplier(command.args.as_deref())?,
             CommandName::TabArchive => self.archive_tab().await?,
             CommandName::TabDuplicate => self.duplicate_tab().await?,
             CommandName::TabNew => self.new_tab().await?,
@@ -198,12 +195,7 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
-    use crate::config::Config;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::widgets::input::CompletionItem;
@@ -211,51 +203,13 @@ mod tests {
     use crate::tui::widgets::input::Input;
     use crate::tui::widgets::input::InputOpts;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         let mut tab = Tab::new(
             Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
@@ -297,19 +251,12 @@ mod tests {
     #[tokio::test]
     async fn tab_focus_owns_contextual_scroll_commands() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
+            Default::default(),
             Default::default(),
         );
         let project = app.project.clone();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| {

@@ -1,109 +1,62 @@
 pub mod backend;
 pub mod cleanup;
-pub mod layout;
 pub mod lock;
-pub mod state;
+pub mod paths;
+pub mod store;
 
-use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use ambassador::Delegate;
-use anyhow::Context;
 use anyhow::Result;
+use derive_getters::Getters;
+use derive_more::Deref;
 use git2::Repository;
+pub use paths::Paths;
 
 use crate::agent::AgentId;
 use crate::config::Config;
-use crate::config::DIRS;
 use crate::config::INSTRUCTIONS;
-use crate::project::backend::BackendKind;
-use crate::project::backend::WorkspaceBackend;
-use crate::project::layout::LayoutTrait;
-use crate::project::layout::ambassador_impl_LayoutTrait;
+use crate::llm::provider::assistant::AssistantPool;
+use crate::project::backend::Backend;
+use crate::project::backend::BackendOps;
 use crate::project::lock::ProjectLock;
-use crate::project::state::StateStoreHandle;
+use crate::project::store::StoreHandle;
 use crate::sandbox::SandboxRunner;
 
-#[derive(Clone, Delegate, Debug)]
-#[delegate(LayoutTrait, target = "layout")]
-pub struct Project {
-    layout: Layout,
-    backend: BackendKind,
-    config: Config,
+#[derive(Clone, Debug, Deref, Getters)]
+pub struct Workspace {
+    #[deref]
+    paths: Paths,
+    backend: Backend,
     _lock: ProjectLock,
-    store: StateStoreHandle,
+    store: StoreHandle,
 }
 
-#[derive(Debug, Clone)]
-pub struct Layout {
-    pub root: PathBuf,
-    /// path-based unique identifier for the project
-    pub id: String,
-    /// per-project data directory
-    pub data: PathBuf,
+#[derive(Clone, Debug, Deref, Getters)]
+pub struct Project {
+    #[deref]
+    workspace: Workspace,
+    config: Config,
+    assistants: Arc<AssistantPool>,
 }
 
-impl Layout {
-    /// discover the project layout from the current working directory
-    pub fn discover() -> Result<Self> {
-        // TODO discover vs open? normalize across codebase
-        let repo = Repository::discover(".")?;
-        let root = repo
-            .workdir()
-            .context("cannot run inside a bare repository")?
-            .to_path_buf();
-        let id = Self::id(&root);
-        let data = DIRS.create_data_directory(&id)?;
-        Ok(Self { root, id, data })
-    }
-
-    fn id(root: &Path) -> String {
-        let name_prefix = root
-            .file_name()
-            .map(|name| format!("{}_", name.to_string_lossy()))
-            .unwrap_or_default();
-        let uuid = uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_URL,
-            root.to_string_lossy().as_bytes(),
-        )
-        .to_string();
-        format!("{name_prefix}{uuid}")
-    }
-}
-
-impl Project {
-    /// assemble a project from its already-acquired lock and started state writer
+impl Workspace {
     pub fn new(
-        config: Config,
-        layout: Layout,
+        paths: Paths,
+        backend: Backend,
         lock: ProjectLock,
-        store: StateStoreHandle,
+        store: StoreHandle,
     ) -> Self {
-        let backend = BackendKind::from_config(&config);
         Self {
-            layout,
+            paths,
             backend,
-            config,
             _lock: lock,
             store,
         }
     }
 
-    pub fn name(&self) -> String {
-        self.layout
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-    }
-
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-
-    pub fn store(&self) -> &StateStoreHandle {
-        &self.store
+    pub fn excluded_workdir_paths(&self) -> &[String] {
+        self.backend.excluded_workdir_paths()
     }
 
     pub async fn mount_agent(
@@ -111,22 +64,50 @@ impl Project {
         commit: &str,
         aid: &AgentId,
     ) -> Result<()> {
-        self.backend.mount_agent(&self.layout, commit, aid).await
-    }
-
-    pub async fn init(&self) -> Result<()> {
-        self.backend.init(&self.layout, self.config()).await
+        self.backend.mount_agent(&self.paths, commit, aid).await
     }
 
     pub async fn unmount_all(&self) -> Result<()> {
-        self.backend.unmount_all(&self.layout).await
+        self.backend.unmount_all(&self.paths).await
     }
 
-    pub fn agent_diff_root(
+    pub fn pin_base(
         &self,
         aid: &AgentId,
-    ) -> PathBuf {
-        self.backend.agent_diff_root(&self.layout, aid)
+        commit: &str,
+    ) -> Result<()> {
+        let repo = Repository::open(self.root())?;
+        repo.reference(
+            &self.base_ref(aid),
+            git2::Oid::from_str(commit)?,
+            true,
+            "inspect base",
+        )?;
+        Ok(())
+    }
+
+    pub async fn mint_spawn_base(
+        &self,
+        dst: &AgentId,
+        base: &str,
+        commit: &str,
+    ) -> Result<String> {
+        self.mount_agent(commit, dst).await?;
+        let this = self.clone();
+        let (dst, base) = (dst.clone(), base.to_string());
+        tokio::task::spawn_blocking(move || {
+            let tree =
+                crate::git::workdir_tree(&this.agent_workdir(&dst), this.excluded_workdir_paths())?;
+            let repo = Repository::open(this.root())?;
+            let tree = repo.find_tree(tree)?;
+            let parent = repo.find_commit(git2::Oid::from_str(&base)?)?;
+            let sig = git2::Signature::new("vicode", "vicode", &git2::Time::new(0, 0))?;
+            let oid = repo.commit(None, &sig, &sig, "spawn base", &tree, &[&parent])?;
+            let oid = oid.to_string();
+            this.pin_base(&dst, &oid)?;
+            Ok(oid)
+        })
+        .await?
     }
 
     pub fn sandbox_runner(
@@ -135,6 +116,87 @@ impl Project {
         gitdir: PathBuf,
     ) -> SandboxRunner {
         self.backend.sandbox_runner(cwd, gitdir)
+    }
+
+    pub async fn duplicate_agent_workdir(
+        &self,
+        src_aid: &AgentId,
+        dst_aid: &AgentId,
+        commit: &str,
+    ) -> Result<()> {
+        self.backend
+            .duplicate_agent_workdir(&self.paths, src_aid, dst_aid, commit)
+            .await
+    }
+
+    pub async fn unmount_agent(
+        &self,
+        aid: &AgentId,
+    ) -> Result<()> {
+        self.backend.unmount_agent(&self.paths, aid).await
+    }
+
+    pub async fn delete_agent_workdir(
+        &self,
+        aid: &AgentId,
+    ) -> Result<()> {
+        if self.agent(aid).exists() {
+            self.unmount_agent(aid).await?;
+            tokio::fs::remove_dir_all(self.agent(aid)).await?;
+        }
+        let repo = Repository::open(self.root())?;
+        let name = self.worktree_name(aid);
+        crate::git::prune_worktree(&repo, &name)?;
+        crate::git::delete_branch_if_exists(&repo, &name)?;
+        crate::git::delete_ref_if_exists(&repo, &self.base_ref(aid))?;
+        Ok(())
+    }
+
+    pub async fn delete_agent(
+        &self,
+        aid: &AgentId,
+    ) -> Result<()> {
+        self.delete_agent_workdir(aid).await?;
+        self.store.delete_agent(aid).await
+    }
+
+    pub async fn new_agent_workdir(
+        &self,
+        commit: &str,
+        aid: &AgentId,
+    ) -> Result<()> {
+        self.backend
+            .new_agent_workdir(&self.paths, commit, aid)
+            .await
+    }
+}
+
+impl Project {
+    pub fn new(
+        config: Config,
+        paths: Paths,
+        lock: ProjectLock,
+        store: StoreHandle,
+        assistants: Arc<AssistantPool>,
+    ) -> Self {
+        let backend = Backend::from_config(&config);
+        Self {
+            workspace: Workspace::new(paths, backend, lock, store),
+            config,
+            assistants,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.root()
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    }
+
+    pub async fn init(&self) -> Result<()> {
+        self.workspace.backend.init(&self.workspace.paths).await
     }
 
     pub async fn instructions(
@@ -153,53 +215,6 @@ impl Project {
         }
         Ok(collected)
     }
-
-    pub async fn duplicate_agent_workdir(
-        &self,
-        src_aid: &AgentId,
-        dst_aid: &AgentId,
-        commit: &str,
-        git: bool,
-    ) -> Result<()> {
-        self.backend
-            .duplicate_agent_workdir(&self.layout, src_aid, dst_aid, commit, git)
-            .await
-    }
-
-    pub async fn unmount_agent(
-        &self,
-        aid: &AgentId,
-    ) -> Result<()> {
-        self.backend.unmount_agent(&self.layout, aid).await
-    }
-
-    pub async fn delete_agent(
-        &self,
-        aid: &AgentId,
-        commit: &str,
-    ) -> Result<()> {
-        if self.agent(aid).exists() {
-            self.unmount_agent(aid).await?;
-            tokio::fs::remove_dir_all(self.agent(aid)).await?;
-        }
-        let repo = Repository::open(self.root())?;
-        let name = self.worktree_name(aid);
-        crate::git::prune_worktree(&repo, &name)?;
-        crate::git::delete_branch_if_at(&repo, &name, commit)?;
-        self.store.delete_agent(aid).await?;
-        Ok(())
-    }
-
-    pub async fn new_agent_workdir(
-        &self,
-        commit: &str,
-        aid: &AgentId,
-        git: bool,
-    ) -> Result<()> {
-        self.backend
-            .new_agent_workdir(&self.layout, commit, aid, git)
-            .await
-    }
 }
 
 #[cfg(test)]
@@ -207,18 +222,30 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
-    use crate::llm::provider::assistant::AssistantPool;
+    use crate::agent::router::graph::GraphRecord;
     use crate::project::lock::ProjectLock;
 
     impl Project {
-        pub fn new_test() -> Result<Self> {
-            use crate::project::backend::Cow;
+        /// fresh project on a temp git repo; the returned handle scripts the
+        /// fake pool's api. Cow-backed: tests generally shouldn't depend on
+        /// fuse-overlayfs availability
+        pub fn new_test() -> Result<(Self, Arc<crate::llm::provider::api::fake::FakeApi>)> {
+            let config = Config::test();
+            Self::new_test_backend(Backend::Cow(backend::Cow {
+                sandbox: config.sandbox.clone(),
+            }))
+        }
 
+        /// like `new_test` but on the real Overlay backend — for tests that
+        /// actually mount (gate on fuse availability before using)
+        pub fn new_test_overlay() -> Result<(Self, Arc<crate::llm::provider::api::fake::FakeApi>)> {
+            Self::new_test_backend(Backend::Overlay(backend::Overlay::test()))
+        }
+
+        fn new_test_backend(
+            backend: Backend
+        ) -> Result<(Self, Arc<crate::llm::provider::api::fake::FakeApi>)> {
             let config = Config::test();
             let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root)?;
@@ -229,113 +256,179 @@ mod tests {
             repo.commit(Some("HEAD"), &signature, &signature, "init", &tree, &[])?;
             let data = root.join(".vicode");
             std::fs::create_dir_all(&data)?;
-            let layout = Layout {
-                id: Layout::id(&root),
+            let paths = Paths {
+                id: Paths::derive_id(&root),
                 root,
                 data,
             };
-            // tests shouldn't depend on fuse-overlayfs availability
-            let backend = BackendKind::Cow(Cow {
-                sandbox: config.sandbox.clone(),
-            });
-            let _lock = ProjectLock::acquire(&layout)?;
-            let store = crate::project::state::StateStore::open(layout.state_db())?.into_handle();
-            Ok(Self {
-                layout,
-                backend,
-                config,
-                _lock,
-                store,
-            })
+            let lock = ProjectLock::acquire(&paths)?;
+            let store = crate::project::store::Store::open(paths.state_db())?.into_handle();
+            let (pool, api) = AssistantPool::fake();
+            Ok((
+                Self {
+                    workspace: Workspace::new(paths, backend, lock, store),
+                    config,
+                    assistants: Arc::new(pool),
+                },
+                api,
+            ))
         }
-    }
 
-    async fn agent_state(commit: String) -> AgentState {
-        let pool = ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
+        pub fn head_commit(&self) -> String {
+            Repository::open(self.root())
                 .unwrap()
-            })
-            .await;
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: pool.next_primary(),
-            max_depth: 1,
-            context: AgentContext {
-                commit,
-                history: History::new("".into()),
-            },
+                .head()
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .id()
+                .to_string()
         }
-    }
 
-    fn head_commit(project: &Project) -> String {
-        Repository::open(project.root())
-            .unwrap()
-            .head()
-            .unwrap()
-            .peel_to_commit()
-            .unwrap()
-            .id()
-            .to_string()
+        /// fake state anchored to the test repo's HEAD — worktree creation
+        /// needs a real commit
+        pub fn fake_state(&self) -> AgentState {
+            let mut state = AgentState::fake();
+            state.context.commit = self.head_commit();
+            state.context.base = state.context.commit.clone();
+            state
+        }
     }
 
     #[tokio::test]
-    async fn delete_agent_removes_workdir() {
-        let project = Project::new_test().unwrap();
+    async fn delete_agent_removes_workdir_git_objects_state_and_graph() {
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("delete-me".to_string());
-        let commit = head_commit(&project);
+        let commit = project.head_commit();
 
-        project
-            .new_agent_workdir(&commit, &aid, true)
-            .await
-            .unwrap();
+        project.new_agent_workdir(&commit, &aid).await.unwrap();
         project
             .store()
-            .save_agent(&aid, &agent_state(commit.clone()).await)
+            .save_state(&aid, &AgentState::fake())
             .await
+            .unwrap();
+        let record = GraphRecord {
+            root: aid.clone(),
+            parent: None,
+            archived: false,
+        };
+        project.store().save_graph(&aid, &record).await.unwrap();
+        let repo = Repository::open(project.root()).unwrap();
+        repo.reference(
+            &project.base_ref(&aid),
+            git2::Oid::from_str(&commit).unwrap(),
+            false,
+            "test",
+        )
+        .unwrap();
+        // the agent committed: the branch moved off its base — deleted anyway
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let moved = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "agent work",
+                &head.tree().unwrap(),
+                &[&head],
+            )
+            .unwrap();
+        repo.find_reference(&format!("refs/heads/{}", project.worktree_name(&aid)))
+            .unwrap()
+            .set_target(moved, "test")
             .unwrap();
 
         assert!(project.agent(&aid).exists());
 
-        project.delete_agent(&aid, &commit).await.unwrap();
+        project.delete_agent(&aid).await.unwrap();
 
         assert!(!project.agent(&aid).exists());
-        assert_eq!(head_commit(&project), commit);
+        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
+        assert!(
+            repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
+                .is_err()
+        );
+        assert_eq!(project.head_commit(), commit);
+        assert!(project.store().load_state(&aid).await.is_err());
+        assert!(
+            !project
+                .store()
+                .load_graph()
+                .await
+                .unwrap()
+                .contains_key(&aid)
+        );
+    }
+
+    /// a failed spawn's rollback leaves no git residue: workdir, worktree
+    /// registration, branch and base ref all gone
+    #[tokio::test]
+    async fn delete_agent_workdir_leaves_no_git_residue() {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("workdir-me".to_string());
+        let commit = project.head_commit();
+
+        project.new_agent_workdir(&commit, &aid).await.unwrap();
+        let repo = Repository::open(project.root()).unwrap();
+        repo.reference(
+            &project.base_ref(&aid),
+            git2::Oid::from_str(&commit).unwrap(),
+            false,
+            "test",
+        )
+        .unwrap();
+
+        project.delete_agent_workdir(&aid).await.unwrap();
+
+        assert!(!project.agent(&aid).exists());
+        assert!(repo.find_worktree(&project.worktree_name(&aid)).is_err());
+        assert!(
+            repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
+                .is_err()
+        );
+        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
+    }
+
+    /// `vc-*` is a reserved namespace: a colliding branch is crash residue
+    /// and spawn reclaims it by force instead of failing
+    #[tokio::test]
+    async fn spawn_reclaims_residue_branch() {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("residue".to_string());
+        let commit = project.head_commit();
+        let repo = Repository::open(project.root()).unwrap();
+        // residue pointing off the spawn target
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        let stale = repo
+            .commit(None, &sig, &sig, "residue", &head.tree().unwrap(), &[&head])
+            .unwrap();
+        repo.branch(
+            &project.worktree_name(&aid),
+            &repo.find_commit(stale).unwrap(),
+            false,
+        )
+        .unwrap();
+
+        project.new_agent_workdir(&commit, &aid).await.unwrap();
+
+        let branch = repo
+            .find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
+            .unwrap();
+        assert_eq!(branch.get().target().unwrap().to_string(), commit);
     }
 
     #[test]
     fn project_holds_lock_until_dropped() {
-        let project = Project::new_test().unwrap();
-        let layout = Layout {
+        let project = Project::new_test().unwrap().0;
+        let paths = Paths {
             root: project.root().to_path_buf(),
             id: project.id().into(),
             data: project.data().to_path_buf(),
         };
 
-        let err = ProjectLock::acquire(&layout).unwrap_err();
+        let err = ProjectLock::acquire(&paths).unwrap_err();
         assert_eq!(
             err.to_string(),
             format!(
@@ -346,6 +439,17 @@ mod tests {
         );
 
         drop(project);
-        let _lock = ProjectLock::acquire(&layout).unwrap();
+        // flock releases on close, but a subprocess forked by a concurrent
+        // test briefly inherits the fd until its exec: poll out the window
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let _lock = loop {
+            match ProjectLock::acquire(&paths) {
+                Ok(lock) => break lock,
+                Err(e) if std::time::Instant::now() >= deadline => {
+                    panic!("lock never released: {e}")
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        };
     }
 }
