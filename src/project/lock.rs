@@ -10,7 +10,7 @@ use anyhow::Result;
 use fs4::FileExt;
 use fs4::TryLockError;
 
-use crate::project::layout::LayoutTrait;
+use crate::project::Paths;
 
 #[must_use = "should be kept throughout the lifetime of the app"]
 #[derive(Clone, Debug)]
@@ -19,14 +19,14 @@ pub struct ProjectLock {
 }
 
 impl ProjectLock {
-    pub fn acquire(layout: &impl LayoutTrait) -> Result<Self> {
+    pub fn acquire(paths: &Paths) -> Result<Self> {
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(layout.project_lock())?;
-        let project_id = layout.id();
+            .open(paths.project_lock())?;
+        let project_id = paths.id();
         match FileExt::try_lock(&file) {
             Ok(()) => {
                 write_pid(&mut file)?;
@@ -40,7 +40,7 @@ impl ProjectLock {
             }
             Err(TryLockError::Error(err)) => {
                 let err: anyhow::Error = err.into();
-                Err(err.context("failed to acquire project lock for {project}"))
+                Err(err.context(format!("failed to acquire project lock for {project_id}")))
             }
         }
     }
@@ -71,21 +71,21 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::project::Layout;
+    use crate::project::Paths;
 
     #[test]
     fn second_lock_reports_project_and_pid() {
         let root = std::env::temp_dir().join(format!("vicode-lock-{}", uuid::Uuid::new_v4()));
         let data = root.join(".vicode");
         std::fs::create_dir_all(&data).unwrap();
-        let layout = Layout {
+        let paths = Paths {
             root,
             id: "test-project".into(),
             data,
         };
 
-        let _lock = ProjectLock::acquire(&layout).unwrap();
-        let err = ProjectLock::acquire(&layout).unwrap_err();
+        let _lock = ProjectLock::acquire(&paths).unwrap();
+        let err = ProjectLock::acquire(&paths).unwrap_err();
         let msg = err.to_string();
 
         assert_eq!(

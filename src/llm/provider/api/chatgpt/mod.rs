@@ -2,12 +2,12 @@ pub mod auth;
 pub mod cli;
 pub mod error;
 pub mod stream;
+pub mod tokens;
 
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
 pub use auth::ChatgptAuthManager;
-pub use auth::provider_auth;
 use tokio::sync::OwnedSemaphorePermit;
 
 use crate::agent::tool::registry::ToolRegistry;

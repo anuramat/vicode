@@ -93,8 +93,7 @@ mod tests {
     #[test]
     fn counts_tool_call_arguments_and_output_tokens() {
         let call = tool_call(Some(Ok(BashResult {
-            stdout: "hello\n".into(),
-            stderr: String::new(),
+            output: "hello\n".into(),
             exit_status: None,
             signal: None,
         })));

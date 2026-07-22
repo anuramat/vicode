@@ -1,67 +1,38 @@
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
-use crate::agent::handle::AgentEvent;
-use crate::agent::task::manager::TaskId;
+use crate::agent::event::AgentEvent;
+use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::HistoryGeneration;
-use crate::llm::history::HistoryUpdate;
 
-#[derive(Clone)]
-pub struct TaskHandle {
-    tid: TaskId,
-    generation: HistoryGeneration,
+/// a task's line back to its agent: the turn's stream events, or a tool's
+/// output chunks
+#[derive(Clone, Debug)]
+pub struct TaskSink {
+    id: TaskId,
     tx: Sender<AgentEvent>,
 }
 
-#[derive(Clone)]
-pub struct TurnHandle {
-    pub task: TaskHandle,
-    pub turn_type: TurnType,
-}
+impl TaskSink {
+    pub fn new(
+        id: TaskId,
+        tx: Sender<AgentEvent>,
+    ) -> Self {
+        Self { id, tx }
+    }
 
-#[derive(Debug, Clone, Copy)]
-pub enum TurnType {
-    Default,
-    Compact,
-}
-
-impl TurnHandle {
-    pub async fn send(
+    pub async fn stream(
         &self,
         event: AssistantEvent,
     ) -> Result<()> {
-        match self.turn_type {
-            TurnType::Default => self.task.send(HistoryUpdate::TurnResponse(event)).await,
-            TurnType::Compact => self.task.send(HistoryUpdate::CompactResponse(event)).await,
-        }
-    }
-}
-
-impl TaskHandle {
-    pub fn new(
-        tid: TaskId,
-        generation: HistoryGeneration,
-        tx: Sender<AgentEvent>,
-    ) -> Self {
-        Self {
-            tid,
-            generation,
-            tx,
-        }
-    }
-
-    pub async fn send(
-        &self,
-        event: HistoryUpdate,
-    ) -> Result<()> {
-        self.tx
-            .send(AgentEvent::TaskEvent(
-                self.tid.clone(),
-                self.generation,
-                event,
-            ))
-            .await?;
+        self.tx.send(AgentEvent::Stream(self.id, event)).await?;
         Ok(())
+    }
+
+    pub async fn output(
+        &self,
+        chunk: String,
+    ) {
+        drop(self.tx.send(AgentEvent::Output(self.id, chunk)).await);
     }
 }

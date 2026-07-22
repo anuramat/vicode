@@ -32,20 +32,12 @@ impl History {
         messages
     }
 
-    pub fn subagent(
-        &self,
-        inherit_context: bool,
-    ) -> Self {
-        let messages = if inherit_context {
-            self.subagent_messages()
-        } else {
-            Vec::new()
-        };
+    pub fn subagent(&self) -> Self {
         Self {
             instructions: self.instructions.clone(),
             generation: 0,
             activity: Activity::Normal {
-                state: messages.into(),
+                state: self.subagent_messages().into(),
             },
             archive: Vec::new(),
         }
@@ -126,7 +118,7 @@ mod tests {
             panic!("expected normal turn");
         }
 
-        let child = history.subagent(true);
+        let child = history.subagent();
 
         assert_eq!(child.generation(), 0);
         insta::assert_yaml_snapshot!(

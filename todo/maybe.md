@@ -10,4 +10,4 @@
   - or just let it ask the other agent (or its compacted version)
 - btw command -- clone current history mid turn, prompt, show output as a notification or smth
 - workflows with tail compaction -- i.e. agent starts a task at (1), ends at (2), and span (1-2) gets compacted
-- better load balancing strategy than round robin for assistants
+- provider-aware assistant load balancing, if fixed selection becomes a bottleneck
