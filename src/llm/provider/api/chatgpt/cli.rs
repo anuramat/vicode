@@ -1,7 +1,7 @@
+use anyhow::Context;
 use anyhow::Result;
 
 use super::ChatgptAuthManager;
-use super::provider_auth;
 use crate::config::Config;
 
 #[derive(clap::Subcommand)]
@@ -46,6 +46,13 @@ impl ChatgptCommand {
 
 fn auth_manager(provider_id: &str) -> Result<ChatgptAuthManager> {
     let config = Config::load()?;
-    provider_auth(&config, provider_id)?;
+    let provider = config
+        .providers
+        .get(provider_id)
+        .with_context(|| format!("unknown provider '{provider_id}'"))?;
+    anyhow::ensure!(
+        provider.is_chatgpt(),
+        "provider '{provider_id}' is not configured with auth = \"chatgpt\""
+    );
     ChatgptAuthManager::new(provider_id)
 }

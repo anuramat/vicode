@@ -19,6 +19,7 @@ pub enum AssistantEvent {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub enum HistoryUpdate {
     CompactStart(CompactStart),
     CompactAbort,
@@ -28,6 +29,12 @@ pub enum HistoryUpdate {
     UserMessage(UserMessage),
     DeveloperMessage(DeveloperMessage),
     Pop(usize),
+    // TODO expand etc
+    /// abort etc
+    ToolCallFailed {
+        call_id: String,
+        error: String,
+    },
 }
 
 impl AssistantEvent {

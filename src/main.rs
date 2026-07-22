@@ -7,6 +7,7 @@ mod agent;
 mod cli;
 mod config;
 mod deps;
+mod diff;
 mod git;
 mod id;
 mod llm;
