@@ -33,13 +33,6 @@ const SCHEMA_FILENAME: &str = "schema.json";
 
 pub static DIRS: std::sync::LazyLock<BaseDirectories> =
     std::sync::LazyLock::new(|| BaseDirectories::with_prefix(XDG_DIRNAME));
-pub static INSTRUCTIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    let filepath = DIRS.place_config_file(INSTRUCTIONS_FILENAME).unwrap();
-    if !filepath.exists() {
-        std::fs::write(&filepath, DEFAULT_INSTRUCTIONS).unwrap();
-    }
-    std::fs::read_to_string(filepath).unwrap()
-});
 
 #[derive(Deserialize, Debug, Clone, Copy, SmartDefault, Serialize, JsonSchema)]
 #[serde(default)]
@@ -52,9 +45,11 @@ pub struct LayoutConfig {
     pub message_width: u16,
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
-pub struct CompactConfig {
-    /// context window percentage, at which we compact the context, threshold < 100
+#[derive(Deserialize, Debug, Clone, Copy, SmartDefault, Serialize, JsonSchema)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// context window percentage, at which we start compacting the context in the background,
+    /// while the turns go on
     #[default = 80]
     pub threshold: usize,
     /// context window percentage to compact to
@@ -62,6 +57,11 @@ pub struct CompactConfig {
     /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
     #[default = 20]
     pub target: usize,
+    /// context window percentage, past which turns never start instead of risking a context
+    /// overflow: they wait for a compaction; at least `threshold`, and equal to it makes
+    /// compaction blocking
+    #[default = 95]
+    pub hard_limit: usize,
 }
 
 pub fn expand_vec<I>(values: I) -> Vec<String>
@@ -116,24 +116,21 @@ pub struct Config {
     // #[schemars(with = "HashMap<String, AssistantConfig>")]
     pub assistants: IndexMap<String, AssistantConfig>,
 
-    // TODO maybe collapse into a struct or something?
-    /// list of assistants for new tabs (round robin)
-    pub primary_assistant: Vec<String>,
-    /// if empty, inherits from its parent
-    pub subagent_assistant: Vec<String>,
+    /// assistant for new tabs
+    pub primary_assistant: String,
+    /// if unset, inherits from its parent
+    pub subagent_assistant: Option<String>,
 
     #[serde(default)]
     pub keymap: Keymap,
 
     #[default("git -c color.status=always status --short")]
     pub info_cmd: String,
-    pub compact: CompactConfig,
+    pub compaction: CompactionConfig,
 
-    /// Max subagent recursion depth. Primary agents start at this value; each
-    /// subagent inherits parent_depth - 1. Agents at depth 0 can't spawn
-    /// subagents (the subagent tool is hidden from them).
-    #[default = 1]
-    pub subagent_max_depth: u32,
+    /// global instructions, read from their own file in the config dir
+    #[serde(skip)]
+    pub instructions: String,
 }
 
 impl std::fmt::Display for Config {
@@ -150,48 +147,49 @@ impl std::fmt::Display for Config {
 }
 
 impl Config {
-    // TODO check if schema is up to date, rewrite if not
     fn put_schema() -> Result<()> {
         let filepath = DIRS.place_config_file(SCHEMA_FILENAME)?;
-        if !filepath.exists() {
-            let schema = schema_for!(Self);
-            std::fs::write(&filepath, serde_json::to_string_pretty(&schema)?).with_context(
-                || format!("failed to write config schema to {}", filepath.display()),
-            )?;
+        let schema = serde_json::to_string_pretty(&schema_for!(Self))?;
+        if std::fs::read_to_string(&filepath).is_ok_and(|old| old == schema) {
+            return Ok(());
         }
+        std::fs::write(&filepath, schema)
+            .with_context(|| format!("failed to write config schema to {}", filepath.display()))?;
         Ok(())
     }
 
     pub fn load() -> Result<Self> {
         Self::put_schema()?;
-        let filepath = DIRS.place_config_file(CONFIG_FILENAME)?;
-        if !filepath.exists() {
-            // TODO use tokio fs when we stop using lazy_static
-            std::fs::write(&filepath, DEFAULT_CONFIG).with_context(|| {
-                format!("failed to write default config to {}", filepath.display())
-            })?;
-        }
-        let s = std::fs::read_to_string(&filepath)
-            .with_context(|| format!("failed to read config file at {}", filepath.display()))?;
-        Self::parse_with_defaults(&s)
+        let mut config =
+            Self::parse_with_defaults(&read_or_init(CONFIG_FILENAME, DEFAULT_CONFIG)?)?;
+        config.instructions = read_or_init(INSTRUCTIONS_FILENAME, DEFAULT_INSTRUCTIONS)?;
+        Ok(config)
     }
 
     pub fn parse_with_defaults(s: &str) -> Result<Self> {
         use crate::sandbox::Sandbox;
 
         let mut config: Self = toml::from_str(s)?;
+        // normalize paths
+        for path in &mut config.shared {
+            *path = path
+                .trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_string();
+        }
         config.keymap.merge_default();
         config.sandbox.merge_default();
         config.validate()?;
         Ok(config)
     }
 
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self::parse_with_defaults(DEFAULT_CONFIG).unwrap()
-    }
-
     fn validate(&self) -> Result<()> {
+        for path in &self.shared {
+            anyhow::ensure!(
+                std::path::Path::new(path).is_relative(),
+                "shared path must be relative to project root: {path:?}"
+            );
+        }
         for (id, assistant) in &self.assistants {
             anyhow::ensure!(
                 self.providers.contains_key(&assistant.provider),
@@ -199,27 +197,45 @@ impl Config {
                 assistant.provider
             );
         }
+        // below the threshold, nothing would compact the turns back under it
+        anyhow::ensure!(
+            self.compaction.hard_limit >= self.compaction.threshold,
+            "compaction.hard_limit must be at least compaction.threshold"
+        );
 
         self.validate_assistant(&self.primary_assistant)?;
-        if !self.subagent_assistant.is_empty() {
-            self.validate_assistant(&self.subagent_assistant)?;
+        if let Some(assistant) = &self.subagent_assistant {
+            self.validate_assistant(assistant)?;
         }
         Ok(())
     }
 
     fn validate_assistant(
         &self,
-        assistant: &Vec<String>,
+        assistant: &str,
     ) -> Result<()> {
         anyhow::ensure!(!assistant.is_empty(), "assistant must not be empty");
-        for id in assistant {
-            anyhow::ensure!(
-                self.assistants.contains_key(id),
-                "unknown assistant '{id:?}'"
-            );
-        }
+        anyhow::ensure!(
+            self.assistants.contains_key(assistant),
+            "unknown assistant '{assistant:?}'"
+        );
         Ok(())
     }
+}
+
+/// a file in the config dir, created with `default` contents if missing
+fn read_or_init(
+    filename: &str,
+    default: &str,
+) -> Result<String> {
+    let filepath = DIRS.place_config_file(filename)?;
+    if !filepath.exists() {
+        // TODO use tokio fs when we stop using lazy_static
+        std::fs::write(&filepath, default)
+            .with_context(|| format!("failed to write default {}", filepath.display()))?;
+    }
+    std::fs::read_to_string(&filepath)
+        .with_context(|| format!("failed to read {}", filepath.display()))
 }
 
 #[cfg(test)]
@@ -228,6 +244,15 @@ mod tests {
 
     use super::*;
 
+    impl Config {
+        pub fn test() -> Self {
+            Self {
+                instructions: DEFAULT_INSTRUCTIONS.to_string(),
+                ..Self::parse_with_defaults(DEFAULT_CONFIG).unwrap()
+            }
+        }
+    }
+
     #[test]
     fn parses_default_config() {
         let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
@@ -235,10 +260,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_absolute_shared_path() {
+        let mut config = Config::test();
+        config.shared = vec!["/etc".into()];
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("relative"));
+    }
+
+    #[test]
+    fn rejects_hard_limit_below_threshold() {
+        let mut config = Config::test();
+        config.compaction.threshold = 80;
+        config.compaction.hard_limit = 79;
+        insta::assert_snapshot!(config.validate().unwrap_err(), @"compaction.hard_limit must be at least compaction.threshold");
+        config.compaction.hard_limit = 80;
+        config.validate().unwrap();
+    }
+
+    #[test]
     fn rejects_unknown_assistant_reference() {
         let err = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["missing"]
+            primary_assistant = "missing"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -280,7 +323,7 @@ mod tests {
     fn clear_keymap_replaces_defaults() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
 
             [sandbox]
             kind = "bwrap"
@@ -317,7 +360,7 @@ mod tests {
     fn parses_chatgpt_provider() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]
@@ -355,7 +398,7 @@ mod tests {
         ] {
             let toml = format!(
                 r#"
-                primary_assistant = ["fast"]
+                primary_assistant = "fast"
                 shell_cmd = ["bash", "-c"]
 
                 [sandbox]
@@ -384,7 +427,7 @@ mod tests {
     fn parses_multiple_chatgpt_providers() {
         let config = Config::parse_with_defaults(
             r#"
-            primary_assistant = ["fast"]
+            primary_assistant = "fast"
             shell_cmd = ["bash", "-c"]
 
             [sandbox]

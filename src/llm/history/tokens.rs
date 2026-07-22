@@ -23,6 +23,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+    use crate::agent::tool::generic::ToolOutcome;
     use crate::llm::history::message::AssistantItem;
     use crate::llm::history::message::AssistantMessage;
     use crate::llm::history::message::Message;
@@ -34,13 +35,14 @@ mod tests {
     use crate::tools::bash::BashCall;
     use crate::tools::bash::BashResult;
 
-    fn tool_call(output: Option<anyhow::Result<BashResult, String>>) -> ToolCallItem {
+    fn tool_call(output: Option<ToolOutcome<BashResult>>) -> ToolCallItem {
         ToolCallItem {
             id: Some("call_1".into()),
             call_id: "call_1".into(),
             started_at: 0,
             ended_at: None,
             ready_at: None,
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(BashCall {
                 arguments: Some(BashArguments {
@@ -92,9 +94,8 @@ mod tests {
 
     #[test]
     fn counts_tool_call_arguments_and_output_tokens() {
-        let call = tool_call(Some(Ok(BashResult {
-            stdout: "hello\n".into(),
-            stderr: String::new(),
+        let call = tool_call(Some(ToolOutcome::ok(BashResult {
+            output: "hello\n".into(),
             exit_status: None,
             signal: None,
         })));

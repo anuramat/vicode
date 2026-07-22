@@ -15,6 +15,6 @@ pub struct ArchivedHistory {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ArchivedHistoryReason {
-    Compact,
+    Compaction,
     Undo,
 }

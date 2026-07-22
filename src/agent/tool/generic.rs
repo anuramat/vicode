@@ -61,4 +61,30 @@ where
             }
         }
     }
+
+    fn fail_unresolved(
+        &mut self,
+        msg: &str,
+    ) -> bool {
+        let unresolved = self.output.is_none();
+        if unresolved {
+            self.output = Some(Err(msg.to_string()));
+        }
+        unresolved
+    }
+
+    fn inherit_history(&self) -> bool {
+        self.arguments
+            .as_ref()
+            .is_some_and(Function::inherit_history)
+    }
+
+    fn compose(
+        &mut self,
+        streamed: String,
+    ) {
+        if let Some(Ok(result)) = &mut self.output {
+            TArgs::compose(result, streamed);
+        }
+    }
 }

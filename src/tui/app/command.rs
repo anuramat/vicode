@@ -15,13 +15,11 @@ impl<'a> App<'a> {
         command: Command,
     ) -> Result<()> {
         match command.name {
-            CommandName::AssistantNext => self.selected_tab()?.cycle_assistant(false).await?,
-            CommandName::AssistantPrev => self.selected_tab()?.cycle_assistant(true).await?,
+            CommandName::AssistantNext => self.selected_tab()?.cycle_assistant(false)?,
+            CommandName::AssistantPrev => self.selected_tab()?.cycle_assistant(true)?,
             CommandName::CmdlineEnter => self.cmdline.input.set_focus(true),
             CommandName::Compact => {
-                self.selected_tab_mut()?
-                    .compact(command.args.as_deref())
-                    .await?;
+                self.selected_tab_mut()?.compact(command.args.as_deref())?;
             }
             CommandName::CompletionCancel => self.active_input()?.completion_cancel(),
             CommandName::CompletionNext => self.active_input()?.completion_next(),
@@ -36,18 +34,15 @@ impl<'a> App<'a> {
                 self.selected_tab_mut()?
                     .paste(&command.args.unwrap_or_default());
             }
-            CommandName::MsgUndo => self.selected_tab_mut()?.undo(1).await?,
-            CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user().await?,
+            CommandName::MsgUndo => self.selected_tab_mut()?.undo(1)?,
+            CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user()?,
             CommandName::Quit => self.should_exit = true,
-            CommandName::RefreshInfo => self.selected_tab_mut()?.refresh_info().await?,
+            CommandName::RefreshInfo => self.refresh(),
             CommandName::Scroll => {
                 let op: ScrollOp = parse_arg(command.args.as_deref())?
                     .ok_or_else(|| anyhow::anyhow!("missing argument"))?;
                 self.scroll(op)?;
             }
-            CommandName::SetMultiplier => self
-                .selected_tab_mut()?
-                .set_multiplier(command.args.as_deref())?,
             CommandName::TabArchive => self.archive_tab().await?,
             CommandName::TabDuplicate => self.duplicate_tab().await?,
             CommandName::TabNew => self.new_tab().await?,
@@ -85,8 +80,8 @@ impl<'a> App<'a> {
                 self.ctx.hide_tools = !self.ctx.hide_tools;
                 self.notify_hide(self.ctx.hide_tools, "tool calls");
             }
-            CommandName::TurnAbort => self.selected_tab_mut()?.abort().await?,
-            CommandName::TurnRetry => self.selected_tab_mut()?.retry().await?,
+            CommandName::TurnAbort => self.selected_tab_mut()?.abort()?,
+            CommandName::TurnRetry => self.selected_tab_mut()?.retry()?,
             CommandName::None => {}
         }
         Ok(())
@@ -98,7 +93,7 @@ impl<'a> App<'a> {
             // TODO can we avoid this somehow? recursive call requires pin; maybe make this a non-command?
             Box::pin(self.execute(command)).await
         } else {
-            self.selected_tab_mut()?.submit().await
+            self.selected_tab_mut()?.submit()
         }
     }
 
@@ -198,66 +193,23 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
-    use crate::config::Config;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
+    use crate::tui::tab::TabRuntime;
     use crate::tui::widgets::input::CompletionItem;
     use crate::tui::widgets::input::CompletionSource;
     use crate::tui::widgets::input::Input;
     use crate::tui::widgets::input::InputOpts;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
     #[tokio::test]
     async fn completion_commands_target_tab_in_insert_mode() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone());
         let aid = AgentId::from("tab".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         let mut tab = Tab::new(
-            Some(crate::agent::router::AgentRouter::test_handle()),
+            TabRuntime::Live(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             state,
             &project,
@@ -296,25 +248,17 @@ mod tests {
 
     #[tokio::test]
     async fn tab_focus_owns_contextual_scroll_commands() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
-            Default::default(),
-        );
+        let mut app = App::new(crate::project::Project::new_test().unwrap().0);
         let project = app.project.clone();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| {
                 let aid = AgentId::from(id.to_string());
-                (aid.clone(), Tab::new(None, aid, state.clone(), &project))
+                (
+                    aid.clone(),
+                    Tab::new(TabRuntime::Pending, aid, state.clone(), &project),
+                )
             })
             .collect();
         app.focus = AppFocus::Body;

@@ -1,209 +1,139 @@
-pub mod compact;
+pub mod event;
 pub mod handle;
 pub mod id;
 pub mod init;
-#[cfg(test)]
 mod loop_tests;
 pub mod router;
 pub mod run;
-pub mod subagent;
 pub mod task;
 pub mod tool;
 pub mod turn;
 
-use derive_more::Display;
+use std::fmt::Display;
+use std::sync::Arc;
+
+use derive_more::From;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ParentEvent;
-use crate::agent::handle::TurnResult;
-use crate::agent::router::AgentRouterHandle;
-use crate::agent::task::manager::AgentTaskManager;
-use crate::agent::tool::registry::ToolRegistry;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
+use crate::agent::router::Router;
+use crate::agent::task::Tasks;
 use crate::forward;
+use crate::llm::history::Compaction;
 use crate::llm::history::History;
-use crate::llm::history::TurnStatus;
+use crate::llm::history::HistoryUpdate;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::PeerMessage;
+use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
+use crate::tui::app::AppEvent;
 
 #[derive(Debug)]
 pub struct Agent {
-    pub project: Project,
+    pub tx: UnboundedSender<AgentEvent>,
+    pub rx: UnboundedReceiver<AgentEvent>,
+
     pub id: AgentId,
     pub state: AgentState,
-    pub assistant: Assistant,
-    /// router handle for spawning/submitting siblings and children
-    pub router: AgentRouterHandle,
-    /// pending oneshot for the current turn (set by `Submit` callers that want completion)
-    pub pending_done: Option<oneshot::Sender<TurnResult>>,
-    // agent event loop
-    pub tx: Sender<AgentEvent>,
-    pub rx: Receiver<AgentEvent>,
-    /// manages jobs in the agent event loop
-    pub tskmgr: AgentTaskManager,
-    pub tools: ToolRegistry,
+    /// state has changed since last persisted
+    dirty: bool,
+
+    pub needs_turn: bool,
+    pub tasks: Tasks,
+    pub compaction: Option<Result<Compaction, String>>,
+
+    /// other agents
+    pub router: Arc<Router>,
+    /// ui updates
+    pub app_tx: UnboundedSender<AppEvent>,
+
+    pub project: Project,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentState {
-    /// last emitted status for deduplication of status updates
-    #[serde(skip)]
-    pub status: AgentStatus,
-    /// TODO rename to assistant_id?
-    pub assistant: String,
-    /// Remaining subagent-spawn budget. 0 means this agent cannot spawn
-    /// subagents; the subagent tool is filtered out at construction.
-    pub max_depth: u32,
-    pub context: AgentContext,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Display)]
-pub enum AgentStatus {
-    Normal(TurnStatus),
-    #[display("compacting: {_0}")]
-    Compact(TurnStatus),
-}
-
-impl Default for AgentStatus {
-    fn default() -> Self {
-        Self::Normal(TurnStatus::Idle)
-    }
-}
-
-impl AgentStatus {
-    pub fn turn(&self) -> &TurnStatus {
-        match self {
-            Self::Normal(t) | Self::Compact(t) => t,
-        }
-    }
-
-    pub fn idle(&self) -> bool {
-        !matches!(self.turn(), TurnStatus::InProgress)
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self.turn() {
-            TurnStatus::InProgress => "+",
-            TurnStatus::Idle => " ",
-            TurnStatus::Failed(_) => "!",
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct AgentContext {
+    pub assistant_id: String,
+    // TODO this is overlay specific, we should probably move it somewhere else
+    /// snapshot commit that the overlay uses as the lowerdir
     pub commit: String,
     pub history: History,
+    /// inbound messages buffered while busy
+    pub pending_messages: Vec<PendingMessage>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, From)]
+pub enum PendingMessage {
+    User(UserMessage),
+    Peer(PeerMessage),
+}
+
+impl From<PendingMessage> for HistoryUpdate {
+    fn from(msg: PendingMessage) -> Self {
+        match msg {
+            PendingMessage::User(m) => Self::UserMessage(m),
+            PendingMessage::Peer(m) => Self::DeveloperMessage(DeveloperMessage::Peer(m)),
+        }
+    }
 }
 
 impl Agent {
     forward! {
-        history: History = self.state.context.history;
+        history: History = self.state.history;
     }
 
-    pub async fn emit(
+    pub fn emit(
         &self,
-        event: ParentEvent,
-    ) -> anyhow::Result<()> {
-        self.router
-            .app_tx()
-            .send(crate::tui::app::AppEvent::ParentEvent(
-                self.id.clone(),
-                event,
-            ))
-            .await?;
-        Ok(())
+        event: UiEvent,
+    ) {
+        drop(self.app_tx.send(AppEvent::Agent(self.id.clone(), event)));
+    }
+
+    /// log an error and show it in the agent's tab
+    pub fn report_error(
+        &self,
+        error: impl Display,
+    ) {
+        tracing::error!("agent {}: {error:#}", self.id);
+        self.emit(UiEvent::Error(format!("{error:#}")));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use similar_asserts::assert_eq;
+    use std::sync::Arc;
 
     use super::*;
-    use crate::config::Config;
-    use crate::llm::provider::assistant::AssistantPool;
+    use crate::llm::provider::api::fake::FakeApi;
+    use crate::tui::app::AppEvent;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
+    impl AgentState {
+        /// state on the fake pool's `"test"` assistant
+        pub fn fake() -> Self {
+            Self::new("test".into(), "".into(), "".into())
+        }
     }
 
-    #[tokio::test]
-    async fn status_is_not_persisted() {
-        let state = AgentState {
-            assistant: assistant().await.id,
-            status: AgentStatus::Normal(TurnStatus::Failed("oops".into())),
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
-
-        let serialized = serde_json::to_value(&state).unwrap();
-        assert!(serialized.get("status").is_none());
-
-        crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                        primary_assistant = ["test"]
-                        shell_cmd = ["bash", "-c"]
-
-                        [sandbox]
-                        kind = "bwrap"
-                        bin = "bwrap"
-                        args = []
-                        stages = []
-
-                        [providers.main]
-                        api = "responses"
-                        base_url = "https://api.example.com/v1"
-
-                        [assistants.test]
-                        provider = "main"
-                        model = "gpt-test"
-                        "#,
-                    )
-                    .unwrap(),
-                )
+    impl Agent {
+        /// agent on a fresh test project with a real router (so status reports
+        /// land in a live graph), on the pool's scripted api; the receiver
+        /// gets the agent's UI events
+        pub async fn fake(name: &str) -> (Self, Arc<FakeApi>, UnboundedReceiver<AppEvent>) {
+            let (project, api) = Project::new_test().unwrap();
+            let aid = AgentId::from(format!("{name}-{}", uuid::Uuid::new_v4()));
+            tokio::fs::create_dir_all(project.agent(&aid))
                 .await
-                .unwrap()
-            })
-            .await;
-        let restored: AgentState = serde_json::from_value(serialized).unwrap();
-        assert_eq!(restored.status, AgentStatus::default());
+                .unwrap();
+            let (app_tx, app_rx) = tokio::sync::mpsc::unbounded_channel();
+            let router = router::Router::new(app_tx, project.clone());
+            let state = project.fake_state();
+            let agent = Self::new(router, aid, state);
+            (agent, api, app_rx)
+        }
     }
 }

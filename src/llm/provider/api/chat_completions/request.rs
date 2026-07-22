@@ -227,6 +227,7 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::messages;
+    use crate::agent::tool::generic::ToolOutcome;
     use crate::llm::history::message::AssistantItem;
     use crate::llm::history::message::AssistantMessage;
     use crate::llm::history::message::Message;
@@ -241,9 +242,8 @@ mod tests {
             arguments: Some(BashArguments {
                 command: "echo hello".into(),
             }),
-            output: Some(Ok(BashResult {
-                stdout: "hello\n".into(),
-                stderr: String::new(),
+            output: Some(ToolOutcome::ok(BashResult {
+                output: "hello\n".into(),
                 exit_status: None,
                 signal: None,
             })),
@@ -257,6 +257,7 @@ mod tests {
                 started_at: 1,
                 ended_at: Some(2),
                 ready_at: Some(3),
+                streamed: String::new(),
                 token_count: 0,
                 task: Box::new(task),
             })
@@ -281,7 +282,7 @@ mod tests {
             ]
           },
           {
-            "content": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "content": "{\"output\":\"hello\\n\",\"exit_status\":null,\"signal\":null}",
             "role": "tool",
             "tool_call_id": "call_1"
           }

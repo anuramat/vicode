@@ -46,6 +46,7 @@ impl TryFrom<ChatCompletionMessageToolCalls> for ToolCallItem {
                     started_at: now(),
                     ended_at: None,
                     ready_at: None,
+                    streamed: String::new(),
                     token_count: 0,
                     task,
                 })

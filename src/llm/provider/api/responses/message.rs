@@ -78,6 +78,7 @@ mod tests {
     use async_openai::types::responses::FunctionToolCall;
     use similar_asserts::assert_eq;
 
+    use crate::agent::tool::generic::ToolOutcome;
     use crate::llm::history::message::*;
     use crate::tools::bash::BashArguments;
     use crate::tools::bash::BashCall;
@@ -89,9 +90,8 @@ mod tests {
             arguments: Some(BashArguments {
                 command: "echo hello".into(),
             }),
-            output: Some(Ok(BashResult {
-                stdout: "hello\n".into(),
-                stderr: "".into(),
+            output: Some(ToolOutcome::ok(BashResult {
+                output: "hello\n".into(),
                 exit_status: None,
                 signal: None,
             })),
@@ -103,6 +103,7 @@ mod tests {
             call_id: "call_id_2".into(),
             started_at: 1,
             ended_at: Some(3),
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(task),
             ready_at: Some(5),
@@ -121,7 +122,7 @@ mod tests {
           },
           {
             "call_id": "call_id_2",
-            "output": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "output": "{\"output\":\"hello\\n\",\"exit_status\":null,\"signal\":null}",
             "type": "function_call_output"
           }
         ]
@@ -134,7 +135,7 @@ mod tests {
             arguments: Some(BashArguments {
                 command: "echo hello".into(),
             }),
-            output: Some(Err("oops".into())),
+            output: Some(ToolOutcome::failed("oops".into())),
             meta: None,
         };
 
@@ -144,6 +145,7 @@ mod tests {
             started_at: 1,
             ended_at: Some(3),
             ready_at: None,
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(task),
         };

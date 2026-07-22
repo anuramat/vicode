@@ -7,14 +7,16 @@ use anyhow::Result;
 use git2::Repository;
 
 use crate::agent::AgentId;
+use crate::agent::router::graph::RecordState;
 use crate::config::Config;
-use crate::project::Layout;
-use crate::project::Project;
-use crate::project::backend::BackendKind;
-use crate::project::layout::LayoutTrait;
-use crate::project::layout::worktree_name_to_agent_id;
+use crate::project::Paths;
+use crate::project::Storage;
+use crate::project::StorageTrait;
+use crate::project::backend::Backend;
 use crate::project::lock::ProjectLock;
-use crate::project::state::StateStore;
+use crate::project::paths::PathsTrait;
+use crate::project::paths::worktree_name_to_agent_id;
+use crate::project::store::Store;
 
 /// stale data eligible for deletion
 #[derive(Debug, PartialEq, Eq)]
@@ -60,12 +62,12 @@ impl fmt::Display for Garbage {
 }
 
 pub fn scan(
-    layout: &Layout,
-    backend: &BackendKind,
-    store: &StateStore,
+    paths: &Paths,
+    backend: &Backend,
+    store: &Store,
 ) -> Result<Garbage> {
     let visible: HashSet<AgentId> = store.load_app()?.visible_order.into_iter().collect();
-    let agents = store.agent_ids()?;
+    let agents = store.state_ids()?;
 
     let archived_agents = {
         let mut agents: Vec<(AgentId, String)> = agents
@@ -78,7 +80,7 @@ pub fn scan(
     };
 
     let orphan_agent_dirs = {
-        let mut dirs: Vec<PathBuf> = read_dir_or_empty(layout.agents())?
+        let mut dirs: Vec<PathBuf> = read_dir_or_empty(paths.agents())?
             .into_iter()
             .filter(|e| {
                 !agents.contains(&AgentId::from(e.file_name().to_string_lossy().to_string()))
@@ -91,13 +93,13 @@ pub fn scan(
 
     // get prunable worktrees
     let prunable_worktrees = {
-        let repo = Repository::open(layout.root())?;
+        let repo = Repository::open(paths.root())?;
         let mut worktrees = Vec::new();
         for name in repo.worktrees()?.iter().flatten() {
             let Some(aid) = worktree_name_to_agent_id(name) else {
                 continue;
             };
-            if !layout.agent(&aid).exists() {
+            if !paths.agent(&aid).exists() {
                 worktrees.push(name.to_string());
             }
         }
@@ -106,13 +108,13 @@ pub fn scan(
     };
 
     let unused_snapshots = {
-        let mut snapshots = if let BackendKind::Overlay(overlay) = backend {
+        let mut snapshots = if let Backend::Overlay(overlay) = backend {
             let keep: HashSet<String> = visible
                 .iter()
                 .filter(|aid| agents.contains(*aid))
                 .map(|aid| store.agent_commit(aid))
                 .collect::<Result<_>>()?;
-            read_dir_or_empty(overlay.snapshots(layout))?
+            read_dir_or_empty(overlay.snapshots(paths))?
                 .into_iter()
                 .filter(|e| !keep.contains(&e.file_name().to_string_lossy().to_string()))
                 .map(|e| e.path())
@@ -141,12 +143,12 @@ fn read_dir_or_empty(path: PathBuf) -> Result<Vec<std::fs::DirEntry>> {
 
 pub async fn run(force: bool) -> Result<()> {
     let config = Config::load()?;
-    let layout = Layout::discover()?;
-    let lock = ProjectLock::acquire(&layout)?;
-    let store = StateStore::open(layout.state_db())?;
-    let backend = BackendKind::from_config(&config);
+    let paths = Paths::new()?;
+    let lock = ProjectLock::acquire(&paths)?;
+    let store = Store::open(paths.state_db())?;
+    let backend = Backend::from_config(&config);
 
-    let garbage = scan(&layout, &backend, &store)?;
+    let garbage = scan(&paths, &backend, &store)?;
     if garbage.is_empty() {
         println!("nothing to clean");
         return Ok(());
@@ -158,7 +160,7 @@ pub async fn run(force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let project = Project::new(config, layout, lock, store.into_handle());
+    let project = Project::new(config, paths, lock, store.into_handle());
     project.unmount_all().await?;
     for (aid, commit) in &garbage.agents {
         project.delete_agent(aid, commit).await?;
@@ -178,27 +180,12 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentContext;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::llm::history::History;
+    use crate::agent::router::graph::GraphRecord;
     use crate::project::backend::Overlay;
-    use crate::tui::app::AppState;
-
-    fn state(commit: String) -> AgentState {
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: "test".into(),
-            max_depth: 1,
-            context: AgentContext {
-                commit,
-                history: History::new("".into()),
-            },
-        }
-    }
 
     #[tokio::test]
-    async fn scan_finds_archived_orphans_stale_worktrees_and_snapshots() {
+    async fn scan_keeps_members_and_archived_reaps_residue() {
         let root = std::env::temp_dir().join(format!("vicode-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let repo = Repository::init(&root).unwrap();
@@ -211,55 +198,78 @@ mod tests {
             .to_string();
         let data = root.join(".vicode");
         std::fs::create_dir_all(&data).unwrap();
-        let layout = Layout {
-            id: Layout::id(&root),
+        let paths = Paths {
+            id: Paths::derive_id(&root),
             root,
             data,
         };
-        let store = StateStore::open(layout.state_db()).unwrap();
+        let store = Store::open(paths.state_db()).unwrap();
 
-        // rows: vis is a tab, arch has a dir, ghost doesn't
-        let vis = AgentId::from("vis".to_string());
-        let arch = AgentId::from("arch".to_string());
-        let ghost = AgentId::from("ghost".to_string());
-        for aid in [&vis, &arch, &ghost] {
-            store.save_agent_sync(aid, &state(commit.clone())).unwrap();
+        let aid = |s: &str| AgentId::from(s.to_string());
+        let record = |root: &str, parent: Option<&str>, state| GraphRecord {
+            root: aid(root),
+            parent: parent.map(aid),
+            state,
+        };
+        // vis = live tab; sub = its member; arch = archived (awaits memory
+        // extraction); ghost = row predating the graph store; lostsub = row
+        // whose root has no live primary; dangling = record without a row
+        for name in ["vis", "sub", "arch", "ghost", "lostsub"] {
+            let state = AgentState::new("test".into(), commit.clone(), "".into());
+            store.save_state_sync(&aid(name), &state).unwrap();
         }
-        store
-            .save_app_sync(&AppState {
-                visible_order: vec![vis.clone()],
-            })
-            .unwrap();
-        for aid in [&vis, &arch] {
-            std::fs::create_dir_all(layout.agent(aid)).unwrap();
+        for (name, rec) in [
+            ("vis", record("vis", None, RecordState::Alive)),
+            ("sub", record("vis", Some("vis"), RecordState::Alive)),
+            ("arch", record("arch", None, RecordState::Archived)),
+            ("lostsub", record("gone", Some("gone"), RecordState::Alive)),
+            ("dangling", record("vis", Some("vis"), RecordState::Alive)),
+        ] {
+            store.save_graph_sync(&aid(name), &rec).unwrap();
         }
-        let orphan_dir = layout.agent(&AgentId::from("orphan".to_string()));
+        for name in ["vis", "sub", "arch"] {
+            std::fs::create_dir_all(paths.agent(&aid(name))).unwrap();
+        }
+        let orphan_dir = paths.agent(&aid("orphan"));
         std::fs::create_dir_all(&orphan_dir).unwrap();
 
         // worktree without an agent dir
-        repo.worktree("vc-stale", &layout.data().join("stale-wt"), None)
+        repo.worktree("vc-stale", &paths.data().join("stale-wt"), None)
             .unwrap();
 
-        // snapshots: one referenced by vis, one unreferenced
-        let backend = BackendKind::Overlay(Overlay {
-            sandbox: Config::test().sandbox.clone(),
-        });
-        let BackendKind::Overlay(overlay) = &backend else {
+        // snapshots: one referenced by kept agents, one unreferenced
+        let backend = Backend::Overlay(Overlay::test());
+        let Backend::Overlay(overlay) = &backend else {
             unreachable!()
         };
-        std::fs::create_dir_all(overlay.snapshot(&layout, &commit)).unwrap();
-        let stale_snapshot = overlay.snapshot(&layout, "deadbeef");
+        std::fs::create_dir_all(overlay.snapshot(&paths, &commit)).unwrap();
+        let stale_snapshot = overlay.snapshot(&paths, "deadbeef");
         std::fs::create_dir_all(&stale_snapshot).unwrap();
 
-        let garbage = scan(&layout, &backend, &store).unwrap();
+        // base refs: kept agents (rows) keep theirs, an orphan ref is garbage
+        let oid = git2::Oid::from_str(&commit).unwrap();
+        repo.reference("refs/vicode/base/sub", oid, false, "test")
+            .unwrap();
+        repo.reference("refs/vicode/base/orphanref", oid, false, "test")
+            .unwrap();
+
+        // branches: a rowed agent keeps its branch; `vc-stale` (created by
+        // the worktree above, no row) is garbage
+        repo.branch("vc-sub", &repo.find_commit(oid).unwrap(), false)
+            .unwrap();
+
+        let garbage = scan(&paths, &backend, &store).unwrap();
 
         assert_eq!(
             garbage,
             Garbage {
-                agents: vec![(arch, commit.clone()), (ghost, commit)],
+                agents: vec![aid("ghost"), aid("lostsub")],
+                records: vec![aid("dangling")],
                 dirs: vec![orphan_dir],
                 worktrees: vec!["vc-stale".to_string()],
+                branches: vec!["vc-stale".to_string()],
                 snapshots: vec![stale_snapshot],
+                base_refs: vec!["refs/vicode/base/orphanref".to_string()],
             }
         );
     }

@@ -1,27 +1,17 @@
+use anyhow::Context;
 use anyhow::Result;
 use derive_more::AsMut;
 use derive_more::AsRef;
 use derive_more::Deref;
 use derive_more::DerefMut;
-use derive_more::Display;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantStatus;
-use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::Message;
+use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::tokens::TokenCount;
-
-#[derive(Clone, Debug, PartialEq, Eq, Display)]
-pub enum TurnStatus {
-    #[display("idle")]
-    Idle,
-    #[display("in progress")]
-    InProgress,
-    #[display("failed: {_0}")]
-    Failed(String),
-}
 
 // TODO drop deref and derefmut
 
@@ -60,6 +50,14 @@ impl HistoryState {
         self.token_count = self.iter().map(TokenCount::token_count).sum();
     }
 
+    /// after an edit of the last message
+    pub fn recount_last(&mut self) {
+        if let Some(last) = self.last_mut() {
+            last.recount();
+        }
+        self.recount_shallow();
+    }
+
     pub fn push(
         &mut self,
         message: Message,
@@ -68,7 +66,7 @@ impl HistoryState {
         self.recount_shallow();
     }
 
-    pub fn needs_another_turn(&self) -> bool {
+    pub fn ends_with_tool_calls(&self) -> bool {
         self.last().is_some_and(|message| match message {
             Message::Assistant(msg) => {
                 matches!(msg.status, AssistantStatus::Success)
@@ -77,67 +75,44 @@ impl HistoryState {
                         .iter()
                         .any(|(_, content)| matches!(content, AssistantItem::ToolCall(_)))
             }
-            Message::Developer(msg) => match msg {
-                DeveloperMessage::Compact(compact) => compact.needs_another_turn,
-                DeveloperMessage::SubagentReport(_) => true,
-                DeveloperMessage::Misc(_) => false,
-            },
-            Message::User(_) => false,
+            Message::Developer(_) | Message::User(_) => false,
         })
     }
 
-    pub fn last_text_output(&self) -> Result<String> {
-        if let Some(Message::Assistant(msg)) = self.last() {
-            Ok(msg.text_output())
-        } else {
-            Err(anyhow::anyhow!("last message is not from the assistant",))
-        }
-    }
-
-    pub fn text_outputs_after(
-        &self,
-        n: usize,
-    ) -> String {
-        self.iter()
-            .skip(n)
-            .filter_map(|message| match message {
-                Message::Assistant(msg) => Some(msg.text_output()),
+    /// an in-flight call is always in the last message: whatever would
+    /// follow it waits for the turn to end
+    fn live_tool_call_mut(
+        &mut self,
+        call_id: &str,
+    ) -> Result<&mut ToolCallItem> {
+        self.last_assistant_msg_mut()?
+            .content
+            .values_mut()
+            .find_map(|item| match item {
+                AssistantItem::ToolCall(call) if call.call_id == call_id => Some(call),
                 _ => None,
             })
-            .collect()
+            .with_context(|| format!("no tool call {call_id}"))
     }
 
-    pub fn has_unresolved_tool_calls(&self) -> bool {
-        self.last()
-            .and_then(|m| m.try_as_assistant_ref())
-            .is_some_and(|msg| {
-                msg.content.values().any(
-                    |item| matches!(item, AssistantItem::ToolCall(t) if t.task.output().is_none()),
-                )
-            })
+    /// fail the matching tool call; returns whether it changed anything
+    pub fn fail_tool_call(
+        &mut self,
+        call_id: &str,
+        msg: &str,
+    ) -> Result<bool> {
+        let failed = self.live_tool_call_mut(call_id)?.fail(msg);
+        self.recount_last();
+        Ok(failed)
     }
 
-    pub fn turn_status(
-        &self,
-        busy: bool,
-    ) -> TurnStatus {
-        if busy {
-            return TurnStatus::InProgress;
-        }
-        if self.has_unresolved_tool_calls() {
-            return TurnStatus::Failed("tool calls not resolved".into());
-        }
-        self.status()
-            .map_or(TurnStatus::Idle, |status| match status {
-                AssistantStatus::Queued => TurnStatus::Failed(
-                    "last assistant message is queued but no tasks are running".into(),
-                ),
-                AssistantStatus::InProgress => TurnStatus::Failed(
-                    "last assistant message is in progress but no tasks are running".into(),
-                ),
-                AssistantStatus::Success => TurnStatus::Idle,
-                AssistantStatus::Error(e) => TurnStatus::Failed(e),
-            })
+    pub fn push_tool_output(
+        &mut self,
+        call_id: &str,
+        chunk: &str,
+    ) -> Result<()> {
+        self.live_tool_call_mut(call_id)?.streamed.push_str(chunk);
+        Ok(())
     }
 }
 
@@ -145,24 +120,187 @@ impl HistoryState {
 mod tests {
     use similar_asserts::assert_eq;
 
+    use crate::llm::history::AssistantEvent;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
+    use crate::llm::history::Splice;
+    use crate::llm::history::message::AssistantItem;
+    use crate::llm::history::message::ToolCallItem;
     use crate::llm::history::message::UserMessage;
     use crate::llm::history::tokens::TokenCount;
     use crate::llm::history::tokens::count_text_tokens;
+    use crate::tools::bash::BashArguments;
+    use crate::tools::bash::BashCall;
+    use crate::tools::bash::BashResult;
 
     #[test]
     fn user_message_updates_token_cache() {
         let mut history = History::new(String::new());
         history
-            .handle(
+            .handle(HistoryUpdate::UserMessage(UserMessage::new(
+                "hello".into(),
                 0,
-                HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            )
+            )))
             .unwrap();
         assert_eq!(
             history.state().token_count(),
             10 + count_text_tokens("hello")
         );
+    }
+
+    fn bash_call(output: Option<Result<BashResult, String>>) -> HistoryUpdate {
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+            ToolCallItem {
+                id: Some("call_1".into()),
+                call_id: "call_1".into(),
+                task: Box::new(BashCall {
+                    arguments: Some(BashArguments {
+                        command: "make".into(),
+                    }),
+                    meta: None,
+                    output,
+                }),
+                streamed: String::new(),
+                token_count: 0,
+                started_at: 1,
+                ended_at: None,
+                ready_at: None,
+            },
+        ))))
+    }
+
+    fn user(text: &str) -> HistoryUpdate {
+        HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0))
+    }
+
+    fn tool_output(
+        call_id: &str,
+        chunk: &str,
+    ) -> HistoryUpdate {
+        HistoryUpdate::ToolOutput {
+            call_id: call_id.into(),
+            chunk: chunk.into(),
+        }
+    }
+
+    /// chunks gather on the in-flight call; resolving it folds them in
+    #[test]
+    fn streamed_output_folds_into_the_resolved_call() {
+        let mut history = History::new(String::new());
+        let result = BashResult {
+            output: String::new(),
+            exit_status: Some(0),
+            signal: None,
+        };
+        for update in [
+            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
+            bash_call(None),
+            tool_output("call_1", "a"),
+            tool_output("call_1", "b"),
+        ] {
+            history.handle(update).unwrap();
+        }
+        insta::assert_yaml_snapshot!(history.state().messages[0], @"
+        role: assistant
+        status: Queued
+        content:
+          - - call_1
+            - ToolCall:
+                id: call_1
+                call_id: call_1
+                name: bash
+                arguments:
+                  command: make
+                meta: ~
+                output: ~
+                streamed: ab
+                token_count: 15
+                started_at: 1
+                ended_at: ~
+                ready_at: ~
+        token_count: 15
+        created_at: 0
+        started_at: ~
+        ended_at: ~
+        ready_at: ~
+        ");
+        assert_eq!(
+            history.handle(tool_output("call_1", "c")).unwrap(),
+            Some(Splice::edit(0))
+        );
+        history.handle(bash_call(Some(Ok(result)))).unwrap();
+        insta::assert_yaml_snapshot!(history.state().messages[0], @"
+        role: assistant
+        status: Queued
+        content:
+          - - call_1
+            - ToolCall:
+                id: call_1
+                call_id: call_1
+                name: bash
+                arguments:
+                  command: make
+                meta: ~
+                output:
+                  Ok:
+                    output: abc
+                    exit_status: 0
+                    signal: ~
+                token_count: 29
+                started_at: 1
+                ended_at: ~
+                ready_at: ~
+        token_count: 29
+        created_at: 0
+        started_at: ~
+        ended_at: ~
+        ready_at: ~
+        ");
+        assert_eq!(
+            history
+                .handle(tool_output("nope", "c"))
+                .unwrap_err()
+                .to_string(),
+            "no tool call nope"
+        );
+    }
+
+    /// a failure retokenizes its own message, not the rest of the history
+    #[test]
+    fn failures_recount_only_the_last_message() {
+        for failure in [
+            HistoryUpdate::ToolCallFailed {
+                call_id: "call_1".into(),
+                error: "boom".into(),
+            },
+            HistoryUpdate::FailUnresolved {
+                message: "boom".into(),
+                ended_at: 2,
+            },
+        ] {
+            let mut history = History::new(String::new());
+            for update in [
+                user("old"),
+                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
+                bash_call(None),
+            ] {
+                history.handle(update).unwrap();
+            }
+            // a deep recount would overwrite this
+            history.state.messages[0]
+                .try_as_user_mut()
+                .unwrap()
+                .token_count = 1000;
+            history.state.recount_shallow();
+            let old = history.state().messages[0].token_count();
+            let unfailed = history.state().messages[1].token_count();
+
+            history.handle(failure).unwrap();
+
+            let failed = history.state().messages[1].token_count();
+            assert!(failed > unfailed);
+            assert_eq!(history.state().messages[0].token_count(), old);
+            assert_eq!(history.state().token_count(), old + failed);
+        }
     }
 }

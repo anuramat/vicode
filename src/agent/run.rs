@@ -1,32 +1,22 @@
-use std::ops::ControlFlow;
-
 use anyhow::Result;
 
 use crate::agent::Agent;
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::UiEvent;
+use crate::utils::now;
 
 impl Agent {
-    pub async fn run(mut self) {
-        if let Err(e) = self.run_inner().await {
-            tracing::error!("fatal error in agent {}: {:?}", self.id, e);
-            drop(self.emit(ParentEvent::Error(e.to_string())).await);
-        }
-    }
-
-    async fn run_inner(&mut self) -> Result<()> {
+    /// a failure is reported by `Router::runtime_down`
+    pub async fn run(mut self) -> Result<()> {
         self.project
-            .mount_agent(&self.state.context.commit, &self.id)
+            .mount_agent(&self.state.commit, &self.id)
             .await?;
-        self.emit(ParentEvent::Started(Box::new(self.state.clone())))
-            .await?;
+        self.emit(UiEvent::Started {
+            state: Box::new(self.state.clone()),
+            control: self.tx.clone(),
+        });
         while let Some(event) = self.rx.recv().await {
-            match self.handle(event).await {
-                Ok(ControlFlow::Continue(())) => {}
-                Ok(ControlFlow::Break(())) => break,
-                Err(e) => {
-                    tracing::error!("error in agent {}: {:?}", self.id, e);
-                    self.emit(ParentEvent::Error(e.to_string())).await?;
-                }
+            if let Err(e) = self.handle(now(), event).await {
+                self.report_error(e);
             }
         }
         Ok(())

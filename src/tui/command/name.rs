@@ -42,8 +42,6 @@ pub enum CommandName {
     RefreshInfo,
     /// scroll the focused pane
     Scroll,
-    /// set multiplier for the next prompt
-    SetMultiplier,
     /// archive the currently selected tab
     TabArchive,
     /// duplicate the currently selected tab
@@ -70,7 +68,7 @@ pub enum CommandName {
     ToggleTools,
     /// abort current turn
     TurnAbort,
-    /// retry turn/compact
+    /// retry turn/compaction
     TurnRetry,
     /// dummy command to unmap keys
     #[serde(alias = "")]

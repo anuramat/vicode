@@ -1,70 +1,90 @@
 use std::future::pending;
+use std::sync::Arc;
 
 use anyhow::Result;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::EnableBracketedPaste;
 use crossterm::event::Event;
 use crossterm::execute;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::enable_raw_mode;
 use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
+use ratatui::backend::CrosstermBackend;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use super::App;
-use crate::agent::AgentState;
 use crate::agent::id::AgentId;
+use crate::agent::router::Launch;
+use crate::agent::router::Router;
+use crate::agent::router::boot::Boot;
 use crate::config::Config;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::AssistantPool;
-use crate::project::Layout;
+use crate::project::Paths;
 use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 use crate::project::lock::ProjectLock;
-use crate::project::state::StateStore;
+use crate::project::store::Store;
 use crate::tui::app::AppEvent;
 use crate::tui::app::NotificationKind;
+use crate::tui::app::refresh::join_refresh;
 use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 impl App<'_> {
     pub async fn launch(config: Config) -> Result<()> {
         // figure out where we (will) store data etc
-        let layout = Layout::discover()?;
+        let paths = Paths::new()?;
         // start tracing as early as possible
-        let _guard = init_tracing(&layout)?;
+        let _guard = init_tracing(&paths)?;
         // make sure we're the only instance in this project
-        let lock = ProjectLock::acquire(&layout)?;
+        let lock = ProjectLock::acquire(&paths)?;
 
-        // TODO move to AgentRouter?
-        ASSISTANT_POOL
-            .get_or_try_init(|| AssistantPool::from_config(&config))
-            .await?;
+        let assistants = Arc::new(AssistantPool::from_config(&config).await?);
 
-        // read everything we need at startup, then hand the db to the writer task
-        let store = StateStore::open(layout.state_db())?;
-        let app_state = store.load_app()?;
-        let agent_ids = store.agent_ids()?;
-        let tab_agents = {
-            let agents: Result<Vec<(AgentId, AgentState)>> = app_state
-                .visible_order
+        // read the tab order, then hand the db to the writer task
+        let store = Store::open(paths.state_db())?;
+        let visible_order = store.load_app()?.visible_order;
+        let project = Project::new(config, paths, lock, store.into_handle(), assistants);
+        let (tx, rx) = unbounded_channel();
+        let Boot {
+            router,
+            mut tabs,
+            agents,
+            failures,
+        } = Router::boot(tx.clone(), project.clone()).await?;
+        order_tabs(&mut tabs, &visible_order);
+        let mut app = Self::with_router(project, tx, rx, router);
+        if !failures.is_empty() {
+            let list = failures
                 .iter()
-                .filter(|aid| agent_ids.contains(aid))
-                .map(|aid| store.load_agent(aid).map(|state| (aid.clone(), state)))
-                .collect();
-            agents?
-        };
-        let project = Project::new(config, layout, lock, store.into_handle());
-        let mut app = Self::new(project, agent_ids);
+                .map(|(aid, error)| format!("{aid}: {error}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            app.notify(
+                NotificationKind::Error,
+                format!("failed to restore {list}; data kept on disk"),
+            );
+        }
         let term = app.setup_terminal()?;
-        app.run(term, tab_agents).await?;
+        app.run(term, tabs, agents).await?;
         Ok(())
     }
 
     pub fn setup_terminal(&mut self) -> Result<DefaultTerminal> {
-        let mut term = ratatui::init();
+        // equivalent to ratatui::init() but with a different panic hook:
+        // instead of restoring the terminal on every panic and sending the panic to stderr,
+        // we log the panic and restore the terminal on exit
+        std::panic::set_hook(Box::new(|info| tracing::error!("{info}")));
+        enable_raw_mode()?;
+        execute!(std::io::stdout(), EnterAlternateScreen)?;
+        let mut term = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+
         self.draw(&mut term)?; // first render
         tracing::debug!("first render done");
         self.spawn_crossterm_translator();
@@ -86,7 +106,8 @@ impl App<'_> {
     pub async fn run<B>(
         mut self,
         mut term: Terminal<B>,
-        tab_agents: Vec<(AgentId, AgentState)>,
+        tabs: Vec<AgentId>,
+        agents: Vec<Launch>,
     ) -> Result<()>
     where
         B: Backend,
@@ -96,11 +117,13 @@ impl App<'_> {
         // create shared lowerdir
         self.project.init().await?;
         // load tabs
-        self.load_tabs(tab_agents).await?;
+        self.load_tabs(tabs, agents);
 
         tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
         render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut refresh_interval = tokio::time::interval(REFRESH_INTERVAL);
+        refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 // throttled render
@@ -109,6 +132,21 @@ impl App<'_> {
                         self.draw(&mut term)?;
                         self.dirty = false;
                     }
+                }
+
+                // the selected tab's workdir views; a slow read skips ticks
+                _ = refresh_interval.tick() => {
+                    if self.refreshing.is_none() {
+                        self.refresh();
+                    }
+                }
+
+                views = join_refresh(&mut self.refreshing) => {
+                    self.refreshing = None;
+                    if let Err(e) = views.and_then(|views| self.apply_refresh(views)) {
+                        self.report_error(e);
+                    }
+                    self.dirty = true;
                 }
 
                 // notification expiration
@@ -126,7 +164,7 @@ impl App<'_> {
                 // handle events
                 msg = self.rx.recv() => {
                     if let Err(e) = self.handle(msg.expect("app event channel closed")).await {
-                        self.notify(NotificationKind::Error, e.to_string());
+                        self.report_error(e);
                     }
                     if self.should_exit {
                         self.save_app_state().await?;
@@ -161,14 +199,26 @@ impl App<'_> {
                     Event::Paste(content) => tx.send(AppEvent::Paste(content)),
                     _ => continue,
                 };
-                e.await?;
+                e?;
             }
             Ok::<(), anyhow::Error>(())
         });
     }
 }
 
-pub fn init_tracing(project: &impl LayoutTrait) -> Result<WorkerGuard> {
+fn order_tabs(
+    tabs: &mut [AgentId],
+    visible_order: &[AgentId],
+) {
+    tabs.sort_by_key(|aid| {
+        visible_order
+            .iter()
+            .position(|a| a == aid)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+pub fn init_tracing(project: &Paths) -> Result<WorkerGuard> {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt;
 
@@ -180,4 +230,27 @@ pub fn init_tracing(project: &impl LayoutTrait) -> Result<WorkerGuard> {
     let filter = EnvFilter::from_default_env();
     fmt().with_env_filter(filter).with_writer(writer).init();
     Ok(guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn order_tabs_follows_visible_order_and_appends_stragglers() {
+        let aid = |s: &str| AgentId::from(s.to_string());
+        let mut tabs: Vec<_> = ["alive", "missing", "straggler"]
+            .into_iter()
+            .map(aid)
+            .collect();
+        // `stale` archived but left in visible_order by a crash; `missing`
+        // isn't in it
+        let visible = vec![aid("stale"), aid("straggler"), aid("alive")];
+
+        order_tabs(&mut tabs, &visible);
+
+        assert_eq!(tabs, vec![aid("straggler"), aid("alive"), aid("missing")]);
+    }
 }

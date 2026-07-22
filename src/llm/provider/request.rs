@@ -5,24 +5,29 @@ use anyhow::Result;
 use backon::ExponentialBuilder;
 use backon::Retryable;
 use backon::TokioSleeper;
+use futures::StreamExt;
+use futures::future::ready;
+use futures::stream;
 use tokio::sync::AcquireError;
 use tracing::instrument;
 
 use crate::agent::tool::registry::ToolRegistry;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::message::Message;
-use crate::llm::provider::api::StartedAssistantStream;
+use crate::llm::provider::api::AssistantStream;
 use crate::llm::provider::api::until_completed;
 use crate::llm::provider::assistant::Assistant;
 
 impl Assistant {
+    /// the turn's events, opening with `Started`
     #[instrument(skip(self, history, tools, instructions))]
     pub async fn stream_turn(
         &self,
         instructions: String,
         history: Vec<Message>,
         tools: ToolRegistry,
-    ) -> Result<StartedAssistantStream> {
-        let mut started = retry(
+    ) -> Result<AssistantStream> {
+        let started = retry(
             || async {
                 self.provider.ratelimiter.until_ready().await;
                 let permit = self.provider.semaphore.clone().acquire_owned().await?;
@@ -41,8 +46,12 @@ impl Assistant {
             self.provider.config.limits().retries,
         )
         .await?;
-        started.stream = until_completed(started.stream);
-        Ok(started)
+        let head = AssistantEvent::Started {
+            started_at: started.started_at,
+        };
+        Ok(Box::pin(
+            stream::once(ready(Ok(head))).chain(until_completed(started.stream)),
+        ))
     }
 }
 
