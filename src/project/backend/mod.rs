@@ -9,14 +9,13 @@ use anyhow::Result;
 
 use crate::agent::AgentId;
 use crate::config::Config;
-use crate::project::Layout;
+use crate::project::Paths;
 use crate::sandbox::SandboxConfig;
 use crate::sandbox::SandboxRunner;
 
-// TODO drop the enum and use some macro?
 #[derive(Debug, Clone, Delegate)]
-#[delegate(WorkspaceBackend)]
-pub enum BackendKind {
+#[delegate(BackendOps)]
+pub enum Backend {
     Overlay(Overlay),
     Cow(Cow),
 }
@@ -24,33 +23,40 @@ pub enum BackendKind {
 #[derive(Debug, Clone)]
 pub struct Overlay {
     pub sandbox: SandboxConfig,
+    pub shared_paths: Vec<String>,
 }
 #[derive(Debug, Clone)]
 pub struct Cow {
     pub sandbox: SandboxConfig,
 }
 
-impl BackendKind {
+impl Backend {
     pub fn from_config(config: &Config) -> Self {
         let sandbox = config.sandbox.clone();
         if cfg!(target_os = "macos") {
             Self::Cow(Cow { sandbox })
         } else if cfg!(target_os = "linux") {
-            Self::Overlay(Overlay { sandbox })
+            Self::Overlay(Overlay {
+                sandbox,
+                shared_paths: config.shared.clone(),
+            })
         } else {
             unreachable!("compile_error! in main.rs should have fired for this target_os")
+        }
+    }
+
+    /// paths excluded from diffs etc
+    pub fn excluded_workdir_paths(&self) -> &[String] {
+        match self {
+            Self::Overlay(overlay) => &overlay.shared_paths,
+            Self::Cow(_) => &[],
         }
     }
 }
 
 #[async_trait::async_trait]
 #[delegatable_trait]
-pub trait WorkspaceBackend {
-    fn agent_diff_root(
-        &self,
-        layout: &Layout,
-        aid: &AgentId,
-    ) -> PathBuf;
+pub trait BackendOps {
     fn sandbox_runner(
         &self,
         cwd: PathBuf,
@@ -58,37 +64,49 @@ pub trait WorkspaceBackend {
     ) -> SandboxRunner;
     async fn init(
         &self,
-        layout: &Layout,
-        config: &Config,
+        paths: &Paths,
     ) -> Result<()>;
+    /// initialize a clean workdir at a given commit
     async fn new_agent_workdir(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         commit: &str,
         aid: &AgentId,
-        git: bool,
     ) -> Result<()>;
     async fn mount_agent(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         commit: &str,
         aid: &AgentId,
     ) -> Result<()>;
     async fn unmount_agent(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         aid: &AgentId,
     ) -> Result<()>;
     async fn unmount_all(
         &self,
-        layout: &Layout,
+        paths: &Paths,
     ) -> Result<()>;
     async fn duplicate_agent_workdir(
         &self,
-        layout: &Layout,
+        paths: &Paths,
         src_aid: &AgentId,
         dst_aid: &AgentId,
         commit: &str,
-        git: bool,
     ) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Overlay {
+        pub fn test() -> Self {
+            Self {
+                sandbox: Config::test().sandbox,
+                shared_paths: Vec::new(),
+            }
+        }
+    }
 }

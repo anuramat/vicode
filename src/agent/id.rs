@@ -7,7 +7,18 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(
-    From, Into, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+    From,
+    Into,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    schemars::JsonSchema,
 )]
 pub struct AgentId(String);
 
@@ -16,16 +27,14 @@ static GENERATOR: std::sync::LazyLock<petname::Petnames<'static>> =
 
 const SEPARATOR: &str = "-";
 const WORDS: u8 = 3;
-pub const PATIENCE: usize = 3;
 
 impl AgentId {
-    pub fn generate() -> Vec<Self> {
+    pub fn generate_base() -> String {
         GENERATOR
             .namer(WORDS, SEPARATOR)
             .iter(&mut rand::rng())
-            .map(Into::into)
-            .take(PATIENCE)
-            .collect()
+            .next()
+            .expect("petname generator is non-empty")
     }
 }
 

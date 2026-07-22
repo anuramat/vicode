@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -26,6 +28,9 @@ use crate::llm::provider::RateLimits;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
 
+/// the fake assistant's context window
+pub const FAKE_WINDOW: usize = 100_000;
+
 /// scripted in-memory `Api`: every `stream` call replays the next scripted turn
 #[derive(Debug, Default)]
 pub struct FakeApi {
@@ -39,6 +44,8 @@ struct FakeTurn {
     events: Vec<AssistantEvent>,
     /// keep the stream open (pending forever) after replaying all events
     hang: bool,
+    /// panic while streaming, after replaying all events
+    panic: bool,
 }
 
 impl FakeApi {
@@ -49,6 +56,7 @@ impl FakeApi {
         self.turns.lock().unwrap().push_back(FakeTurn {
             events,
             hang: false,
+            panic: false,
         });
     }
 
@@ -56,10 +64,24 @@ impl FakeApi {
         &self,
         events: Vec<AssistantEvent>,
     ) {
-        self.turns
-            .lock()
-            .unwrap()
-            .push_back(FakeTurn { events, hang: true });
+        self.turns.lock().unwrap().push_back(FakeTurn {
+            events,
+            hang: true,
+            panic: false,
+        });
+    }
+
+    /// replay the events, then panic mid-stream — exercises the turn-panic
+    /// path
+    pub fn script_panicking_turn(
+        &self,
+        events: Vec<AssistantEvent>,
+    ) {
+        self.turns.lock().unwrap().push_back(FakeTurn {
+            events,
+            hang: false,
+            panic: true,
+        });
     }
 
     pub fn requests(&self) -> Vec<Vec<Message>> {
@@ -85,7 +107,9 @@ impl Api for FakeApi {
             .pop_front()
             .context("no scripted turn")?;
         let events = stream::iter(turn.events.into_iter().map(Ok));
-        let stream: AssistantStream = if turn.hang {
+        let stream: AssistantStream = if turn.panic {
+            Box::pin(events.chain(stream::once(async { panic!("scripted turn panic") })))
+        } else if turn.hang {
             Box::pin(events.chain(stream::pending()))
         } else {
             Box::pin(events)
@@ -126,7 +150,7 @@ impl Assistant {
             config: ModelConfig {
                 model: "fake-model".into(),
                 effort: None,
-                window: None,
+                window: Some(FAKE_WINDOW),
             },
         };
         (assistant, api)
