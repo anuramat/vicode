@@ -60,6 +60,12 @@ impl History {
         }
     }
 
+    fn state_mut(&mut self) -> &mut HistoryState {
+        match &mut self.activity {
+            Activity::Normal { state } | Activity::Compacting { state, .. } => state,
+        }
+    }
+
     pub fn activity(&self) -> &Activity {
         &self.activity
     }
@@ -90,6 +96,13 @@ impl History {
         self.instructions.token_count() + self.state().token_count() + TOOL_REGISTRY.token_count()
     }
 
+    pub fn fail_unresolved_tool_calls(
+        &mut self,
+        msg: &str,
+    ) {
+        self.state_mut().fail_tool_calls(None, msg);
+    }
+
     fn increment(&mut self) {
         self.generation += 1;
     }
@@ -112,6 +125,9 @@ impl History {
         match event {
             HistoryUpdate::CompactAbort => {
                 self.abort_compact()?;
+            }
+            HistoryUpdate::ToolCallFailed { call_id, error } => {
+                self.state_mut().fail_tool_calls(Some(&call_id), &error);
             }
             HistoryUpdate::GenerationIncremented => self.increment(),
             HistoryUpdate::DeveloperMessage(msg) => {

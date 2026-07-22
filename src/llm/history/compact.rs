@@ -17,23 +17,23 @@ use super::UserMessage;
 use super::archive::ArchivedHistory;
 use super::archive::ArchivedHistoryReason;
 use super::state::HistoryState;
-use super::timing::now;
 use super::tokens::TokenCount;
 
 const COMPACT_PROMPT: &str = "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only.";
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct CompactStart {
     pub n_drop: usize,
     pub created_at: u64,
 }
 
 impl CompactStart {
-    pub fn new(n_drop: usize) -> Self {
-        Self {
-            n_drop,
-            created_at: now(),
-        }
+    pub fn new(
+        n_drop: usize,
+        created_at: u64,
+    ) -> Self {
+        Self { n_drop, created_at }
     }
 }
 
@@ -224,7 +224,7 @@ mod tests {
     }
 
     fn compact_start(n_drop: usize) -> HistoryUpdate {
-        HistoryUpdate::CompactStart(CompactStart::new(n_drop))
+        HistoryUpdate::CompactStart(CompactStart::new(n_drop, 0))
     }
 
     fn completed() -> AssistantEvent {
@@ -468,6 +468,21 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn compact_turn_input_appends_prompt_once_per_compact() {
+        let mut history = History::new(String::new());
+        history.handle(0, compact_start(0)).unwrap();
+
+        let entries = history.compact_turn_input().unwrap();
+
+        insta::assert_yaml_snapshot!(entries, @r#"
+        - role: user
+          text: "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only."
+          token_count: 35
+          created_at: 0
+        "#);
     }
 
     #[test]

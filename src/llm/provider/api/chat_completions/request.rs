@@ -242,8 +242,7 @@ mod tests {
                 command: "echo hello".into(),
             }),
             output: Some(Ok(BashResult {
-                stdout: "hello\n".into(),
-                stderr: String::new(),
+                output: "hello\n".into(),
                 exit_status: None,
                 signal: None,
             })),
@@ -281,7 +280,7 @@ mod tests {
             ]
           },
           {
-            "content": "{\"stdout\":\"hello\\n\",\"stderr\":\"\",\"exit_status\":null,\"signal\":null}",
+            "content": "{\"output\":\"hello\\n\",\"exit_status\":null,\"signal\":null}",
             "role": "tool",
             "tool_call_id": "call_1"
           }

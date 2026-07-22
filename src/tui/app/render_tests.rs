@@ -1,11 +1,11 @@
 //! render snapshots: canonical app states drawn into a `TestBackend` buffer
+#![cfg(test)]
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::agent::AgentContext;
+use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
-use crate::agent::AgentStatus;
 use crate::agent::id::AgentId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
@@ -16,7 +16,6 @@ use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
 use crate::llm::history::message::UserMessage;
-use crate::llm::provider::assistant::ModelConfig;
 use crate::project::Project;
 use crate::tui::app::App;
 use crate::tui::tab::Tab;
@@ -33,28 +32,27 @@ fn render(
 
 fn app_with_tab(
     history: History,
-    status: AgentStatus,
+    status: ActivityStatus,
 ) -> App<'static> {
-    let mut app = App::new(Project::new_test().unwrap(), Default::default());
+    let mut app = App::new(
+        Project::new_test().unwrap().0,
+        Default::default(),
+        Default::default(),
+    );
     app.project_name = "demo".into();
-    let state = AgentState {
-        status,
-        assistant: "test".into(),
-        max_depth: 1,
-        context: AgentContext {
-            commit: "".into(),
-            history,
-        },
-    };
+    let mut state = AgentState::fake();
+    state.status = status;
+    state.context.history = history;
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
-    let mut tab = Tab::new(Some(app.router.clone()), aid.clone(), state, &project);
-    // the assistant pool isn't populated in tests; inject the config the statusline reads
-    tab.assistant_config = Some(ModelConfig {
-        model: "fake-model".into(),
-        effort: None,
-        window: Some(32000),
-    });
+    let mut tab = Tab::new(
+        Some(tokio::sync::mpsc::unbounded_channel().0),
+        aid.clone(),
+        state,
+        &project,
+    );
+    // the fake assistant has no window; the statusline needs one
+    tab.assistant_config.as_mut().unwrap().window = Some(32000);
     app.tabs.insert(aid, tab);
     app.rebuild_tablist();
     app.select_tab(Some(0));
@@ -71,7 +69,11 @@ fn history(updates: impl IntoIterator<Item = HistoryUpdate>) -> History {
 
 #[tokio::test]
 async fn renders_logo_screen_without_tabs() {
-    let mut app = App::new(Project::new_test().unwrap(), Default::default());
+    let mut app = App::new(
+        Project::new_test().unwrap().0,
+        Default::default(),
+        Default::default(),
+    );
     app.project_name = "demo".into();
 
     insta::assert_snapshot!(render(&mut app, 80, 24), @r#"
@@ -119,7 +121,7 @@ async fn renders_conversation_tab() {
             ))),
             HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
         ]),
-        AgentStatus::Normal(TurnStatus::Idle),
+        ActivityStatus::Normal(TurnStatus::Idle),
     );
     app.focus = super::AppFocus::Body;
 
@@ -143,7 +145,7 @@ async fn renders_conversation_tab() {
     "                                                                                                    "
     "hello                                                                                               "
     "Hi! How can I help?                                                                                 "
-    "demo/tab-1                                                               0.6 / 32.0 kT | idle | test"
+    "demo/tab-1                                                               1.2 / 32.0 kT | idle | test"
     "#);
 }
 
@@ -158,7 +160,7 @@ async fn renders_failed_tab_with_tablist_overlay() {
                 ended_at: 2,
             }),
         ]),
-        AgentStatus::Normal(TurnStatus::Failed("aborted by user".into())),
+        ActivityStatus::Normal(TurnStatus::Failed("aborted by user".into())),
     );
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
@@ -181,6 +183,6 @@ async fn renders_failed_tab_with_tablist_overlay() {
     "│                      │                                                                            "
     "│                      │                                                                            "
     "└──────────────────────┘                                                                            "
-    "demo/tab-1                                            0.6 / 32.0 kT | failed: aborted by user | test"
+    "demo/tab-1                                            1.2 / 32.0 kT | failed: aborted by user | test"
     "#);
 }
