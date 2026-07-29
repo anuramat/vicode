@@ -61,4 +61,26 @@ where
             }
         }
     }
+
+    fn fail_unresolved(
+        &mut self,
+        msg: &str,
+    ) {
+        if self.output.is_none() {
+            self.output = Some(Err(msg.to_string()));
+        }
+    }
+
+    fn spawn_capture(&self) -> Option<bool> {
+        self.arguments.as_ref().and_then(|a| a.spawn_capture())
+    }
+
+    fn compose(
+        &mut self,
+        streamed: String,
+    ) {
+        if let Some(Ok(result)) = &mut self.output {
+            TArgs::compose(result, streamed);
+        }
+    }
 }
