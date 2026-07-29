@@ -70,3 +70,38 @@ where T: HeightComputable + Clone
             .title(format!(" {} ", self.name))
     }
 }
+
+/// streamed-so-far output of an in-flight call, rendered under its pending
+/// widget until the finalized item replaces it (§2.5)
+#[derive(Debug, Clone)]
+pub struct LiveToolOutput(pub String);
+
+impl HeightComputable for LiveToolOutput {
+    fn height(
+        &mut self,
+        width: u16,
+        ctx: RenderContext,
+    ) -> u16 {
+        if ctx.hide_tools {
+            return 0;
+        }
+        self.paragraph().height(width, ctx)
+    }
+
+    fn render(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        ctx: RenderContext,
+    ) {
+        if !ctx.hide_tools {
+            self.paragraph().render_ref(area, buf);
+        }
+    }
+}
+
+impl LiveToolOutput {
+    fn paragraph(&self) -> Paragraph<'_> {
+        Paragraph::new(self.0.as_str()).style(style())
+    }
+}

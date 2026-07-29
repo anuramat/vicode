@@ -26,22 +26,14 @@ impl App<'_> {
                 self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
-            NewAgent(agent_id, state) => {
-                if let Err(e) = self.new_agent(agent_id.clone(), *state).await {
-                    // drop the preview tab
-                    self.tabs.shift_remove(&agent_id);
-                    self.rebuild_tablist();
-                    return Err(e);
-                }
-            }
             ParentEvent(agent_id, event) => {
                 self.handle_parent_event(agent_id, event).await?;
                 self.dirty = true;
             }
-            TabStatusChanged(agent_id) => {
-                if self.tabs.contains_key(&agent_id) {
-                    self.rebuild_tablist();
-                }
+            // the failed copy's preview tab must not linger (M5)
+            DuplicateFailed(copy) => {
+                self.tabs.shift_remove(&copy);
+                self.rebuild_tablist();
                 self.dirty = true;
             }
             Redraw => {
@@ -59,7 +51,10 @@ impl App<'_> {
         #[allow(clippy::enum_glob_use)]
         use ParentEvent::*;
 
-        let tab = self.tab_mut_by_aid(&aid)?;
+        // hidden children have no tab; drop their events silently
+        let Ok(tab) = self.tab_mut_by_aid(&aid) else {
+            return Ok(());
+        };
         match event {
             Started(state) => {
                 // TODO this calls tab_mut_by_aid again, which is sad
@@ -72,14 +67,18 @@ impl App<'_> {
                 self.notify(NotificationKind::Error, msg);
             }
             StatusUpdate(status) => {
-                if tab.set_state(status).await? {
+                if tab.set_state(status)? {
                     tab.refresh_info().await?;
+                    self.rebuild_tablist();
                 }
             }
             AssistantSet(assistant) => {
                 tab.state.assistant = assistant;
                 tab.refresh_assistant_config();
-                self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
+                self.rebuild_tablist();
+            }
+            ToolOutput { call_id, chunk } => {
+                tab.stream_tool_output(call_id, &chunk);
             }
         }
         Ok(())
@@ -93,71 +92,23 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::config::Config;
     use crate::llm::history::AssistantEvent;
-    use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::delta::Delta;
     use crate::llm::history::delta::DeltaContent;
     use crate::llm::history::message::UserMessage;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
     use crate::tui::tab::Tab;
-
-    async fn test_assistant() -> Assistant {
-        crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
 
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
+            Default::default(),
             Default::default(),
         );
         let aid = AgentId::from("a".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: test_assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         app.tabs.insert(
             aid.clone(),
             Tab::new(None, aid.clone(), state, &app.project),
@@ -174,21 +125,13 @@ mod tests {
 
     #[tokio::test]
     async fn assistant_set_updates_tab_state() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
         let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: "test".into(),
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         let tab = Tab::new(
             Some(crate::agent::router::AgentRouter::test_handle()),
             aid.clone(),
@@ -208,19 +151,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_failed_rolls_back_preview_tab() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let original = AgentId::from("orig".to_string());
+        let copy = AgentId::from("copy".to_string());
+        let state = AgentState::fake();
+        for aid in [&original, &copy] {
+            app.tabs.insert(
+                aid.clone(),
+                Tab::new(None, aid.clone(), state.clone(), &project),
+            );
+        }
+        app.rebuild_tablist();
+
+        app.handle(AppEvent::DuplicateFailed(copy.clone()))
+            .await
+            .unwrap();
+
+        assert!(!app.tabs.contains_key(&copy));
+        assert_eq!(app.tabs.len(), 1);
+    }
+
+    /// H1: the app loop is the sole receiver of its own channel — handlers
+    /// must complete even when that channel is saturated by agent emits
+    #[tokio::test]
+    async fn parent_event_handlers_never_block_on_a_full_app_channel() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let aid = AgentId::from(format!("full-chan-{}", uuid::Uuid::new_v4()));
+        let workdir = project.agent_workdir(&aid);
+        std::fs::create_dir_all(&workdir).unwrap();
+        Repository::init(&workdir).unwrap();
+        let tab = Tab::new(
+            Some(crate::agent::router::AgentRouter::test_handle()),
+            aid.clone(),
+            AgentState::fake(),
+            &project,
+        );
+        app.tabs.insert(aid.clone(), tab);
+        app.rebuild_tablist();
+        while app.tx.try_send(AppEvent::Redraw).is_ok() {}
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            app.handle_parent_event(
+                aid.clone(),
+                ParentEvent::StatusUpdate(crate::agent::ActivityStatus::Normal(
+                    crate::llm::history::TurnStatus::InProgress,
+                )),
+            )
+            .await
+            .unwrap();
+            app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet("test".into()))
+                .await
+                .unwrap();
+        })
+        .await
+        .expect("handler blocked on the full app channel");
+
+        std::fs::remove_dir_all(project.agent(&aid)).ok();
+    }
+
+    #[tokio::test]
+    async fn tool_output_streams_into_tab_live_buffer() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let aid = AgentId::from("streamer".to_string());
+        app.tabs.insert(
+            aid.clone(),
+            Tab::new(None, aid.clone(), AgentState::fake(), &project),
+        );
+
+        for chunk in ["one", " two"] {
+            app.handle_parent_event(
+                aid.clone(),
+                ParentEvent::ToolOutput {
+                    call_id: "c1".into(),
+                    chunk: chunk.into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let tab = app.tab_mut_by_aid(&aid).unwrap();
+        assert_eq!(tab.live_output["c1"], "one two");
+    }
+
+    #[tokio::test]
     async fn tab_history_replays_authoritative_history_updates_exactly() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
         let aid = AgentId::from("deterministic-tab".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: test_assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("instructions".into()),
-            },
-        };
+        let state = AgentState::fake();
         app.tabs.insert(
             aid.clone(),
             Tab::new(

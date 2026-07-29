@@ -1,6 +1,7 @@
 pub mod input;
 pub mod update;
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use anyhow::Result;
@@ -10,19 +11,37 @@ use crate::agent::id::AgentId;
 use crate::agent::router::AgentRouterHandle;
 use crate::forward;
 use crate::llm::history::History;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::ModelConfig;
 use crate::project::Project;
-use crate::tui::command::parse_arg;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::container::scroll::ScrollOp;
 use crate::tui::widgets::info::InfoWidget;
 use crate::tui::widgets::input::CompletionSource;
 use crate::tui::widgets::input::Input;
 use crate::tui::widgets::input::InputOpts;
+use crate::tui::widgets::message::MessageView;
 use crate::tui::widgets::tab::input::MessageInput;
 
 const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
+
+/// the scroll's render data: each message paired with the live tool-output
+/// buffers (only pending calls consult them)
+pub fn message_views<'s>(
+    state: &'s AgentState,
+    live_output: &'s HashMap<String, String>,
+) -> Vec<MessageView<'s>> {
+    state
+        .context
+        .history
+        .state()
+        .messages
+        .iter()
+        .map(|msg| MessageView {
+            msg,
+            live: live_output,
+        })
+        .collect()
+}
 
 #[derive(Debug)]
 pub struct Tab<'a> {
@@ -36,8 +55,9 @@ pub struct Tab<'a> {
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
     pub info: InfoWidget,
-
-    pub multiplier: usize,
+    /// streamed-so-far output per in-flight tool call, rendered live into
+    /// the pending call's widget; the finalized item replaces it (§2.5)
+    pub live_output: HashMap<String, String>,
 }
 
 impl Tab<'_> {
@@ -67,17 +87,19 @@ impl Tab<'_> {
                 }),
             },
             info: InfoWidget::default(),
-            multiplier: 1,
+            live_output: HashMap::new(),
         };
         tab.refresh_assistant_config();
         tab
     }
 
     pub fn refresh_assistant_config(&mut self) {
-        self.assistant_config = ASSISTANT_POOL
-            .get()
-            .and_then(|pool| pool.assistant(&self.state.assistant).ok())
-            .map(|assistant| assistant.config.clone());
+        self.assistant_config = self
+            .project
+            .assistants()
+            .assistant(&self.state.assistant)
+            .ok()
+            .map(|assistant| assistant.config);
     }
 
     pub fn label(&self) -> String {
@@ -97,26 +119,12 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub fn set_multiplier(
-        &mut self,
-        value: Option<&str>,
-    ) -> Result<()> {
-        if self.router.is_none() {
-            return Ok(());
-        }
-        let value: u8 = parse_arg(value)?.unwrap_or(1);
-        anyhow::ensure!(value > 0, "multiplier must be positive");
-        self.multiplier = value as usize;
-        self.update_input_title();
-        Ok(())
-    }
-
     pub fn scroll(
         &mut self,
         op: ScrollOp,
     ) {
-        let messages = self.state.context.history.state().messages.as_slice();
-        self.scroll.scroll(messages, op);
+        let views = message_views(&self.state, &self.live_output);
+        self.scroll.scroll(&views, op);
     }
 
     pub fn router(&self) -> Result<&AgentRouterHandle> {

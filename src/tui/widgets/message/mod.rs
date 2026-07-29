@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantMessage;
 use crate::llm::history::message::Message;
 use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
+use crate::tui::widgets::message::toolcall::LiveToolOutput;
 
 pub mod developer;
 pub mod output;
@@ -17,6 +20,44 @@ impl From<&Message> for Element {
             Message::User(user) => user.into(),
             Message::Assistant(assistant) => assistant.into(),
         }
+    }
+}
+
+/// a message paired with the tab's live tool-output buffers: a pending tool
+/// call renders its streamed-so-far text until the finalized item replaces
+/// it (§2.5)
+#[derive(Debug)]
+pub struct MessageView<'a> {
+    pub msg: &'a Message,
+    pub live: &'a HashMap<String, String>,
+}
+
+impl From<&MessageView<'_>> for Element {
+    fn from(view: &MessageView<'_>) -> Self {
+        let Message::Assistant(msg) = view.msg else {
+            return view.msg.into();
+        };
+        CompositeElement(
+            msg.content
+                .values()
+                .map(|item| {
+                    let live = match item {
+                        AssistantItem::ToolCall(call) if call.task.output().is_none() => {
+                            view.live.get(&call.call_id).filter(|text| !text.is_empty())
+                        }
+                        _ => None,
+                    };
+                    match live {
+                        Some(text) => {
+                            CompositeElement(vec![item.into(), LiveToolOutput(text.clone()).into()])
+                                .into()
+                        }
+                        None => item.into(),
+                    }
+                })
+                .collect(),
+        )
+        .into()
     }
 }
 
