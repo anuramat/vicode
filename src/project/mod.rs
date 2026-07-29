@@ -55,10 +55,6 @@ impl Workspace {
         }
     }
 
-    pub fn excluded_workdir_paths(&self) -> &[String] {
-        self.backend.excluded_workdir_paths()
-    }
-
     pub async fn mount_agent(
         &self,
         commit: &str,
@@ -71,43 +67,19 @@ impl Workspace {
         self.backend.unmount_all(&self.paths).await
     }
 
-    pub fn pin_base(
+    /// a fresh workdir on the tab's snapshot, moved to `start` by a hard
+    /// reset through the mount: only the files that differ get written, and
+    /// the overlay records them in the agent's own upper
+    pub async fn spawn_agent_workdir(
         &self,
         aid: &AgentId,
-        commit: &str,
+        snapshot: &str,
+        start: &str,
     ) -> Result<()> {
-        let repo = Repository::open(self.root())?;
-        repo.reference(
-            &self.base_ref(aid),
-            git2::Oid::from_str(commit)?,
-            true,
-            "inspect base",
-        )?;
-        Ok(())
-    }
-
-    pub async fn mint_spawn_base(
-        &self,
-        dst: &AgentId,
-        base: &str,
-        commit: &str,
-    ) -> Result<String> {
-        self.mount_agent(commit, dst).await?;
-        let this = self.clone();
-        let (dst, base) = (dst.clone(), base.to_string());
-        tokio::task::spawn_blocking(move || {
-            let tree =
-                crate::git::workdir_tree(&this.agent_workdir(&dst), this.excluded_workdir_paths())?;
-            let repo = Repository::open(this.root())?;
-            let tree = repo.find_tree(tree)?;
-            let parent = repo.find_commit(git2::Oid::from_str(&base)?)?;
-            let sig = git2::Signature::new("vicode", "vicode", &git2::Time::new(0, 0))?;
-            let oid = repo.commit(None, &sig, &sig, "spawn base", &tree, &[&parent])?;
-            let oid = oid.to_string();
-            this.pin_base(&dst, &oid)?;
-            Ok(oid)
-        })
-        .await?
+        self.new_agent_workdir(snapshot, aid).await?;
+        self.mount_agent(snapshot, aid).await?;
+        let (workdir, start) = (self.agent_workdir(aid), start.to_string());
+        tokio::task::spawn_blocking(move || crate::git::reset_hard(&workdir, &start)).await?
     }
 
     pub fn sandbox_runner(
@@ -148,7 +120,6 @@ impl Workspace {
         let name = self.worktree_name(aid);
         crate::git::prune_worktree(&repo, &name)?;
         crate::git::delete_branch_if_exists(&repo, &name)?;
-        crate::git::delete_ref_if_exists(&repo, &self.base_ref(aid))?;
         Ok(())
     }
 
@@ -290,7 +261,6 @@ mod tests {
         pub fn fake_state(&self) -> AgentState {
             let mut state = AgentState::fake();
             state.context.commit = self.head_commit();
-            state.context.base = state.context.commit.clone();
             state
         }
     }
@@ -331,13 +301,6 @@ mod tests {
         };
         project.store().save_graph(&aid, &record).await.unwrap();
         let repo = Repository::open(project.root()).unwrap();
-        repo.reference(
-            &project.base_ref(&aid),
-            git2::Oid::from_str(&commit).unwrap(),
-            false,
-            "test",
-        )
-        .unwrap();
         // the agent committed: the branch moved off its base — deleted anyway
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         let sig = git2::Signature::now("t", "t@t").unwrap();
@@ -361,7 +324,6 @@ mod tests {
         project.delete_agent(&aid).await.unwrap();
 
         assert!(!project.agent(&aid).exists());
-        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
         assert!(
             repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
                 .is_err()
@@ -379,7 +341,7 @@ mod tests {
     }
 
     /// a failed spawn's rollback leaves no git residue: workdir, worktree
-    /// registration, branch and base ref all gone
+    /// registration and branch all gone
     #[tokio::test]
     async fn delete_agent_workdir_leaves_no_git_residue() {
         let project = Project::new_test().unwrap().0;
@@ -388,13 +350,6 @@ mod tests {
 
         project.new_agent_workdir(&commit, &aid).await.unwrap();
         let repo = Repository::open(project.root()).unwrap();
-        repo.reference(
-            &project.base_ref(&aid),
-            git2::Oid::from_str(&commit).unwrap(),
-            false,
-            "test",
-        )
-        .unwrap();
 
         project.delete_agent_workdir(&aid).await.unwrap();
 
@@ -404,7 +359,74 @@ mod tests {
             repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
                 .is_err()
         );
-        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
+    }
+
+    /// a spawned workdir sits on the tab's snapshot but is checked out at
+    /// its start commit: modified, added and deleted files (a whole directory
+    /// included) all match it, the branch points at it, and git sees a
+    /// clean tree
+    #[tokio::test]
+    async fn spawned_workdir_is_checked_out_at_its_start_commit() {
+        let project = Project::new_test().unwrap().0;
+        let root = project.root().to_path_buf();
+        let commit_all = |message: &str| {
+            let repo = Repository::open(&root).unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+                .unwrap();
+            index.update_all(["*"], None).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head])
+                .unwrap()
+                .to_string()
+        };
+        std::fs::write(root.join("kept.txt"), "kept\n").unwrap();
+        std::fs::write(root.join("edited.txt"), "v1\n").unwrap();
+        std::fs::write(root.join("doomed.txt"), "bye\n").unwrap();
+        std::fs::create_dir(root.join("dir")).unwrap();
+        std::fs::write(root.join("dir/a.txt"), "a\n").unwrap();
+        let snapshot = commit_all("snapshot");
+        std::fs::write(root.join("edited.txt"), "v2\n").unwrap();
+        std::fs::write(root.join("new.txt"), "new\n").unwrap();
+        std::fs::remove_file(root.join("doomed.txt")).unwrap();
+        std::fs::remove_dir_all(root.join("dir")).unwrap();
+        let start = commit_all("start");
+
+        let aid = AgentId::from("spawned".to_string());
+        project
+            .spawn_agent_workdir(&aid, &snapshot, &start)
+            .await
+            .unwrap();
+
+        let wd = project.agent_workdir(&aid);
+        let read = |name: &str| std::fs::read_to_string(wd.join(name)).ok();
+        assert_eq!(
+            [
+                read("kept.txt"),
+                read("edited.txt"),
+                read("new.txt"),
+                read("doomed.txt"),
+                read("dir/a.txt"),
+            ],
+            [
+                Some("kept\n".into()),
+                Some("v2\n".into()),
+                Some("new\n".into()),
+                None,
+                None,
+            ]
+        );
+        let repo = Repository::open(&wd).unwrap();
+        assert_eq!(repo.head().unwrap().target().unwrap().to_string(), start);
+        assert_eq!(
+            repo.head().unwrap().shorthand(),
+            Some(project.worktree_name(&aid).as_str())
+        );
+        assert!(repo.statuses(None).unwrap().is_empty());
     }
 
     /// `vc-*` is a reserved namespace: a colliding branch is crash residue

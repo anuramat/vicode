@@ -15,13 +15,11 @@ impl<'a> App<'a> {
         command: Command,
     ) -> Result<()> {
         match command.name {
-            CommandName::AssistantNext => self.selected_tab()?.cycle_assistant(false).await?,
-            CommandName::AssistantPrev => self.selected_tab()?.cycle_assistant(true).await?,
+            CommandName::AssistantNext => self.selected_tab()?.cycle_assistant(false)?,
+            CommandName::AssistantPrev => self.selected_tab()?.cycle_assistant(true)?,
             CommandName::CmdlineEnter => self.cmdline.input.set_focus(true),
             CommandName::Compact => {
-                self.selected_tab_mut()?
-                    .compact(command.args.as_deref())
-                    .await?;
+                self.selected_tab_mut()?.compact(command.args.as_deref())?;
             }
             CommandName::CompletionCancel => self.active_input()?.completion_cancel(),
             CommandName::CompletionNext => self.active_input()?.completion_next(),
@@ -36,8 +34,8 @@ impl<'a> App<'a> {
                 self.selected_tab_mut()?
                     .paste(&command.args.unwrap_or_default());
             }
-            CommandName::MsgUndo => self.selected_tab_mut()?.undo(1).await?,
-            CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user().await?,
+            CommandName::MsgUndo => self.selected_tab_mut()?.undo(1)?,
+            CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user()?,
             CommandName::Quit => self.should_exit = true,
             CommandName::RefreshInfo => self.selected_tab_mut()?.refresh_info().await?,
             CommandName::Scroll => {
@@ -82,8 +80,8 @@ impl<'a> App<'a> {
                 self.ctx.hide_tools = !self.ctx.hide_tools;
                 self.notify_hide(self.ctx.hide_tools, "tool calls");
             }
-            CommandName::TurnAbort => self.selected_tab_mut()?.abort().await?,
-            CommandName::TurnRetry => self.selected_tab_mut()?.retry().await?,
+            CommandName::TurnAbort => self.selected_tab_mut()?.abort()?,
+            CommandName::TurnRetry => self.selected_tab_mut()?.retry()?,
             CommandName::None => {}
         }
         Ok(())
@@ -95,7 +93,7 @@ impl<'a> App<'a> {
             // TODO can we avoid this somehow? recursive call requires pin; maybe make this a non-command?
             Box::pin(self.execute(command)).await
         } else {
-            self.selected_tab_mut()?.submit().await
+            self.selected_tab_mut()?.submit()
         }
     }
 
@@ -196,7 +194,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::id::AgentId;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::widgets::input::CompletionItem;
     use crate::tui::widgets::input::CompletionSource;
@@ -211,7 +208,7 @@ mod tests {
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState::fake();
         let mut tab = Tab::new(
-            Some(crate::agent::router::AgentRouter::test_handle()),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             state,
             &project,

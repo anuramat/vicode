@@ -5,11 +5,9 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 use git2::Repository;
 
-use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::UserPrompt;
+use crate::agent::event::UserCommand;
+use crate::agent::event::UserPrompt;
 use crate::llm::history::message::Message;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
-use crate::project::layout::LayoutTrait;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
 use crate::tui::widgets::tab::input::MessageInput;
@@ -31,22 +29,19 @@ fn tracked_files(workdir: &Path) -> Result<Vec<String>> {
 }
 
 impl Tab<'_> {
-    pub async fn cycle_assistant(
+    pub fn cycle_assistant(
         &self,
         prev: bool,
     ) -> Result<()> {
-        let router = self.router()?;
         if !self.state.status.idle() {
             return Ok(());
         }
-        let pool = ASSISTANT_POOL.get().unwrap();
-        let id = pool
-            .switch_assistant(&self.state.assistant, prev)
+        let id = self
+            .project
+            .assistants()
+            .switch_assistant(&self.state.assistant_id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
-        router
-            .forward(self.aid.clone(), ExternalEvent::SetAssistant(id))
-            .await?;
-        Ok(())
+        self.send(UserCommand::SetAssistant(id))
     }
 
     // TODO clean up if trimmed is empty
@@ -70,67 +65,55 @@ impl Tab<'_> {
 
     // TODO update on completions, ideally make a mut getter or something
     pub fn update_input_title(&mut self) {
-        let title = {
-            let tokens = self.input.count_tokens();
-            if self.multiplier > 1 {
-                format!(" x{} | {} T ", self.multiplier, tokens)
-            } else {
-                format!(" {tokens} T ")
-            }
-        };
+        let title = format!(" {} T ", self.input.count_tokens());
         self.input = MessageInput {
             title,
             ..self.input.clone()
         }
     }
 
-    pub async fn submit(&mut self) -> Result<()> {
-        self.router()?;
-        let text = self.input.take_area().lines().join("\n").trim().to_string();
+    pub fn submit(&mut self) -> Result<()> {
+        let editor_text = self.input.take_area().lines().join("\n");
+        let text = editor_text.trim().to_string();
         self.input.set_focus(false);
         if text.is_empty() {
             return Ok(());
         }
         let prompt = UserPrompt {
             text,
-            multiplier: self.multiplier,
-            generation: self.history().generation(),
+            generation: Some(self.history().generation()),
         };
 
-        self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Submit(prompt, None))
-            .await
+        let result = self.send(UserCommand::Submit(prompt));
+        if result.is_err() {
+            self.input.textarea.insert_str(&editor_text);
+            self.update_input_title();
+        }
+        result
     }
 
-    pub async fn retry(&self) -> Result<()> {
-        self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Retry)
-            .await
+    pub fn retry(&self) -> Result<()> {
+        self.send(UserCommand::Retry)
     }
 
-    pub async fn compact(
+    pub fn compact(
         &self,
         n: Option<&str>,
     ) -> Result<()> {
-        self.router()?;
         let n = if let Some(n) = n {
             n.parse()
                 .with_context(|| format!("invalid compact number: {n}"))?
         } else {
             self.history().state().len()
         };
-        self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Compact(n))
-            .await
+        self.send(UserCommand::Compact(n))
     }
 
-    pub async fn abort(&self) -> Result<()> {
-        self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Abort)
-            .await
+    pub fn abort(&self) -> Result<()> {
+        self.send(UserCommand::Abort)
     }
 
-    pub async fn undo(
+    pub fn undo(
         &self,
         n: usize,
     ) -> Result<()> {
@@ -138,12 +121,10 @@ impl Tab<'_> {
             n <= self.history().state().len(),
             "cannot undo {n} messages, history is shorter"
         );
-        self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Undo(n))
-            .await
+        self.send(UserCommand::Undo(n))
     }
 
-    pub async fn undo_user(&self) -> Result<()> {
+    pub fn undo_user(&self) -> Result<()> {
         let messages = self.history().state();
         let Some(loc) = messages
             .iter()
@@ -152,7 +133,7 @@ impl Tab<'_> {
             return Ok(());
         };
         let n = messages.len() - loc;
-        self.undo(n).await
+        self.undo(n)
     }
 
     pub fn key_insert(
@@ -181,61 +162,21 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
     use crate::agent::id::AgentId;
-    use crate::agent::router::AgentRouter;
-    use crate::config::Config;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
     use crate::project::Project;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::widgets::input::InputOpts;
 
-    async fn assistant() -> Assistant {
-        AssistantPool::from_config(
-            &Config::parse_with_defaults(
-                r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .assistant("test")
-        .unwrap()
-    }
-
-    async fn tab() -> Tab<'static> {
-        let project = Project::new_test().unwrap();
+    fn tab() -> Tab<'static> {
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
-        let mut tab = Tab::new(Some(AgentRouter::test_handle()), aid, state, &project);
+        let state = AgentState::fake();
+        let mut tab = Tab::new(
+            Some(tokio::sync::mpsc::unbounded_channel().0),
+            aid,
+            state,
+            &project,
+        );
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',
@@ -271,7 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn completion_accept_replaces_active_word_with_at_path() {
-        let mut tab = tab().await;
+        let mut tab = tab();
         tab.insert_mode(true);
         for ch in "open @sr".chars() {
             tab.key_insert(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
@@ -284,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_reads_tracked_files() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("tab-refresh".to_string());
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
@@ -295,23 +236,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cycle_assistant_sends_switch_only_when_idle() {
+        use crate::agent::ActivityStatus;
+        use crate::llm::history::TurnStatus;
+
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("cycle".to_string());
+        let (control, mut user_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
+
+        tab.cycle_assistant(false).unwrap();
+        assert!(matches!(
+            user_rx.try_recv(),
+            Ok(UserCommand::SetAssistant(id)) if id == "test2"
+        ));
+
+        tab.state.status = ActivityStatus::Normal(TurnStatus::InProgress);
+        tab.cycle_assistant(false).unwrap();
+        assert!(user_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn preview_submit_keeps_input() {
-        let project = Project::new_test().unwrap();
+        let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("preview-submit".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
-        let mut tab = Tab::new(None, aid, state, &project);
-        tab.input.textarea.insert_str("do work");
+        let mut tab = Tab::new(None, aid, AgentState::fake(), &project);
+        tab.input.textarea.insert_str("  do work  ");
 
-        drop(tab.submit().await);
+        drop(tab.submit());
 
-        assert_eq!(tab.input.textarea.lines(), ["do work"]);
+        assert_eq!(tab.input.textarea.lines(), ["  do work  "]);
+    }
+
+    #[tokio::test]
+    async fn rejected_submit_restores_input() {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("rejected-submit".to_string());
+        // the agent is gone: its control lane is closed
+        let control = tokio::sync::mpsc::unbounded_channel().0;
+        let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
+        tab.input.textarea.insert_str("  do work  ");
+
+        assert!(tab.submit().is_err());
+
+        assert_eq!(tab.input.textarea.lines(), ["  do work  "]);
     }
 }

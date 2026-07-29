@@ -1,15 +1,14 @@
 use anyhow::Result;
 use git2::Repository;
 use indexmap::IndexMap;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::instrument;
 
 use crate::agent::Agent;
 use crate::agent::AgentState;
-use crate::agent::handle::ExternalEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
-use crate::project::layout::LayoutTrait;
 use crate::tui::app::App;
-use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 
@@ -20,12 +19,13 @@ impl<'a> App<'a> {
         self.select_tab(self.selected_tab_idx());
     }
 
-    pub async fn load_tabs(
+    pub fn load_tabs(
         &mut self,
+        tab_agents: Vec<(AgentId, AgentState)>,
         agents: Vec<(AgentId, AgentState)>,
     ) -> Result<()> {
         let mut tabs = IndexMap::new();
-        for (aid, state) in &agents {
+        for (aid, state) in &tab_agents {
             tabs.insert(
                 aid.clone(),
                 Tab::new(None, aid.clone(), state.clone(), &self.project),
@@ -34,38 +34,37 @@ impl<'a> App<'a> {
         self.tabs = tabs;
         self.rebuild_tablist();
 
+        // every node's mailbox exists already: launch order doesn't matter
         for (aid, state) in agents {
             let agent = Agent::new(
                 self.project.clone(),
                 self.router.clone(),
-                aid.clone(),
+                self.tx.clone(),
+                aid,
                 state,
-            )?;
-            let runtime = agent.spawn();
-            self.router.register(aid, runtime).await?;
+            );
+            self.router.launch(agent)?;
         }
         Ok(())
     }
 
     /// create a new primary agent, and a corresponding tab
     pub async fn new_tab(&mut self) -> Result<()> {
-        let aid = self.router.allocate_agent_id().await?;
+        let aid = self.router.allocate_agent_id();
         let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
+        // context files are read from the agent's own tree
+        self.project.new_agent_workdir(&commit, &aid).await?;
         let instructions = self.project.instructions(&aid).await?;
-        let state = AgentState::new(
-            commit,
-            instructions,
-            self.project.config().subagent_max_depth,
-        );
-        self.insert_preview_tab(aid.clone(), state.clone());
-        self.tx
-            .send(AppEvent::NewAgent(aid, Box::new(state)))
-            .await?;
+        let assistant = self.project.assistants().primary()?;
+        let state = AgentState::new(assistant.id, commit, instructions);
+        self.new_agent(aid.clone(), state.clone()).await?;
+        self.insert_tab(aid, state);
         Ok(())
     }
 
-    fn insert_preview_tab(
+    /// insert after the selected tab and select it
+    fn insert_tab(
         &mut self,
         aid: AgentId,
         state: AgentState,
@@ -82,31 +81,30 @@ impl<'a> App<'a> {
         aid: AgentId,
         state: AgentState,
     ) -> Result<()> {
-        self.project
-            .new_agent_workdir(&state.context.commit, &aid, true)
-            .await?;
-        state.save(&self.project, &aid).await?;
         let agent = Agent::new(
             self.project.clone(),
             self.router.clone(),
-            aid.clone(),
+            self.tx.clone(),
+            aid,
             state,
-        )?;
-        let runtime = agent.spawn();
-        self.router.register(aid, runtime).await?;
-        Ok(())
+        );
+        agent.launch_root().await
     }
 
     pub async fn handle_started(
         &mut self,
         aid: &AgentId,
         state: AgentState,
+        control: UnboundedSender<UserCommand>,
     ) -> Result<()> {
-        let router = self.router.clone();
         let tab = self.tab_mut_by_aid(aid)?;
         tab.state = state;
+        // a (re)start's fresh runtime has no in-flight calls; the prior
+        // runtime's tee'd output is stale render state and the following
+        // deduplicated StatusUpdate(Idle) would skip set_state's clear
+        tab.live_output.clear();
         tab.refresh_assistant_config();
-        tab.router = Some(router);
+        tab.control = Some(control);
         tab.refresh_file_completion()?;
         tab.refresh_info().await?;
         self.rebuild_tablist();
@@ -117,22 +115,20 @@ impl<'a> App<'a> {
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
         let original = self.selected_tab()?;
-        let Some(router) = original.router.clone() else {
+        if original.control.is_none() {
             return Ok(());
-        };
-        let original_aid = original.aid.clone();
+        }
         let state = original.state.clone();
-
-        let aid = self.router.allocate_agent_id().await?;
-        self.insert_preview_tab(aid.clone(), state);
-
-        router
-            .forward(original_aid, ExternalEvent::DuplicateRequest(aid))
-            .await?;
+        let copy = self.router.allocate_agent_id();
+        original.send(UserCommand::Duplicate(copy.clone()))?;
+        // a preview until the copy's Started attaches it; the original
+        // reports a failure as DuplicateFailed, which drops it again
+        self.insert_tab(copy, state);
         Ok(())
     }
 
-    /// archive selected tab
+    /// archive selected tab: every member goes `Unreachable`, graph records
+    /// flip to `archived`, mounts release — state + workdirs retained
     pub async fn archive_tab(&mut self) -> Result<()> {
         let idx = self
             .selected_tab_idx()
@@ -141,13 +137,12 @@ impl<'a> App<'a> {
             .tabs
             .get_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
-        let router = tab.router()?.clone();
+        anyhow::ensure!(tab.control.is_some(), "agent isn't attached (yet?)");
         let (aid, _) = self
             .tabs
             .shift_remove_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
-        router.shutdown(aid.clone()).await?;
-        self.project.unmount_agent(&aid).await?;
+        self.router.archive_tab(&aid).await?;
         self.rebuild_tablist();
         self.save_app_state().await?;
         Ok(())
@@ -239,64 +234,12 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::AgentStatus;
-    use crate::config::Config;
-    use crate::llm::history::History;
-    use crate::llm::provider::assistant::ASSISTANT_POOL;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
-
-    async fn assistant() -> Assistant {
-        ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
-
-    async fn state() -> AgentState {
-        AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        }
-    }
 
     #[tokio::test]
-    async fn new_tab_enqueues_agent_creation() {
-        assistant().await;
+    async fn new_tab_creates_agent_and_tab() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
+            Default::default(),
             Default::default(),
         );
 
@@ -305,50 +248,31 @@ mod tests {
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.selected_tab_idx(), Some(0));
         let (tab_aid, tab) = app.tabs.get_index(0).unwrap();
-        assert!(tab.router.is_none());
         assert!(!tab.state.context.commit.is_empty());
         let instructions = app.project.instructions(tab_aid).await.unwrap();
         assert_eq!(tab.state.context.history.instructions(), instructions);
-
-        match app.rx.recv().await {
-            Some(AppEvent::NewAgent(aid, state)) => {
-                assert_eq!(&aid, tab_aid);
-                assert_eq!(state.context.commit, tab.state.context.commit);
-                assert_eq!(
-                    state.context.history.instructions(),
-                    tab.state.context.history.instructions()
-                );
-            }
-            other => panic!("expected NewAgent, got {other:?}"),
-        }
+        // the agent is real: state saved, runtime registered with the router
+        let saved = app.project.store().load_state(tab_aid).await.unwrap();
+        assert_eq!(saved.context.commit, tab.state.context.commit);
+        app.router.shutdown(&tab_aid).unwrap();
     }
 
     #[tokio::test]
     async fn archive_tab_stops_agent_but_keeps_workdir() {
-        use futures::future::AbortHandle;
-        use tokio::sync::mpsc::channel;
-
-        use crate::agent::router::RuntimeHandle;
-
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
         let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
         let tab = Tab::new(
-            Some(app.router.clone()),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
-            state().await,
+            AgentState::fake(),
             &project,
         );
         app.tabs.insert(aid.clone(), tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
-        let (tx, _rx) = channel(8);
-        let (abort, _reg) = AbortHandle::new_pair();
-        app.router
-            .register(aid.clone(), RuntimeHandle::new(tx, abort))
-            .await
-            .unwrap();
+        let _mail = app.router.attach_manual(&aid);
 
         app.archive_tab().await.unwrap();
 
@@ -356,19 +280,44 @@ mod tests {
         // workdir survives until `vc cleanup -f`
         assert!(project.agent(&aid).exists());
         // runtime is gone
-        assert!(app.router.shutdown(aid.clone()).await.is_err());
+        assert!(app.router.shutdown(&aid).is_err());
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
 
     #[tokio::test]
+    async fn undeliverable_duplicate_adds_no_preview() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let original = AgentId::from("original".to_string());
+        app.tabs.insert(
+            original.clone(),
+            Tab::new(
+                Some(tokio::sync::mpsc::unbounded_channel().0),
+                original.clone(),
+                AgentState::fake(),
+                &project,
+            ),
+        );
+        app.rebuild_tablist();
+        app.select_tab(Some(0));
+
+        // the original has no runtime: the request is rejected before any
+        // preview exists
+        assert!(app.duplicate_tab().await.is_err());
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.tabs.contains_key(&original));
+    }
+
+    #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
         let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
+            crate::project::Project::new_test().unwrap().0,
+            Default::default(),
             Default::default(),
         );
-        let state = state().await;
         let project = app.project.clone();
+        let state = AgentState::fake();
         app.tabs = ["a", "b"]
             .into_iter()
             .map(|id| {

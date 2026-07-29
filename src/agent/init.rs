@@ -1,110 +1,109 @@
-use anyhow::Context;
 use anyhow::Result;
-use futures::future::Abortable;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::unbounded_channel;
 
+use crate::agent::ActivityStatus;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
-use crate::agent::AgentStatus;
-use crate::agent::router::AgentRouterHandle;
-use crate::agent::router::RuntimeHandle;
-use crate::agent::task::manager::AgentTaskManager;
-use crate::agent::tool::registry::TOOL_REGISTRY;
-use crate::agent::tool::registry::ToolRegistry;
+use crate::agent::core::AgentCore;
+use crate::agent::router::Router;
+use crate::agent::task::executor::TaskExecutor;
 use crate::llm::history::History;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
+use crate::llm::history::HistoryUpdate;
+use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
+use crate::tui::app::AppEvent;
 
-const CHANNEL_CAPACITY: usize = 100;
+pub const CHANNEL_CAPACITY: usize = 100;
+pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
 impl Agent {
     pub fn new(
         project: Project,
-        router: AgentRouterHandle,
+        router: Router,
+        app_tx: Sender<AppEvent>,
         id: AgentId,
         state: AgentState,
-    ) -> Result<Self> {
-        let assistant = ASSISTANT_POOL
-            .get()
-            .context("assistant pool not initialized")?
-            .assistant(&state.assistant)?;
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let tools = tools_for_depth(state.max_depth);
-        Ok(Self {
+    ) -> Self {
+        let (user_tx, user_rx) = unbounded_channel();
+        let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
+        Self {
+            core: AgentCore::new(state, project.assistants().clone()),
             project,
             id,
-            state,
-            assistant,
             router,
-            pending_done: None,
-            rx,
-            tskmgr: AgentTaskManager::new(),
-            tx,
-            tools,
-        })
-    }
-
-    /// Spawn the agent's run loop, returning the runtime handle the router
-    /// uses to mailbox commands and to abort.
-    pub fn spawn(self) -> RuntimeHandle {
-        let (abort, reg) = futures::future::AbortHandle::new_pair();
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            let _ = Abortable::new(self.run(), reg).await;
-        });
-        RuntimeHandle::new(tx, abort)
+            app_tx,
+            user_tx,
+            user_rx,
+            executor: TaskExecutor::default(),
+            task_tx,
+            task_rx,
+        }
     }
 
     pub async fn save(&self) -> Result<()> {
-        self.state.save(&self.project, &self.id).await
+        self.core.state.save(&self.project, &self.id).await
     }
 
-    /// clone agent to given id on manual request from UI
     pub async fn try_duplicate(
         &self,
         aid: AgentId,
     ) -> Result<()> {
         self.project
-            .duplicate_agent_workdir(&self.id, &aid, &self.state.context.commit, true)
+            .duplicate_agent_workdir(&self.id, &aid, &self.core.state.context.commit)
             .await?;
+        let mut state = self.core.state.clone();
+        state.pending_messages.clear();
+        let generation = state.context.history.generation();
+        state.context.history.handle(
+            generation,
+            HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(DUPLICATED_NOTE.into())),
+        )?;
         let agent = Self::new(
             self.project.clone(),
             self.router.clone(),
-            aid.clone(),
-            self.state.clone(),
-        )?;
-        agent.save().await?;
-        let runtime = agent.spawn();
-        self.router.register(aid, runtime).await?;
-        Ok(())
+            self.app_tx.clone(),
+            aid,
+            state,
+        );
+        agent.launch_root().await
     }
-}
 
-/// Tool set for an agent with `max_depth` remaining subagent budget.
-fn tools_for_depth(max_depth: u32) -> ToolRegistry {
-    if max_depth > 0 {
-        return TOOL_REGISTRY.clone();
+    /// register + persist + launch a fresh root agent
+    pub async fn launch_root(self) -> Result<()> {
+        let router = self.router.clone();
+        let aid = self.id.clone();
+        router.register_root(&aid)?;
+        let result = async {
+            self.save().await?;
+            router.launch(self)
+        }
+        .await;
+        if result.is_err() {
+            drop(router.rollback_spawn(&aid).await);
+        }
+        result
     }
-    TOOL_REGISTRY.without([crate::tools::subagent::TOOL_NAME])
 }
 
 impl AgentState {
     /// init a primary agent from scratch
     pub fn new(
+        assistant_id: String,
         commit: String,
         instructions: String,
-        max_depth: u32,
     ) -> Self {
         Self {
-            status: AgentStatus::default(),
-            assistant: ASSISTANT_POOL.get().unwrap().next_primary(),
-            max_depth,
+            status: ActivityStatus::default(),
+            assistant_id,
             context: AgentContext {
                 commit,
                 history: History::new(instructions),
             },
+            pending_messages: Vec::new(),
         }
     }
 
@@ -113,7 +112,7 @@ impl AgentState {
         project: &Project,
         id: &AgentId,
     ) -> Result<()> {
-        project.store().save_agent(id, self).await
+        project.store().save_state(id, self).await
     }
 }
 
@@ -122,79 +121,83 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::router::AgentRouter;
-    use crate::config::Config;
-    use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::layout::LayoutTrait;
-
-    async fn assistant() -> crate::llm::provider::assistant::Assistant {
-        let pool = ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await;
-        pool.assistant(&pool.next_primary()).unwrap()
-    }
+    use crate::agent::router::RouterState;
 
     #[tokio::test]
-    async fn try_duplicate_registers_child_with_router() {
-        let project = Project::new_test().unwrap();
-        let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(app_tx, project.clone(), Default::default());
+    async fn try_duplicate_registers_copy_with_router() {
+        let project = Project::new_test().unwrap().0;
+        let (app_tx, mut app_rx) = channel(8);
+        let router = RouterState::start(
+            app_tx.clone(),
+            project.clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
 
         let parent_aid = AgentId::from(format!("dup-parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);
         tokio::fs::create_dir_all(&parent_workdir).await.unwrap();
-        let repo = git2::Repository::open(project.root()).unwrap();
-        let commit = repo
-            .head()
-            .unwrap()
-            .peel_to_commit()
-            .unwrap()
-            .id()
-            .to_string();
 
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: assistant().await.id,
-            max_depth: 1,
-            context: AgentContext {
-                commit: commit.clone(),
-                history: History::new("".into()),
-            },
-        };
-        let parent =
-            Agent::new(project.clone(), router.clone(), parent_aid.clone(), state).unwrap();
+        let mut state = project.fake_state();
+        // buffered mail addresses the original's subagents: the copy must
+        // not inherit it
+        state
+            .pending_messages
+            .push(crate::llm::history::message::UserMessage::new(
+                "[from: kid]\nstranded".into(),
+                1,
+            ));
+        let mut parent = Agent::new(
+            project.clone(),
+            router.clone(),
+            app_tx,
+            parent_aid.clone(),
+            state,
+        );
 
-        let child_aid = router.allocate_agent_id().await.unwrap();
-        parent.try_duplicate(child_aid.clone()).await.unwrap();
+        let copy_aid = router.allocate_agent_id();
+        parent
+            .handle(crate::agent::event::AgentEvent::User(
+                crate::agent::event::UserCommand::Duplicate(copy_aid.clone()),
+            ))
+            .await
+            .unwrap();
+        // the copy registered in-handler: nothing reported a failure
+        while let Ok(event) = app_rx.try_recv() {
+            assert!(
+                !matches!(
+                    event,
+                    crate::tui::app::AppEvent::Agent(
+                        _,
+                        crate::agent::event::UiEvent::DuplicateFailed { .. }
+                    )
+                ),
+                "{event:?}"
+            );
+        }
+
+        // the copy starts with the one-line "new empty tab" devmsg
+        // and an empty buffer (new-empty-root rule)
+        let copy_state = project.store().load_state(&copy_aid).await.unwrap();
+        assert!(copy_state.pending_messages.is_empty());
+        let last = copy_state
+            .context
+            .history
+            .state()
+            .messages
+            .last()
+            .unwrap()
+            .clone();
+        assert!(
+            matches!(
+                &last,
+                crate::llm::history::message::Message::Developer(DeveloperMessage::Misc(_))
+            ) && format!("{last:?}").contains(DUPLICATED_NOTE),
+            "expected the duplicated-note devmsg, got {last:?}"
+        );
 
         // observable via router: shutdown succeeds only if registered
-        router.shutdown(child_aid).await.unwrap();
+        router.shutdown(&copy_aid).unwrap();
     }
 }

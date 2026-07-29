@@ -1,7 +1,5 @@
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr;
@@ -204,99 +202,30 @@ pub fn refresh_index(workdir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// HEAD of an embedded repository at `path`, if one exists and has commits
-pub fn nested_head(path: &Path) -> Option<git2::Oid> {
-    if !path.join(".git").exists() {
-        return None;
-    }
-    Repository::open(path)
-        .inspect_err(|e| warn!("skipping unopenable nested repo at {path:?}: {e}"))
-        .ok()?
-        .head()
-        .ok()?
-        .target()
-}
-
-/// the workdir's current content as a git tree in its odb
-pub fn workdir_tree(
+/// the full id of the commit `id` (full or abbreviated) names, or of the
+/// worktree's own HEAD; branches, tags and rev expressions are rejected
+pub fn resolve(
     workdir: &Path,
-    excluded: &[String],
-) -> Result<git2::Oid> {
-    let is_excluded = |path: &Path| excluded.iter().any(|root| path.starts_with(root));
-
+    id: Option<&str>,
+) -> Result<String> {
     let repo = open_workdir(workdir)?;
-
-    // init index, filtering out excluded paths
-    let mut index = {
-        let mut index = repo.index()?;
-        if !excluded.is_empty() {
-            let to_remove = index
-                .iter()
-                .map(|entry| PathBuf::from(OsStr::from_bytes(&entry.path)))
-                .filter(|path| is_excluded(path))
-                .collect::<Vec<_>>();
-            for path in to_remove {
-                index.remove_path(&path)?;
-            }
-        }
-        index
+    let commit = match id {
+        Some(id) => repo.find_commit_by_prefix(id)?,
+        None => repo.head()?.peel_to_commit()?,
     };
-
-    // add all files, skipping nested repos and excluded paths
-    let mut nested = Vec::new();
-    index.add_all(
-        ["*"],
-        git2::IndexAddOption::DEFAULT,
-        Some(&mut |path: &Path, _: &[u8]| {
-            if is_excluded(path) {
-                return 1;
-            }
-            let full = workdir.join(path);
-            if full.symlink_metadata().is_ok_and(|m| m.is_dir()) && full.join(".git").exists() {
-                nested.push(path.to_path_buf());
-                return 1;
-            }
-            0
-        }),
-    )?;
-
-    // add nested repos separately as gitlinks as `git add -A` would (add_all in libgit2 doesn't)
-    for path in nested {
-        let Some(head) = nested_head(&workdir.join(&path)) else {
-            continue;
-        };
-        let mut name = path.as_os_str().as_encoded_bytes().to_vec();
-        if name.last() == Some(&b'/') {
-            name.pop();
-        }
-        index.add(&git2::IndexEntry {
-            ctime: git2::IndexTime::new(0, 0),
-            mtime: git2::IndexTime::new(0, 0),
-            dev: 0,
-            ino: 0,
-            mode: 0o160_000,
-            uid: 0,
-            gid: 0,
-            file_size: 0,
-            id: head,
-            flags: 0,
-            flags_extended: 0,
-            path: name,
-        })?;
-    }
-    index.update_all(["*"], None)?;
-    Ok(index.write_tree()?)
+    Ok(commit.id().to_string())
 }
 
-pub fn delete_ref_if_exists(
-    repo: &Repository,
-    name: &str,
+/// `git reset --hard`: moves the worktree's branch to `commit` and rewrites
+/// only the files that differ
+pub fn reset_hard(
+    workdir: &Path,
+    commit: &str,
 ) -> Result<()> {
-    match repo.find_reference(name) {
-        Ok(mut r) => Ok(r.delete()?),
-        Err(e) if e.code() == ErrorCode::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
-    }
+    let repo = open_workdir(workdir)?;
+    let target = repo.find_object(git2::Oid::from_str(commit)?, None)?;
+    repo.reset(&target, git2::ResetType::Hard, None)?;
+    Ok(())
 }
 
 pub fn delete_branch_if_exists(
@@ -369,4 +298,33 @@ pub async fn checkout(
         // concurrent checkout finished before this one
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use crate::agent::AgentId;
+    use crate::project::Project;
+
+    /// only commit ids resolve -- full, abbreviated, or the worktree's HEAD
+    /// by default; branch names and rev expressions are rejected
+    #[tokio::test]
+    async fn resolve_accepts_only_commit_ids() {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("resolver".to_string());
+        let head = project.head_commit();
+        project.new_agent_workdir(&head, &aid).await.unwrap();
+        let wd = project.agent_workdir(&aid);
+
+        assert_eq!(
+            [None, Some(head.as_str()), Some(&head[..7])]
+                .map(|id| super::resolve(&wd, id).unwrap()),
+            [head.clone(), head.clone(), head.clone()]
+        );
+        let branch = project.worktree_name(&aid);
+        for rev in [branch.as_str(), "HEAD", "HEAD~0"] {
+            assert!(super::resolve(&wd, Some(rev)).is_err(), "{rev} resolved");
+        }
+    }
 }
