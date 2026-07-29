@@ -8,7 +8,6 @@ use tokio::process::Command;
 use crate::agent::id::AgentId;
 use crate::deps;
 use crate::project::Project;
-use crate::project::layout::LayoutTrait;
 use crate::tui::widgets::container::collapsible_sections::CollapsibleSection;
 use crate::tui::widgets::container::collapsible_sections::CollapsibleSections;
 use crate::tui::widgets::container::element::RenderContext;

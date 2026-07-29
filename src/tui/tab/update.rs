@@ -1,12 +1,10 @@
 use anyhow::Result;
 
-use crate::agent::AgentStatus;
+use crate::agent::ActivityStatus;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::UserMessage;
-use crate::project::layout::LayoutTrait;
-use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 
@@ -38,21 +36,35 @@ impl Tab<'_> {
         Ok(())
     }
 
-    pub async fn set_state(
+    /// tee'd live output of an in-flight call; authoritative text arrives
+    /// with the finalized item, so this is render state only (§2.5)
+    pub fn stream_tool_output(
         &mut self,
-        status: AgentStatus,
+        call_id: String,
+        chunk: &str,
+    ) {
+        self.live_output.entry(call_id).or_default().push_str(chunk);
+        // the pending call lives in the last message: nothing appends while
+        // the ledger is busy
+        let len = self.state.context.history.state().messages.len();
+        self.scroll.set_dirty(len.saturating_sub(1));
+    }
+
+    /// true = status changed; the caller rebuilds the tablist (H1: the app
+    /// loop never sends into its own channel)
+    pub fn set_state(
+        &mut self,
+        status: ActivityStatus,
     ) -> Result<bool> {
         if self.state.status == status {
             return Ok(false);
         }
+        // idle = every call resolved; resolved calls render their real output
+        if status.idle() {
+            self.live_output.clear();
+        }
         self.state.status = status;
         self.refresh_file_completion()?;
-        if let Some(router) = &self.router {
-            router
-                .app_tx()
-                .send(AppEvent::TabStatusChanged(self.aid.clone()))
-                .await?;
-        }
         Ok(true)
     }
 

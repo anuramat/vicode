@@ -196,7 +196,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::id::AgentId;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::tab::Tab;
     use crate::tui::widgets::input::CompletionItem;
     use crate::tui::widgets::input::CompletionSource;
