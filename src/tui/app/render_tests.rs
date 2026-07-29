@@ -5,7 +5,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use crate::agent::AgentState;
-use crate::agent::AgentStatus;
+use crate::agent::ActivityStatus;
 use crate::agent::id::AgentId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
@@ -32,7 +32,7 @@ fn render(
 
 fn app_with_tab(
     history: History,
-    status: AgentStatus,
+    status: ActivityStatus,
 ) -> App<'static> {
     let mut app = App::new(
         Project::new_test().unwrap().0,
@@ -116,7 +116,7 @@ async fn renders_conversation_tab() {
             ))),
             HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
         ]),
-        AgentStatus::Normal(TurnStatus::Idle),
+        ActivityStatus::Normal(TurnStatus::Idle),
     );
     app.focus = super::AppFocus::Body;
 
@@ -155,7 +155,7 @@ async fn renders_failed_tab_with_tablist_overlay() {
                 ended_at: 2,
             }),
         ]),
-        AgentStatus::Normal(TurnStatus::Failed("aborted by user".into())),
+        ActivityStatus::Normal(TurnStatus::Failed("aborted by user".into())),
     );
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
