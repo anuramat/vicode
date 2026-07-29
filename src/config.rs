@@ -52,9 +52,11 @@ pub struct LayoutConfig {
     pub message_width: u16,
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
+#[derive(Deserialize, Debug, Clone, Copy, SmartDefault, Serialize, JsonSchema)]
+#[serde(default)]
 pub struct CompactConfig {
-    /// context window percentage, at which we compact the context, threshold < 100
+    /// context window percentage, at which we start compacting the context in the background,
+    /// while the turns go on
     #[default = 80]
     pub threshold: usize,
     /// context window percentage to compact to
@@ -62,6 +64,11 @@ pub struct CompactConfig {
     /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
     #[default = 20]
     pub target: usize,
+    /// context window percentage, past which turns never start instead of risking a context
+    /// overflow: they wait for a compaction; at least `threshold`, and equal to it makes
+    /// compaction blocking
+    #[default = 95]
+    pub hard_limit: usize,
 }
 
 pub fn expand_vec<I>(values: I) -> Vec<String>
@@ -199,6 +206,11 @@ impl Config {
                 assistant.provider
             );
         }
+        // below the threshold, nothing would compact the turns back under it
+        anyhow::ensure!(
+            self.compact.hard_limit >= self.compact.threshold,
+            "compact.hard_limit must be at least compact.threshold"
+        );
 
         self.validate_assistant(&self.primary_assistant)?;
         if let Some(assistant) = &self.subagent_assistant {
@@ -244,6 +256,16 @@ mod tests {
         config.shared = vec!["/etc".into()];
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("relative"));
+    }
+
+    #[test]
+    fn rejects_hard_limit_below_threshold() {
+        let mut config = Config::test();
+        config.compact.threshold = 80;
+        config.compact.hard_limit = 79;
+        insta::assert_snapshot!(config.validate().unwrap_err(), @"compact.hard_limit must be at least compact.threshold");
+        config.compact.hard_limit = 80;
+        config.validate().unwrap();
     }
 
     #[test]

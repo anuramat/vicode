@@ -34,7 +34,7 @@ impl Tab<'_> {
         };
 
         self.scroll.render(
-            self.state.context.history.state().messages.as_slice(),
+            &self.state.history.state().messages,
             messages_area,
             buf,
             ctx,

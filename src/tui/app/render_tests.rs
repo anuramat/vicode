@@ -4,19 +4,20 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::TurnStatus;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
+use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 use crate::project::Project;
+use crate::tools::bash::BashArguments;
+use crate::tools::bash::BashCall;
 use crate::tui::app::App;
 use crate::tui::tab::Tab;
 
@@ -30,19 +31,11 @@ fn render(
     term.backend().to_string()
 }
 
-fn app_with_tab(
-    history: History,
-    status: ActivityStatus,
-) -> App<'static> {
-    let mut app = App::new(
-        Project::new_test().unwrap().0,
-        Default::default(),
-        Default::default(),
-    );
+fn app_with_tab(history: History) -> App<'static> {
+    let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
     let mut state = AgentState::fake();
-    state.status = status;
-    state.context.history = history;
+    state.history = history;
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
     let mut tab = Tab::new(
@@ -62,18 +55,14 @@ fn app_with_tab(
 fn history(updates: impl IntoIterator<Item = HistoryUpdate>) -> History {
     let mut history = History::new("".into());
     for update in updates {
-        history.handle(0, update).unwrap();
+        history.handle(update).unwrap();
     }
     history
 }
 
 #[tokio::test]
 async fn renders_logo_screen_without_tabs() {
-    let mut app = App::new(
-        Project::new_test().unwrap().0,
-        Default::default(),
-        Default::default(),
-    );
+    let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
 
     insta::assert_snapshot!(render(&mut app, 80, 24), @r#"
@@ -106,23 +95,20 @@ async fn renders_logo_screen_without_tabs() {
 
 #[tokio::test]
 async fn renders_conversation_tab() {
-    let mut app = app_with_tab(
-        history([
-            HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 2 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
-                OutputItem::new("out-1".into(), 3),
-            )))),
-            HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta::new_at(
-                "out-1".into(),
-                DeltaContent::Output("Hi! How can I help?".into()),
-                4,
-            ))),
-            HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
-        ]),
-        ActivityStatus::Normal(TurnStatus::Idle),
-    );
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 2 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
+            OutputItem::new("out-1".into(), 3),
+        )))),
+        HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta::new_at(
+            "out-1".into(),
+            DeltaContent::Output("Hi! How can I help?".into()),
+            4,
+        ))),
+        HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
+    ]));
     app.focus = super::AppFocus::Body;
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
@@ -145,27 +131,24 @@ async fn renders_conversation_tab() {
     "                                                                                                    "
     "hello                                                                                               "
     "Hi! How can I help?                                                                                 "
-    "demo/tab-1                                                               1.2 / 32.0 kT | idle | test"
+    "demo/tab-1                                                                      1.2 / 32.0 kT | test"
     "#);
 }
 
 #[tokio::test]
-async fn renders_failed_tab_with_tablist_overlay() {
-    let mut app = app_with_tab(
-        history([
-            HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed {
-                message: "aborted by user".into(),
-                ended_at: 2,
-            }),
-        ]),
-        ActivityStatus::Normal(TurnStatus::Failed("aborted by user".into())),
-    );
+async fn renders_failed_turn_with_tablist_overlay() {
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+            message: "aborted by user".into(),
+            ended_at: 2,
+        }),
+    ]));
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
     "┌──────────────────────┐                                                                            "
-    "│ [!]tab-1             │                                                                            "
+    "│ [ ]tab-1             │                                                                            "
     "│                      │                                                                            "
     "│                      │                                                                            "
     "│                      │                                                                            "
@@ -183,6 +166,56 @@ async fn renders_failed_tab_with_tablist_overlay() {
     "│                      │                                                                            "
     "│                      │                                                                            "
     "└──────────────────────┘                                                                            "
-    "demo/tab-1                                            1.2 / 32.0 kT | failed: aborted by user | test"
+    "demo/tab-1                                                                      1.2 / 32.0 kT | test"
+    "#);
+}
+
+#[tokio::test]
+async fn renders_streamed_output_of_inflight_tool_call() {
+    let call = ToolCallItem {
+        id: Some("call-1".into()),
+        call_id: "call-1".into(),
+        task: Box::new(BashCall {
+            arguments: Some(BashArguments {
+                command: "make".into(),
+            }),
+            meta: None,
+            output: None,
+        }),
+        streamed: String::new(),
+        token_count: 0,
+        started_at: 2,
+        ended_at: Some(3),
+        ready_at: None,
+    };
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("build it".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+            call,
+        )))),
+        HistoryUpdate::ToolOutput {
+            call_id: "call-1".into(),
+            chunk: "compiling\n".into(),
+        },
+        HistoryUpdate::ToolOutput {
+            call_id: "call-1".into(),
+            chunk: "linking".into(),
+        },
+    ]));
+    app.focus = super::AppFocus::Body;
+    app.ctx.hide_tools = false;
+
+    insta::assert_snapshot!(render(&mut app, 60, 10), @r#"
+    "                                                            "
+    "                                                            "
+    "                                                            "
+    "                                                            "
+    "build it                                                    "
+    "┌ make ────────────────────────────────────────────────────┐"
+    "└──────────────────────────────────────────────────────────┘"
+    "compiling                                                   "
+    "linking                                                     "
+    "demo/tab-1                              1.2 / 32.0 kT | test"
     "#);
 }

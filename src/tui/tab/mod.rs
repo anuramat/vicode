@@ -4,16 +4,16 @@ pub mod update;
 use std::fmt::Debug;
 
 use anyhow::Result;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::AgentState;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouterHandle;
 use crate::forward;
 use crate::llm::history::History;
-use crate::llm::provider::assistant::ASSISTANT_POOL;
 use crate::llm::provider::assistant::ModelConfig;
 use crate::project::Project;
-use crate::tui::command::parse_arg;
 use crate::tui::widgets::container::scroll::ScrollElements;
 use crate::tui::widgets::container::scroll::ScrollOp;
 use crate::tui::widgets::info::InfoWidget;
@@ -26,7 +26,8 @@ const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    pub router: Option<AgentRouterHandle>,
+    /// the agent's event channel, from its `Started`; `None` = not attached
+    pub control: Option<UnboundedSender<AgentEvent>>,
     pub aid: AgentId,
     pub state: AgentState,
     /// assistant cached for ui
@@ -36,23 +37,21 @@ pub struct Tab<'a> {
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
     pub info: InfoWidget,
-
-    pub multiplier: usize,
 }
 
 impl Tab<'_> {
     forward! {
-        history: History = self.state.context.history;
+        history: History = self.state.history;
     }
 
     pub fn new(
-        router: Option<AgentRouterHandle>,
+        control: Option<UnboundedSender<AgentEvent>>,
         aid: AgentId,
         state: AgentState,
         project: &Project,
     ) -> Self {
         let mut tab = Self {
-            router,
+            control,
             aid,
             state,
             assistant_config: None,
@@ -67,61 +66,43 @@ impl Tab<'_> {
                 }),
             },
             info: InfoWidget::default(),
-            multiplier: 1,
         };
         tab.refresh_assistant_config();
         tab
     }
 
     pub fn refresh_assistant_config(&mut self) {
-        self.assistant_config = ASSISTANT_POOL
-            .get()
-            .and_then(|pool| pool.assistant(&self.state.assistant).ok())
-            .map(|assistant| assistant.config.clone());
+        self.assistant_config = self
+            .project
+            .assistants()
+            .assistant(&self.state.assistant_id)
+            .ok()
+            .map(|assistant| assistant.config);
     }
 
     pub fn label(&self) -> String {
-        let prefix = if self.router.is_none() {
-            "*"
-        } else {
-            self.state.status.label()
-        };
+        let prefix = if self.control.is_none() { "*" } else { " " };
         format!("[{prefix}]{}", self.aid)
-    }
-
-    pub async fn refresh_info(&mut self) -> Result<()> {
-        if self.router.is_none() {
-            return Ok(());
-        }
-        self.info = InfoWidget::new(&self.project, &self.aid).await?;
-        Ok(())
-    }
-
-    pub fn set_multiplier(
-        &mut self,
-        value: Option<&str>,
-    ) -> Result<()> {
-        if self.router.is_none() {
-            return Ok(());
-        }
-        let value: u8 = parse_arg(value)?.unwrap_or(1);
-        anyhow::ensure!(value > 0, "multiplier must be positive");
-        self.multiplier = value as usize;
-        self.update_input_title();
-        Ok(())
     }
 
     pub fn scroll(
         &mut self,
         op: ScrollOp,
     ) {
-        let messages = self.state.context.history.state().messages.as_slice();
-        self.scroll.scroll(messages, op);
+        self.scroll.scroll(&self.state.history.state().messages, op);
     }
 
-    pub fn router(&self) -> Result<&AgentRouterHandle> {
-        self.router
+    /// straight to the agent; a closed channel means its runtime is gone
+    pub fn send(
+        &self,
+        command: UserCommand,
+    ) -> Result<()> {
+        let control = self
+            .control
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))
+            .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))?;
+        control
+            .send(AgentEvent::User(command))
+            .map_err(|_| anyhow::anyhow!("agent {} is dead", self.aid))
     }
 }

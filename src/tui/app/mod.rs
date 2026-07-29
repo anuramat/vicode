@@ -1,30 +1,26 @@
 pub mod command;
 pub mod handle;
 pub mod key;
-#[cfg(test)]
+pub mod refresh;
 mod render_tests;
 pub mod run;
 pub mod tabs;
-
-use std::collections::HashSet;
 
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
-use crate::agent::AgentState;
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::UiEvent;
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouter;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::router::Router;
 use crate::project::Project;
+use crate::tui::app::refresh::RefreshTask;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
@@ -44,14 +40,16 @@ pub enum AppFocus {
     Tabs,
 }
 
+/// events on the app channel — external sources only (the crossterm
+/// translator and agents); the app loop
+/// itself never sends here, so it can never block on its own bounded
+/// queue
 #[derive(Debug)]
 pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
 
-    NewAgent(AgentId, Box<AgentState>),
-    ParentEvent(AgentId, ParentEvent),
-    TabStatusChanged(AgentId),
+    Agent(AgentId, UiEvent),
 
     Redraw,
 }
@@ -66,9 +64,9 @@ pub struct App<'a> {
     pub project: Project,
     pub should_exit: bool,
 
-    pub rx: Receiver<AppEvent>,
-    pub tx: Sender<AppEvent>,
-    pub router: AgentRouterHandle,
+    pub rx: UnboundedReceiver<AppEvent>,
+    pub tx: UnboundedSender<AppEvent>,
+    pub router: Router,
 
     /// hide tool calls, etc
     pub ctx: RenderContext,
@@ -84,6 +82,8 @@ pub struct App<'a> {
     pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
     pub focus: AppFocus,
+    /// the selected tab's workdir read in flight
+    pub refreshing: Option<RefreshTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -91,22 +91,18 @@ pub struct AppState {
     pub visible_order: Vec<AgentId>,
 }
 
-const CHANNEL_CAPACITY: usize = 100;
 // TODO make configurable
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl App<'_> {
-    fn new(
+    fn with_router(
         project: Project,
-        agent_ids: HashSet<AgentId>,
+        tx: UnboundedSender<AppEvent>,
+        rx: UnboundedReceiver<AppEvent>,
+        router: Router,
     ) -> Self {
-        // TODO figure out what should stay here, and what belongs to run()/launch()
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let router = AgentRouter::spawn(tx.clone(), project.clone(), agent_ids);
-
         let project_name = project.name();
         let ctx = project.config().render;
-
         Self {
             project,
             focus: AppFocus::default(),
@@ -121,6 +117,7 @@ impl App<'_> {
             tablist: TabList::default(),
             tabs: IndexMap::new(),
             notification: None,
+            refreshing: None,
         }
     }
 
@@ -144,5 +141,21 @@ impl App<'_> {
 
     pub async fn save_app_state(&self) -> Result<()> {
         self.project.store().save_app(&self.state()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use super::*;
+
+    impl App<'_> {
+        /// on an empty router
+        pub fn new(project: Project) -> Self {
+            let (tx, rx) = unbounded_channel();
+            let router = Router::new(tx.clone(), project.clone());
+            Self::with_router(project, tx, rx, router)
+        }
     }
 }
