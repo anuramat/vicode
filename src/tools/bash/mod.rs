@@ -23,8 +23,9 @@ pub struct BashArguments {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BashResult {
-    pub stdout: String,
-    pub stderr: String,
+    /// interleaved stdout+stderr, adopted from the stream accumulator at
+    /// reap (§2.4a) — empty as returned by the task itself
+    pub output: String,
     pub exit_status: Option<i32>,
     pub signal: Option<i32>,
 }
