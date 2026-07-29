@@ -85,25 +85,11 @@ fn command(cmd: &str) -> (Section, Option<u16>) {
 }
 
 fn output(result: &BashResult) -> Vec<Section> {
-    let mut sections = Vec::new();
-
-    let stdout = Section::new(
-        "stdout",
-        wrapped(result.stdout.trim_end().to_string()),
+    vec![Section::new(
+        "output",
+        wrapped(result.output.trim_end().to_string()),
         style(),
-    );
-    sections.push(stdout);
-
-    let stderr_trimmed = result.stderr.trim_end();
-    if !stderr_trimmed.is_empty() {
-        sections.push(Section::new(
-            "stderr",
-            wrapped(stderr_trimmed.to_string()),
-            style(),
-        ));
-    }
-
-    sections
+    )]
 }
 
 fn app_error(message: String) -> Section {
