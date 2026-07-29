@@ -4,7 +4,7 @@ use tracing::instrument;
 
 use super::App;
 use super::AppEvent;
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::UiEvent;
 use crate::agent::id::AgentId;
 use crate::tui::app::NotificationKind;
 
@@ -26,22 +26,8 @@ impl App<'_> {
                 self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
-            NewAgent(agent_id, state) => {
-                if let Err(e) = self.new_agent(agent_id.clone(), *state).await {
-                    // drop the preview tab
-                    self.tabs.shift_remove(&agent_id);
-                    self.rebuild_tablist();
-                    return Err(e);
-                }
-            }
-            ParentEvent(agent_id, event) => {
-                self.handle_parent_event(agent_id, event).await?;
-                self.dirty = true;
-            }
-            TabStatusChanged(agent_id) => {
-                if self.tabs.contains_key(&agent_id) {
-                    self.rebuild_tablist();
-                }
+            Agent(agent_id, event) => {
+                self.handle_agent_event(agent_id, event).await?;
                 self.dirty = true;
             }
             Redraw => {
@@ -51,35 +37,39 @@ impl App<'_> {
         Ok(())
     }
 
-    async fn handle_parent_event(
+    async fn handle_agent_event(
         &mut self,
         aid: AgentId,
-        event: ParentEvent,
+        event: UiEvent,
     ) -> Result<()> {
         #[allow(clippy::enum_glob_use)]
-        use ParentEvent::*;
+        use UiEvent::*;
 
-        let tab = self.tab_mut_by_aid(&aid)?;
+        // hidden children have no tab; drop their events silently
+        let Ok(tab) = self.tab_mut_by_aid(&aid) else {
+            return Ok(());
+        };
         match event {
-            Started(state) => {
+            Started { state, control } => {
                 // TODO this calls tab_mut_by_aid again, which is sad
-                self.handle_started(&aid, *state).await?;
+                self.handle_started(&aid, *state, control).await?;
             }
-            HistoryUpdate(loc, event) => {
-                tab.update(loc, event)?;
+            HistoryUpdate(event) => {
+                tab.update(event)?;
             }
             Error(msg) => {
                 self.notify(NotificationKind::Error, msg);
             }
-            StatusUpdate(status) => {
-                if tab.set_state(status).await? {
-                    tab.refresh_info().await?;
-                }
-            }
             AssistantSet(assistant) => {
-                tab.state.assistant = assistant;
+                tab.state.assistant_id = assistant;
                 tab.refresh_assistant_config();
-                self.tx.send(AppEvent::TabStatusChanged(aid)).await?;
+                self.rebuild_tablist();
+            }
+            // the failed copy's preview tab must not linger
+            DuplicateFailed { copy, error } => {
+                self.tabs.shift_remove(&copy);
+                self.rebuild_tablist();
+                self.notify(NotificationKind::Error, error);
             }
         }
         Ok(())
@@ -93,77 +83,25 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
-    use crate::agent::AgentStatus;
-    use crate::config::Config;
     use crate::llm::history::AssistantEvent;
-    use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
     use crate::llm::history::delta::Delta;
     use crate::llm::history::delta::DeltaContent;
     use crate::llm::history::message::UserMessage;
-    use crate::llm::provider::assistant::Assistant;
-    use crate::llm::provider::assistant::AssistantPool;
-    use crate::project::layout::LayoutTrait;
     use crate::tui::app::NotificationKind;
     use crate::tui::tab::Tab;
 
-    async fn test_assistant() -> Assistant {
-        crate::llm::provider::assistant::ASSISTANT_POOL
-            .get_or_init(|| async {
-                AssistantPool::from_config(
-                    &Config::parse_with_defaults(
-                        r#"
-                primary_assistant = ["test"]
-                shell_cmd = ["bash", "-c"]
-
-                [sandbox]
-                kind = "bwrap"
-                bin = "bwrap"
-                args = []
-                stages = []
-
-                [providers.main]
-                api = "responses"
-                base_url = "https://api.example.com/v1"
-
-                [assistants.test]
-                provider = "main"
-                model = "gpt-test"
-                window = 1
-                "#,
-                    )
-                    .unwrap(),
-                )
-                .await
-                .unwrap()
-            })
-            .await
-            .assistant("test")
-            .unwrap()
-    }
-
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap(),
-            Default::default(),
-        );
+        let mut app = App::new(crate::project::Project::new_test().unwrap().0);
         let aid = AgentId::from("a".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: test_assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         app.tabs.insert(
             aid.clone(),
             Tab::new(None, aid.clone(), state, &app.project),
         );
 
-        app.handle_parent_event(aid, ParentEvent::Error("oops".into()))
+        app.handle_agent_event(aid, UiEvent::Error("oops".into()))
             .await
             .unwrap();
 
@@ -174,57 +112,70 @@ mod tests {
 
     #[tokio::test]
     async fn assistant_set_updates_tab_state() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone());
         let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: "test".into(),
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("".into()),
-            },
-        };
+        let state = AgentState::fake();
         let tab = Tab::new(
-            Some(crate::agent::router::AgentRouter::test_handle()),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             state,
             &project,
         );
         app.tabs.insert(aid.clone(), tab);
 
-        app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet("test".into()))
+        app.handle_agent_event(aid.clone(), UiEvent::AssistantSet("test".into()))
             .await
             .unwrap();
 
         let tab = app.tab_mut_by_aid(&aid).unwrap();
-        assert_eq!(tab.state.assistant, "test");
+        assert_eq!(tab.state.assistant_id, "test");
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
 
     #[tokio::test]
-    async fn tab_history_replays_authoritative_history_updates_exactly() {
-        let project = crate::project::Project::new_test().unwrap();
-        let mut app = App::new(project.clone(), Default::default());
-        let aid = AgentId::from("deterministic-tab".to_string());
-        let state = AgentState {
-            status: AgentStatus::default(),
-            assistant: test_assistant().await.id,
-            max_depth: 1,
-            context: crate::agent::AgentContext {
-                commit: "".into(),
-                history: History::new("instructions".into()),
+    async fn duplicate_failed_rolls_back_preview_tab() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone());
+        let original = AgentId::from("orig".to_string());
+        let copy = AgentId::from("copy".to_string());
+        let state = AgentState::fake();
+        for aid in [&original, &copy] {
+            app.tabs.insert(
+                aid.clone(),
+                Tab::new(None, aid.clone(), state.clone(), &project),
+            );
+        }
+        app.rebuild_tablist();
+
+        app.handle(AppEvent::Agent(
+            original.clone(),
+            UiEvent::DuplicateFailed {
+                copy: copy.clone(),
+                error: "agent is busy".into(),
             },
-        };
+        ))
+        .await
+        .unwrap();
+
+        assert!(!app.tabs.contains_key(&copy));
+        assert_eq!(app.tabs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn tab_history_replays_authoritative_history_updates_exactly() {
+        let project = crate::project::Project::new_test().unwrap().0;
+        let mut app = App::new(project.clone());
+        let aid = AgentId::from("deterministic-tab".to_string());
+        let state = AgentState::fake();
         app.tabs.insert(
             aid.clone(),
             Tab::new(
-                Some(crate::agent::router::AgentRouter::test_handle()),
+                Some(tokio::sync::mpsc::unbounded_channel().0),
                 aid.clone(),
                 state.clone(),
                 &project,
@@ -232,7 +183,6 @@ mod tests {
         );
         let events = vec![
             HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 1)),
-            HistoryUpdate::GenerationIncremented,
             HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 2 }),
             HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 3 }),
             HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta {
@@ -242,17 +192,16 @@ mod tests {
             })),
             HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
         ];
-        let mut expected = state.context.history.clone();
+        let mut expected = state.history.clone();
 
         for event in events {
-            let generation = expected.generation();
-            expected.handle(generation, event.clone()).unwrap();
-            app.handle_parent_event(aid.clone(), ParentEvent::HistoryUpdate(generation, event))
+            expected.handle(event.clone()).unwrap();
+            app.handle_agent_event(aid.clone(), UiEvent::HistoryUpdate(event))
                 .await
                 .unwrap();
         }
 
-        let actual = &app.tab_mut_by_aid(&aid).unwrap().state.context.history;
+        let actual = &app.tab_mut_by_aid(&aid).unwrap().state.history;
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
             serde_json::to_value(expected).unwrap()

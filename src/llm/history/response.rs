@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::bail;
 
 use crate::llm::history::HistoryState;
 use crate::llm::history::event::AssistantEvent;
@@ -32,7 +31,7 @@ impl HistoryState {
                 self.complete_response(ended_at)?;
             }
             AssistantEvent::Failed { message, ended_at } => {
-                self.fail_response(message, ended_at)?;
+                self.fail_response(message, ended_at);
             }
         }
         Ok(())
@@ -42,19 +41,25 @@ impl HistoryState {
         &mut self,
         mut new_item: AssistantItem,
     ) -> Result<()> {
-        // HACK ideally we would somehow make sure that we initialize token count properly
-        new_item.recount();
         let msg = self.last_assistant_msg_mut()?;
 
         // if item already exists -- preserve started_at, keep the latest ended_at
-        if let Some(existing_item) = msg.content.get(&new_item.id()) {
+        if let Some(existing_item) = msg.content.get_mut(&new_item.id()) {
             if let Some(started_at) = existing_item.started_at() {
                 new_item.set_started_at(started_at);
             }
             if let Some(ended_at) = existing_item.ended_at() {
                 new_item.touch_ended_at(ended_at);
             }
+            // a resolved tool call folds in what it streamed
+            if let (AssistantItem::ToolCall(existing), AssistantItem::ToolCall(new)) =
+                (existing_item, &mut new_item)
+            {
+                new.task.compose(std::mem::take(&mut existing.streamed));
+            }
         }
+        // HACK ideally we would somehow make sure that we initialize token count properly
+        new_item.recount();
 
         // touch the message
         if let Some(ended_at) = new_item.ended_at() {
@@ -80,23 +85,22 @@ impl HistoryState {
         Ok(())
     }
 
+    /// fail the last response if it's still in flight, a no-op otherwise:
+    /// a finished response keeps its outcome, a failed one its first error
     pub fn fail_response(
         &mut self,
         error_msg: String,
         ended_at: u64,
-    ) -> Result<()> {
-        let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(ended_at);
-        match msg.status {
-            AssistantStatus::Error(_) => return Ok(()), // keep the first error
-            AssistantStatus::Success => {
-                bail!("cannot fail a successful response");
-            }
-            AssistantStatus::Queued | AssistantStatus::InProgress => {
-                msg.status = AssistantStatus::Error(error_msg);
-            }
+    ) {
+        if let Some(msg) = self.last_mut().and_then(|v| v.try_as_assistant_mut())
+            && matches!(
+                msg.status,
+                AssistantStatus::Queued | AssistantStatus::InProgress
+            )
+        {
+            msg.touch_ended_at(ended_at);
+            msg.status = AssistantStatus::Error(error_msg);
         }
-        Ok(())
     }
 
     pub fn status(&self) -> Option<AssistantStatus> {
@@ -168,7 +172,7 @@ mod tests {
     fn response_queued_creates_empty_assistant_message() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 7 }))
+            .handle(response(AssistantEvent::Created { created_at: 7 }))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -185,10 +189,10 @@ mod tests {
     fn response_started_flips_message_to_in_progress() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 7 }))
+            .handle(response(AssistantEvent::Created { created_at: 7 }))
             .unwrap();
         history
-            .handle(0, response(AssistantEvent::Started { started_at: 9 }))
+            .handle(response(AssistantEvent::Started { started_at: 9 }))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -202,15 +206,12 @@ mod tests {
     fn item_added_does_not_touch_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
+            .handle(response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out", 2, None,
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out", 2, None,
+            )))))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -222,17 +223,14 @@ mod tests {
     fn item_done_without_delta_touches_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
+            .handle(response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out",
-                    2,
-                    Some(3),
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out",
+                2,
+                Some(3),
+            )))))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -244,27 +242,21 @@ mod tests {
     fn item_replacement_preserves_started_at_and_keeps_latest_ended_at() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
+            .handle(response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out",
-                    2,
-                    Some(9),
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out",
+                2,
+                Some(9),
+            )))))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out",
-                    5,
-                    Some(7),
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out",
+                5,
+                Some(7),
+            )))))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -275,14 +267,11 @@ mod tests {
         assert_eq!((item.started_at, item.ended_at), (2, Some(9)));
 
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out",
-                    6,
-                    Some(11),
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out",
+                6,
+                Some(11),
+            )))))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -297,25 +286,19 @@ mod tests {
     fn delta_touches_message_timing() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
+            .handle(response(AssistantEvent::Created { created_at: 1 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out", 2, None,
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out", 2, None,
+            )))))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Delta(Delta {
-                    id: "out".into(),
-                    delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
-                    timestamp: 3,
-                })),
-            )
+            .handle(response(AssistantEvent::Delta(Delta {
+                id: "out".into(),
+                delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
+                timestamp: 3,
+            })))
             .unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
@@ -335,17 +318,14 @@ mod tests {
     fn response_completed_marks_message_success() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 0 }))
+            .handle(response(AssistantEvent::Created { created_at: 0 }))
             .unwrap();
         history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(output_item_at(
-                    "out", 0, None,
-                )))),
-            )
+            .handle(response(AssistantEvent::Item(Box::new(output_item_at(
+                "out", 0, None,
+            )))))
             .unwrap();
-        history.handle(0, response(completed())).unwrap();
+        history.handle(response(completed())).unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
         };
@@ -361,11 +341,9 @@ mod tests {
     fn response_failed_marks_message_error_for_abort() {
         let mut history = History::new(String::new());
         history
-            .handle(0, response(AssistantEvent::Created { created_at: 0 }))
+            .handle(response(AssistantEvent::Created { created_at: 0 }))
             .unwrap();
-        history
-            .handle(0, response(failed("aborted by user")))
-            .unwrap();
+        history.handle(response(failed("aborted by user"))).unwrap();
         let Some(Message::Assistant(msg)) = history.state().messages.first() else {
             panic!("expected assistant message");
         };
@@ -374,5 +352,50 @@ mod tests {
             AssistantStatus::Error(ref text) if text == "aborted by user"
         ));
         assert_eq!(msg.ended_at, Some(9));
+    }
+
+    /// only a response still in flight fails: anything else is a no-op
+    #[test]
+    fn response_failed_only_fails_inflight() {
+        let mut history = History::new(String::new());
+        history.handle(response(failed("no response"))).unwrap();
+        for event in [
+            AssistantEvent::Created { created_at: 1 },
+            AssistantEvent::Completed { ended_at: 2 },
+            AssistantEvent::Failed {
+                message: "after success".into(),
+                ended_at: 3,
+            },
+            AssistantEvent::Created { created_at: 4 },
+            AssistantEvent::Failed {
+                message: "first".into(),
+                ended_at: 5,
+            },
+            AssistantEvent::Failed {
+                message: "second".into(),
+                ended_at: 6,
+            },
+        ] {
+            history.handle(response(event)).unwrap();
+        }
+        insta::assert_yaml_snapshot!(history.state().messages, @"
+        - role: assistant
+          status: Success
+          content: []
+          token_count: 0
+          created_at: 1
+          started_at: ~
+          ended_at: 2
+          ready_at: ~
+        - role: assistant
+          status:
+            Error: first
+          content: []
+          token_count: 0
+          created_at: 4
+          started_at: ~
+          ended_at: 5
+          ready_at: ~
+        ");
     }
 }

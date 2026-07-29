@@ -21,12 +21,13 @@ pub trait AsMessageText {
 pub enum DeveloperMessage {
     Compact(CompactMessage),
     Misc(MiscMessage),
+    /// inter-agent message
+    Peer(PeerMessage),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct CompactMessage {
     pub text: String,
-    pub needs_another_turn: bool,
 
     pub token_count: usize,
 
@@ -40,6 +41,29 @@ pub struct MiscMessage {
     text: String,
     token_count: usize,
     created_at: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PeerMessage {
+    pub text: String,
+    pub token_count: usize,
+    pub created_at: u64,
+}
+
+impl PeerMessage {
+    /// tagged in-body with the sender id
+    pub fn new(
+        sender: impl std::fmt::Display,
+        text: &str,
+        created_at: u64,
+    ) -> Self {
+        let text = format!("[from: {sender}]\n{text}");
+        Self {
+            token_count: count_text_tokens(&text),
+            text,
+            created_at,
+        }
+    }
 }
 
 impl DeveloperMessage {
@@ -60,6 +84,7 @@ impl TokenCount for DeveloperMessage {
         match self {
             Self::Compact(msg) => msg.token_count = token_count,
             Self::Misc(msg) => msg.token_count = token_count,
+            Self::Peer(msg) => msg.token_count = token_count,
         }
     }
 
@@ -67,6 +92,7 @@ impl TokenCount for DeveloperMessage {
         match self {
             Self::Compact(msg) => msg.token_count,
             Self::Misc(msg) => msg.token_count,
+            Self::Peer(msg) => msg.token_count,
         }
     }
 }
@@ -98,6 +124,18 @@ impl Timing for CompactMessage {
 }
 
 impl Timing for MiscMessage {
+    fn created_at(&self) -> u64 {
+        self.created_at
+    }
+}
+
+impl AsMessageText for PeerMessage {
+    fn as_message_text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl Timing for PeerMessage {
     fn created_at(&self) -> u64 {
         self.created_at
     }

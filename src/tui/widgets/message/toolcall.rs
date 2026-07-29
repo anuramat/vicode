@@ -6,6 +6,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::llm::history::message::ToolCallItem;
 use crate::tui::colors::TOOLCALL_COLOR;
+use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;
 use crate::tui::widgets::container::element::RenderContext;
@@ -24,7 +25,11 @@ where T: HeightComputable + Clone
 
 impl From<&ToolCallItem> for Element {
     fn from(call: &ToolCallItem) -> Self {
-        call.task.to_element()
+        let widget = call.task.to_element();
+        if call.streamed.is_empty() {
+            return widget;
+        }
+        CompositeElement(vec![widget, LiveToolOutput(call.streamed.clone()).into()]).into()
     }
 }
 
@@ -68,5 +73,40 @@ where T: HeightComputable + Clone
             .border_set(ratatui::symbols::border::PLAIN)
             .style(style())
             .title(format!(" {} ", self.name))
+    }
+}
+
+/// streamed-so-far output of an in-flight call, rendered under its pending
+/// widget until the finalized item replaces it
+#[derive(Debug, Clone)]
+pub struct LiveToolOutput(pub String);
+
+impl HeightComputable for LiveToolOutput {
+    fn height(
+        &mut self,
+        width: u16,
+        ctx: RenderContext,
+    ) -> u16 {
+        if ctx.hide_tools {
+            return 0;
+        }
+        self.paragraph().height(width, ctx)
+    }
+
+    fn render(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        ctx: RenderContext,
+    ) {
+        if !ctx.hide_tools {
+            self.paragraph().render_ref(area, buf);
+        }
+    }
+}
+
+impl LiveToolOutput {
+    fn paragraph(&self) -> Paragraph<'_> {
+        Paragraph::new(self.0.as_str()).style(style())
     }
 }
