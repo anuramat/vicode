@@ -592,7 +592,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     "#);
 }
 
-/// H2: the abort's emitted history updates must reach the app mirror in an
+/// the abort's emitted history updates must reach the app mirror in an
 /// order it accepts — the tool finalization lands at the new generation, so
 /// the mirror must learn of the bump first. A mirror seeded from the pre-abort
 /// history and fed every emitted update rejects a premature generation.
@@ -643,7 +643,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
 }
 
 /// apply every buffered `HistoryUpdate` the agent emitted into the mirror, in
-/// emission order; a rejected update is a generation desync (H2)
+/// emission order; a rejected update is a generation desync
 fn apply_emitted_updates(
     mirror: &mut crate::llm::history::History,
     app_rx: &mut tokio::sync::mpsc::Receiver<AppEvent>,
@@ -720,7 +720,7 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
     );
 }
 
-/// H6: a panicked turn still lands its terminal Failed event, so the history
+/// a panicked turn still lands its terminal Failed event, so the history
 /// turn terminates (Error) instead of being orphaned InProgress — otherwise
 /// the next flush would stack a fresh turn on top of the orphan.
 #[tokio::test]
@@ -927,7 +927,7 @@ async fn spawn_wait_inspect_archive_lifecycle() {
     );
 }
 
-/// §6 spawn-capture consistency: `spawn` captures the history at dispatch
+/// spawn-capture consistency: `spawn` captures the history at dispatch
 /// and resolves only once the workdir copy is durable, so an edit made
 /// after the call resolves lands in neither the child's workdir nor its
 /// inherited history — never in the workdir alone

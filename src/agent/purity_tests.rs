@@ -1,4 +1,4 @@
-//! structural purity guard (§5): `AgentCore` decides, `Agent` acts. The
+//! structural purity guard: `AgentCore` decides, `Agent` acts. The
 //! core produces `Effect`s and must never perform I/O itself — no async, no
 //! awaits, no process/tokio/fs calls. Scanned as source text (kept in a
 //! separate file so the forbidden literals here don't match themselves) so a
@@ -18,7 +18,7 @@ fn core_is_pure() {
     ] {
         assert!(
             !src.contains(forbidden),
-            "src/agent/core.rs violates §5 purity: found `{forbidden}` — side \
+            "src/agent/core.rs violates purity: found `{forbidden}` — side \
              effects belong in `Agent`, expressed as Effects"
         );
     }

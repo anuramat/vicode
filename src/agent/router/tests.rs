@@ -1,4 +1,4 @@
-//! router unit tests (plan §4 step 1): through the real spawned router task,
+//! router unit tests: through the real spawned router task,
 //! with real child runtimes on scripted `FakeApi` turns
 #![cfg(test)]
 
@@ -829,7 +829,7 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     let a = rig.spawn_idle_child(&rig.primary, "a").await;
     let b = rig.spawn_idle_child(&rig.primary, "b").await;
     // make both busy: each gets a message whose scripted turn hangs — the
-    // outstanding delivery alone makes a racing wait register (M2)
+    // outstanding delivery alone makes a racing wait register
     rig.api.script_hanging_turn(vec![]);
     rig.api.script_hanging_turn(vec![]);
     for target in [&a, &b] {
@@ -880,7 +880,7 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     .await
     .expect("a never started its hanging turn");
     // abort a's hanging turn: it idles with the typed failure, the cached
-    // output intact (M1)
+    // output intact
     rig.router.forward(a, ExternalEvent::Abort).await.unwrap();
     assert_eq!(
         timeout(TIMEOUT, reverse).await.unwrap().unwrap(),
@@ -1144,7 +1144,7 @@ async fn forward_to_closed_runtime_is_rejected_and_marks_dead() {
     );
 }
 
-/// M2: a send that lands while the target's pre-send idle report is still in
+/// a send that lands while the target's pre-send idle report is still in
 /// flight must not fire a later wait with the previous turn's output — the
 /// delivery seqnums swallow the stale report
 #[tokio::test]
@@ -1269,7 +1269,7 @@ async fn forwarded_abort_to_dead_primary_is_rejected() {
     );
 }
 
-/// H4a: a wake whose turn fails to start still reports — the wait fires with
+/// a wake whose turn fails to start still reports — the wait fires with
 /// the typed handler error instead of hanging forever
 #[tokio::test]
 async fn failed_wake_fires_wait_with_typed_error() {
@@ -1317,7 +1317,7 @@ async fn failed_wake_fires_wait_with_typed_error() {
     );
 }
 
-/// M1: a failed turn fires the wait typed — `error` carries the
+/// a failed turn fires the wait typed — `error` carries the
 /// failure and the cache keeps the last good output
 #[tokio::test]
 async fn failed_turn_fires_wait_typed_without_clobbering_output_cache() {
