@@ -115,6 +115,8 @@
                     inherit filter;
                   };
                 strictDeps = true;
+                outputHashes."git+https://github.com/anuramat/async-openai#dd12a06c38a74da3758b33b13c84b04a6543ec50" =
+                  "sha256-lvaHXQ41f2ci8aX2fKZ19p5L7wTqjUn6xh/XzZZ9oL0=";
               };
               cargoVendorDir = craneLib.vendorCargoDeps commonArgs;
               cargoArtifacts = craneLib.buildDepsOnly (
