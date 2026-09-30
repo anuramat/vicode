@@ -133,7 +133,7 @@ mod tests {
         Repository::init(&workdir).unwrap();
         let state = AgentState::fake();
         let tab = Tab::new(
-            Some(crate::agent::router::RouterState::test_handle()),
+            Some(crate::agent::router::Router::test_handle(&project)),
             aid.clone(),
             state,
             &project,
@@ -190,7 +190,7 @@ mod tests {
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
         let tab = Tab::new(
-            Some(crate::agent::router::RouterState::test_handle()),
+            Some(crate::agent::router::Router::test_handle(&project)),
             aid.clone(),
             AgentState::fake(),
             &project,
@@ -253,7 +253,7 @@ mod tests {
         app.tabs.insert(
             aid.clone(),
             Tab::new(
-                Some(crate::agent::router::RouterState::test_handle()),
+                Some(crate::agent::router::Router::test_handle(&project)),
                 aid.clone(),
                 state.clone(),
                 &project,

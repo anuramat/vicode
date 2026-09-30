@@ -43,7 +43,7 @@ impl Function<(), InspectResult> for InspectArguments {
         &self,
         ctx: ToolRuntimeContext,
     ) -> Result<(InspectResult, ())> {
-        let status = ctx.router.inspect(ctx.agent_id, self.id.clone()).await??;
+        let status = ctx.router.inspect(&ctx.agent_id, &self.id)?;
         // A Spawning target has no state/base yet; serve retryably instead.
         if status == NodeStatus::Spawning {
             return Err(anyhow!(

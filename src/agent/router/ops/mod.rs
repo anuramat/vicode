@@ -1,11 +1,8 @@
-//! the router's command handlers: `dispatch` fans each [`RouterCommand`] out
-//! to a handler in a submodule; helpers shared across them live here
+//! the router's operations, one submodule per concern; helpers shared
+//! across them live here
 
 use std::collections::BTreeSet;
 
-use anyhow::Result;
-
-use super::RouterCommand;
 use super::RouterState;
 use crate::agent::AgentId;
 use crate::agent::event::AgentEvent;
@@ -18,71 +15,13 @@ use crate::utils::now;
 
 mod archive;
 mod peer;
-mod runtime;
+pub mod runtime;
 mod spawn;
 
 impl RouterState {
-    pub fn dispatch(
-        &mut self,
-        cmd: RouterCommand,
-    ) {
-        match cmd {
-            RouterCommand::RegisterRoot { aid, done } => {
-                drop(done.send(self.handle_register_root(aid)));
-            }
-            RouterCommand::Forward { aid, event, done } => {
-                drop(done.send(self.handle_forward(aid, event)));
-            }
-            RouterCommand::Allocate { done } => drop(done.send(self.allocate())),
-            #[cfg(test)]
-            RouterCommand::Shutdown { aid, done } => self.handle_shutdown(&aid, done),
-            RouterCommand::Status { aid, report } => self.handle_status(aid, report),
-            RouterCommand::AttachRuntime { aid, runtime, done } => {
-                drop(done.send(self.handle_attach_runtime(aid, runtime)));
-            }
-            RouterCommand::RuntimeDown { aid, error } => self.handle_runtime_down(&aid, error),
-            RouterCommand::Spawn {
-                parent,
-                inherited_history,
-                prompt,
-                done,
-            } => self.handle_spawn(parent, inherited_history, prompt, done),
-            RouterCommand::Send {
-                caller,
-                target,
-                text,
-                done,
-            } => drop(done.send(self.handle_send(caller, target, text))),
-            RouterCommand::Inspect {
-                caller,
-                target,
-                done,
-            } => drop(done.send(self.handle_inspect(&caller, &target))),
-            RouterCommand::Wait {
-                caller,
-                target,
-                done,
-            } => self.handle_wait(caller, target, done),
-            RouterCommand::List {
-                caller,
-                subtree,
-                done,
-            } => drop(done.send(self.handle_list(&caller, subtree))),
-            RouterCommand::Archive {
-                caller,
-                target,
-                done,
-            } => self.handle_archive(caller, target, done),
-            RouterCommand::ArchiveTab { primary, done } => self.handle_archive_tab(primary, done),
-            RouterCommand::RollbackSpawn { aid, done } => self.handle_rollback_spawn(aid, done),
-            #[cfg(test)]
-            RouterCommand::WaitIdle { aid, done } => self.handle_wait_idle(aid, done),
-        }
-    }
-
     /// A runtime failure is terminal for this process. The durable live
     /// graph record remains, so a full application restart retries it.
-    fn fail_runtime(
+    pub fn fail_runtime(
         &mut self,
         aid: &AgentId,
         error: String,
@@ -171,49 +110,4 @@ pub fn free_variant(
         })
         .find(|c| !taken.contains(c))
         .expect("some variant is free")
-}
-
-#[cfg(test)]
-mod tests {
-    use tokio::sync::oneshot;
-
-    use super::*;
-    use crate::agent::router::Waiter;
-
-    impl RouterState {
-        pub fn handle_shutdown(
-            &mut self,
-            aid: &AgentId,
-            done: oneshot::Sender<Result<()>>,
-        ) {
-            let result = if let Some(abort) = self.graph.get(aid).and_then(|n| n.abort.clone()) {
-                abort.abort();
-                self.fail_runtime(aid, "agent runtime cancelled by test".into(), false);
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("no live runtime for {aid}"))
-            };
-            drop(done.send(result));
-        }
-
-        pub fn handle_wait_idle(
-            &mut self,
-            aid: AgentId,
-            done: oneshot::Sender<Result<WaitResult, RouterError>>,
-        ) {
-            match self.graph.get(&aid) {
-                None => drop(done.send(Err(RouterError::Unreachable))),
-                Some(node) if matches!(node.status, NodeStatus::Idle | NodeStatus::Dead) => {
-                    drop(done.send(Ok(node.wait_result())));
-                }
-                // self-edge: adds nothing reachable to the wait-for graph,
-                // so `would_deadlock` never sees it
-                Some(_) => self
-                    .waiters
-                    .entry(aid.clone())
-                    .or_default()
-                    .push(Waiter { caller: aid, done }),
-            }
-        }
-    }
 }

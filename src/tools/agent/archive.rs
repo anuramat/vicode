@@ -36,7 +36,7 @@ impl Function<(), ()> for ArchiveArguments {
         &self,
         ctx: ToolRuntimeContext,
     ) -> Result<((), ())> {
-        ctx.router.archive(ctx.agent_id, self.id.clone()).await??;
+        ctx.router.archive(&ctx.agent_id, &self.id).await??;
         Ok(((), ()))
     }
 }

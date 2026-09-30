@@ -29,7 +29,7 @@ fn tracked_files(workdir: &Path) -> Result<Vec<String>> {
 }
 
 impl Tab<'_> {
-    pub async fn cycle_assistant(
+    pub fn cycle_assistant(
         &self,
         prev: bool,
     ) -> Result<()> {
@@ -42,9 +42,7 @@ impl Tab<'_> {
             .assistants()
             .switch_assistant(&self.state.assistant_id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
-        router
-            .forward(self.aid.clone(), UserCommand::SetAssistant(id))
-            .await?;
+        router.forward(&self.aid, UserCommand::SetAssistant(id))?;
         Ok(())
     }
 
@@ -76,7 +74,7 @@ impl Tab<'_> {
         }
     }
 
-    pub async fn submit(&mut self) -> Result<()> {
+    pub fn submit(&mut self) -> Result<()> {
         self.router()?;
         let editor_text = self.input.take_area().lines().join("\n");
         let text = editor_text.trim().to_string();
@@ -91,8 +89,7 @@ impl Tab<'_> {
 
         let result = self
             .router()?
-            .forward(self.aid.clone(), UserCommand::Submit(prompt))
-            .await;
+            .forward(&self.aid, UserCommand::Submit(prompt));
         if result.is_err() {
             self.input.textarea.insert_str(&editor_text);
             self.update_input_title();
@@ -100,13 +97,11 @@ impl Tab<'_> {
         result
     }
 
-    pub async fn retry(&self) -> Result<()> {
-        self.router()?
-            .forward(self.aid.clone(), UserCommand::Retry)
-            .await
+    pub fn retry(&self) -> Result<()> {
+        self.router()?.forward(&self.aid, UserCommand::Retry)
     }
 
-    pub async fn compact(
+    pub fn compact(
         &self,
         n: Option<&str>,
     ) -> Result<()> {
@@ -117,18 +112,14 @@ impl Tab<'_> {
         } else {
             self.history().state().len()
         };
-        self.router()?
-            .forward(self.aid.clone(), UserCommand::Compact(n))
-            .await
+        self.router()?.forward(&self.aid, UserCommand::Compact(n))
     }
 
-    pub async fn abort(&self) -> Result<()> {
-        self.router()?
-            .forward(self.aid.clone(), UserCommand::Abort)
-            .await
+    pub fn abort(&self) -> Result<()> {
+        self.router()?.forward(&self.aid, UserCommand::Abort)
     }
 
-    pub async fn undo(
+    pub fn undo(
         &self,
         n: usize,
     ) -> Result<()> {
@@ -136,12 +127,10 @@ impl Tab<'_> {
             n <= self.history().state().len(),
             "cannot undo {n} messages, history is shorter"
         );
-        self.router()?
-            .forward(self.aid.clone(), UserCommand::Undo(n))
-            .await
+        self.router()?.forward(&self.aid, UserCommand::Undo(n))
     }
 
-    pub async fn undo_user(&self) -> Result<()> {
+    pub fn undo_user(&self) -> Result<()> {
         let messages = self.history().state();
         let Some(loc) = messages
             .iter()
@@ -150,7 +139,7 @@ impl Tab<'_> {
             return Ok(());
         };
         let n = messages.len() - loc;
-        self.undo(n).await
+        self.undo(n)
     }
 
     pub fn key_insert(
@@ -180,6 +169,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::id::AgentId;
+    use crate::agent::router::Router;
     use crate::agent::router::RouterState;
     use crate::project::Project;
     use crate::tui::widgets::input::InputOpts;
@@ -189,7 +179,7 @@ mod tests {
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState::fake();
-        let mut tab = Tab::new(Some(RouterState::test_handle()), aid, state, &project);
+        let mut tab = Tab::new(Some(Router::test_handle(&project)), aid, state, &project);
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',
@@ -251,33 +241,26 @@ mod tests {
     #[tokio::test]
     async fn cycle_assistant_forwards_switch_only_when_idle() {
         use crate::agent::ActivityStatus;
-        use crate::agent::router::RouterCommand;
+        use crate::agent::event::AgentEvent;
         use crate::llm::history::TurnStatus;
 
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("cycle".to_string());
-        let (router, mut rx) = RouterState::test_handle_with_rx();
+        let router = Router::test_handle(&project);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (user_tx, mut user_rx) = tokio::sync::mpsc::channel(8);
+        router.attach_manual(&aid, tx, user_tx);
         let mut tab = Tab::new(Some(router), aid, AgentState::fake(), &project);
 
-        let (result, id) = tokio::join!(tab.cycle_assistant(false), async {
-            match rx.recv().await.unwrap() {
-                RouterCommand::Forward {
-                    event: UserCommand::SetAssistant(id),
-                    done,
-                    ..
-                } => {
-                    drop(done.send(Ok(())));
-                    id
-                }
-                _ => panic!("expected SetAssistant forward"),
-            }
-        });
-        result.unwrap();
-        assert_eq!(id, "test2");
+        tab.cycle_assistant(false).unwrap();
+        assert!(matches!(
+            user_rx.try_recv(),
+            Ok(AgentEvent::User(UserCommand::SetAssistant(id))) if id == "test2"
+        ));
 
         tab.state.status = ActivityStatus::Normal(TurnStatus::InProgress);
-        tab.cycle_assistant(false).await.unwrap();
-        assert!(rx.try_recv().is_err());
+        tab.cycle_assistant(false).unwrap();
+        assert!(user_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -287,7 +270,7 @@ mod tests {
         let mut tab = Tab::new(None, aid, AgentState::fake(), &project);
         tab.input.textarea.insert_str("  do work  ");
 
-        drop(tab.submit().await);
+        drop(tab.submit());
 
         assert_eq!(tab.input.textarea.lines(), ["  do work  "]);
     }
@@ -307,7 +290,7 @@ mod tests {
         let mut tab = Tab::new(Some(router), aid, AgentState::fake(), &project);
         tab.input.textarea.insert_str("  do work  ");
 
-        assert!(tab.submit().await.is_err());
+        assert!(tab.submit().is_err());
 
         assert_eq!(tab.input.textarea.lines(), ["  do work  "]);
     }

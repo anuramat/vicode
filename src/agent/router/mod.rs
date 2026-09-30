@@ -1,16 +1,14 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 
-use anyhow::Result;
-use futures::future::AbortHandle;
-use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
 use crate::agent::AgentId;
-use crate::agent::event::AgentEvent;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::api::WaitResult;
@@ -21,38 +19,12 @@ use crate::project::Project;
 use crate::tui::app::AppEvent;
 
 pub mod api;
-mod client;
-mod command;
 pub mod graph;
 mod ops;
-
-pub use command::RouterCommand;
-
-// TODO add docstring
-const CHANNEL_CAPACITY: usize = 100;
 
 // TODO move to config
 /// per-tab limit on live agents
 pub const TAB_AGENT_CAP: usize = 32;
-
-#[derive(Debug)]
-pub struct RuntimeHandle {
-    /// inter-agent + task mailbox
-    tx: Sender<AgentEvent>,
-    /// dedicated channel for UI events
-    user_tx: Sender<AgentEvent>,
-    abort: AbortHandle,
-}
-
-impl RuntimeHandle {
-    pub fn new(
-        tx: Sender<AgentEvent>,
-        user_tx: Sender<AgentEvent>,
-        abort: AbortHandle,
-    ) -> Self {
-        Self { tx, user_tx, abort }
-    }
-}
 
 /// live `wait` requests
 #[derive(Debug)]
@@ -61,13 +33,14 @@ pub struct Waiter {
     pub done: oneshot::Sender<Result<WaitResult, RouterError>>,
 }
 
+/// the agent graph; every operation is a plain method on [`Router`] that
+/// runs under the lock — nothing awaits while holding it, async work (store
+/// commits, workdir setup) runs in detached tails that lock again to finish
+#[derive(Debug)]
 pub struct RouterState {
     pub project: Project,
     /// handed to every agent the router spawns
     pub app_tx: Sender<AppEvent>,
-
-    rx: Receiver<RouterCommand>,
-    pub handle: Router,
 
     /// only live agents
     pub graph: HashMap<AgentId, AgentNode>,
@@ -78,9 +51,7 @@ pub struct RouterState {
 }
 
 #[derive(Clone, Debug)]
-pub struct Router {
-    tx: Sender<RouterCommand>,
-}
+pub struct Router(Arc<Mutex<RouterState>>);
 
 impl RouterState {
     pub fn start(
@@ -112,25 +83,19 @@ impl RouterState {
                 Some((aid, node))
             })
             .collect();
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let handle = Router { tx };
-        let router = Self {
+        Router(Arc::new(Mutex::new(Self {
             project,
             app_tx,
             graph,
             all_ids,
             waiters: HashMap::new(),
-            rx,
-            handle: handle.clone(),
-        };
-        tokio::spawn(router.run());
-        handle
+        })))
     }
+}
 
-    async fn run(mut self) {
-        while let Some(cmd) = self.rx.recv().await {
-            self.dispatch(cmd);
-        }
+impl Router {
+    fn lock(&self) -> MutexGuard<'_, RouterState> {
+        self.0.lock().expect("router lock poisoned")
     }
 }
 

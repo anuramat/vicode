@@ -1,10 +1,4 @@
-use std::future::Future;
-use std::panic::AssertUnwindSafe;
-
 use anyhow::Result;
-use futures::FutureExt;
-use futures::future::AbortRegistration;
-use futures::future::Abortable;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
@@ -17,14 +11,13 @@ use crate::agent::AgentState;
 use crate::agent::core::AgentCore;
 use crate::agent::event::AgentEvent;
 use crate::agent::router::Router;
-use crate::agent::router::RuntimeHandle;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
 use crate::tui::app::AppEvent;
 
-const CHANNEL_CAPACITY: usize = 100;
+pub const CHANNEL_CAPACITY: usize = 100;
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
 impl Agent {
@@ -69,21 +62,6 @@ impl Agent {
         }
     }
 
-    /// Prepare handles without polling the runtime future. The caller must
-    /// attach the handle through the router before launching the task.
-    pub fn prepare(self) -> (RuntimeHandle, RuntimeTask) {
-        let (abort, reg) = futures::future::AbortHandle::new_pair();
-        let tx = self.tx.clone();
-        let user_tx = self.user_tx.clone();
-        (
-            RuntimeHandle::new(tx, user_tx, abort),
-            RuntimeTask {
-                agent: self,
-                registration: reg,
-            },
-        )
-    }
-
     pub async fn save(&self) -> Result<()> {
         self.core.state.save(&self.project, &self.id).await
     }
@@ -117,7 +95,7 @@ impl Agent {
         agent.launch_root().await
     }
 
-    /// register + persist + attach + launch a fresh root agent; the graph
+    /// register + persist + launch a fresh root agent; the graph
     /// record is enqueued before the state so "durable state ⇒ durable graph
     /// record" holds on the primary paths too; a failure after
     /// registration rolls the provisional node back instead of leaving it
@@ -125,7 +103,7 @@ impl Agent {
     pub async fn launch_root(self) -> Result<()> {
         let router = self.router.clone();
         let aid = self.id.clone();
-        router.register_root(aid.clone()).await?;
+        router.register_root(&aid)?;
         let result = async {
             // before the state, so "durable state ⇒ durable pin" holds: a pin
             // whose state never lands is swept by `cleanup::scan`, while state
@@ -134,51 +112,14 @@ impl Agent {
             // and a duplicated tab, which inherits its `base` by clone
             self.project.pin_base(&aid, &self.core.state.context.base)?;
             self.save().await?;
-            let (runtime, task) = self.prepare();
-            router.attach_runtime(aid.clone(), runtime).await?;
-            task.launch();
-            Ok(())
+            router.launch([self])
         }
         .await;
         if result.is_err() {
-            drop(router.rollback_spawn(aid).await);
+            drop(router.rollback_spawn(&aid).await);
         }
         result
     }
-}
-
-pub struct RuntimeTask {
-    agent: Agent,
-    registration: AbortRegistration,
-}
-
-impl RuntimeTask {
-    pub fn launch(self) {
-        let aid = self.agent.id.clone();
-        let router = self.agent.router.clone();
-        tokio::spawn(supervise(aid, router, self.agent.run(), self.registration));
-    }
-}
-
-async fn supervise(
-    aid: AgentId,
-    router: Router,
-    future: impl Future<Output = Result<()>>,
-    registration: AbortRegistration,
-) {
-    let outcome = AssertUnwindSafe(Abortable::new(future, registration))
-        .catch_unwind()
-        .await;
-    let error = match outcome {
-        Ok(Ok(Ok(()))) => "agent runtime exited unexpectedly".into(),
-        Ok(Ok(Err(error))) => format!("agent runtime failed: {error:#}"),
-        Ok(Err(_)) => "agent runtime cancelled unexpectedly".into(),
-        Err(payload) => format!(
-            "agent runtime panicked: {}",
-            crate::agent::task::executor::panic_message(&*payload)
-        ),
-    };
-    drop(router.runtime_down(aid, error).await);
 }
 
 impl AgentState {
@@ -211,102 +152,10 @@ impl AgentState {
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future;
-
-    use similar_asserts::assert_eq;
     use tokio::sync::mpsc::channel;
-    use tokio::time::Duration;
-    use tokio::time::timeout;
 
     use super::*;
     use crate::agent::router::RouterState;
-    use crate::agent::router::api::RouterError;
-    use crate::agent::router::api::TurnOutcome;
-    use crate::agent::router::api::WaitResult;
-    use crate::agent::router::graph::NodeStatus;
-
-    async fn supervised(
-        future: impl Future<Output = Result<()>> + Send + 'static,
-        cancel: bool,
-    ) -> Result<WaitResult, RouterError> {
-        let project = Project::new_test().unwrap().0;
-        let (app_tx, _app_rx) = channel(8);
-        let router = RouterState::start(
-            app_tx,
-            project,
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        );
-        let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
-        router.register_root(aid.clone()).await.unwrap();
-        let (tx, _rx) = channel(1);
-        let (user_tx, _user_rx) = channel(1);
-        let (abort, registration) = futures::future::AbortHandle::new_pair();
-        router
-            .attach_runtime(aid.clone(), RuntimeHandle::new(tx, user_tx, abort.clone()))
-            .await
-            .unwrap();
-        tokio::spawn(supervise(aid.clone(), router.clone(), future, registration));
-        if cancel {
-            abort.abort();
-        }
-        timeout(Duration::from_secs(1), router.wait_idle(aid))
-            .await
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn supervisor_reports_return_error_panic_and_cancellation() {
-        assert_eq!(
-            supervised(async { Ok(()) }, false).await,
-            Ok(WaitResult {
-                status: NodeStatus::Dead,
-                outcome: TurnOutcome {
-                    output: None,
-                    error: Some("agent runtime exited unexpectedly".into()),
-                },
-            })
-        );
-        assert_eq!(
-            supervised(async { Err(anyhow::anyhow!("fatal")) }, false).await,
-            Ok(WaitResult {
-                status: NodeStatus::Dead,
-                outcome: TurnOutcome {
-                    output: None,
-                    error: Some("agent runtime failed: fatal".into()),
-                },
-            })
-        );
-        assert_eq!(
-            supervised(
-                async {
-                    panic!("boom");
-                    #[allow(unreachable_code)]
-                    Ok(())
-                },
-                false,
-            )
-            .await,
-            Ok(WaitResult {
-                status: NodeStatus::Dead,
-                outcome: TurnOutcome {
-                    output: None,
-                    error: Some("agent runtime panicked: boom".into()),
-                },
-            })
-        );
-        assert_eq!(
-            supervised(futures::future::pending(), true).await,
-            Ok(WaitResult {
-                status: NodeStatus::Dead,
-                outcome: TurnOutcome {
-                    output: None,
-                    error: Some("agent runtime cancelled unexpectedly".into()),
-                },
-            })
-        );
-    }
 
     #[tokio::test]
     async fn try_duplicate_registers_copy_with_router() {
@@ -342,7 +191,7 @@ mod tests {
             state,
         );
 
-        let copy_aid = router.allocate_agent_id().await.unwrap();
+        let copy_aid = router.allocate_agent_id();
         parent
             .handle(crate::agent::event::AgentEvent::User(
                 crate::agent::event::UserCommand::Duplicate(copy_aid.clone()),
@@ -397,6 +246,6 @@ mod tests {
         );
 
         // observable via router: shutdown succeeds only if registered
-        router.shutdown(copy_aid).await.unwrap();
+        router.shutdown(&copy_aid).unwrap();
     }
 }

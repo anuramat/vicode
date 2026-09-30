@@ -40,8 +40,7 @@ impl Function<(), ()> for SendArguments {
         ctx: ToolRuntimeContext,
     ) -> Result<((), ())> {
         ctx.router
-            .send_message(ctx.agent_id, self.id.clone(), self.text.clone())
-            .await??;
+            .send_message(&ctx.agent_id, &self.id, &self.text)?;
         Ok(((), ()))
     }
 }

@@ -38,8 +38,7 @@ impl Function<(), Vec<ListEntry>> for ListArguments {
     ) -> Result<(Vec<ListEntry>, ())> {
         let members = ctx
             .router
-            .list(ctx.agent_id, self.subtree)
-            .await?
+            .list(&ctx.agent_id, self.subtree)
             .context("unknown caller")?;
         Ok((members, ()))
     }

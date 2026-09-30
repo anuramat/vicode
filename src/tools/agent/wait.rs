@@ -39,7 +39,7 @@ impl Function<(), WaitResult> for WaitArguments {
         &self,
         ctx: ToolRuntimeContext,
     ) -> Result<(WaitResult, ())> {
-        Ok((ctx.router.wait(ctx.agent_id, self.id.clone()).await??, ()))
+        Ok((ctx.router.wait(&ctx.agent_id, &self.id).await?, ()))
     }
 }
 

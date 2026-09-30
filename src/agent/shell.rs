@@ -85,10 +85,9 @@ impl Agent {
                 );
             }
             Effect::Ui(event) => self.emit(event).await?,
-            // liveness to the router, rendering to the app — so rendering
-            // stays independent of the router loop
+            // liveness to the router, rendering to the app
             Effect::Status(status) => {
-                self.report_status(None).await?;
+                self.report_status(None);
                 self.emit(UiEvent::StatusUpdate(status)).await?;
             }
             Effect::Save => self.save().await?,
@@ -152,10 +151,10 @@ impl Agent {
     /// instead — the output cache is never clobbered by a failure.
     /// `error` is a handler failure from the run loop (a wake that couldn't
     /// start its turn), surfaced the same way.
-    pub async fn report_status(
+    pub fn report_status(
         &self,
         error: Option<String>,
-    ) -> Result<()> {
+    ) {
         let (status, output, turn_error) = match self.core.state.status.turn() {
             TurnStatus::InProgress => (NodeStatus::Running, None, None),
             TurnStatus::Idle => (
@@ -173,7 +172,7 @@ impl Agent {
                 error: error.or(turn_error),
             },
         };
-        self.router.status(self.id.clone(), report).await
+        self.router.status(&self.id, report);
     }
 }
 

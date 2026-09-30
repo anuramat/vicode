@@ -33,28 +33,21 @@ impl<'a> App<'a> {
         self.tabs = tabs;
         self.rebuild_tablist();
 
-        let mut tasks = Vec::new();
-        for (aid, state) in agents {
-            let agent = Agent::new(
+        let agents = agents.into_iter().map(|(aid, state)| {
+            Agent::new(
                 self.project.clone(),
                 self.router.clone(),
                 self.tx.clone(),
-                aid.clone(),
+                aid,
                 state,
-            );
-            let (runtime, task) = agent.prepare();
-            self.router.attach_runtime(aid, runtime).await?;
-            tasks.push(task);
-        }
-        for task in tasks {
-            task.launch();
-        }
-        Ok(())
+            )
+        });
+        self.router.launch(agents)
     }
 
     /// create a new primary agent, and a corresponding tab
     pub async fn new_tab(&mut self) -> Result<()> {
-        let aid = self.router.allocate_agent_id().await?;
+        let aid = self.router.allocate_agent_id();
         let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
         // context files are read from the agent's own tree
@@ -125,10 +118,8 @@ impl<'a> App<'a> {
         let original_aid = original.aid.clone();
         let state = original.state.clone();
 
-        let copy = self.router.allocate_agent_id().await?;
-        router
-            .forward(original_aid, UserCommand::Duplicate(copy.clone()))
-            .await?;
+        let copy = self.router.allocate_agent_id();
+        router.forward(&original_aid, UserCommand::Duplicate(copy.clone()))?;
         // a preview until the copy's Started attaches it; the original
         // reports a failure as DuplicateFailed, which drops it again
         self.insert_tab(copy, state);
@@ -150,7 +141,7 @@ impl<'a> App<'a> {
             .tabs
             .shift_remove_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
-        self.router.archive_tab(aid).await?;
+        self.router.archive_tab(&aid).await?;
         self.rebuild_tablist();
         self.save_app_state().await?;
         Ok(())
@@ -273,15 +264,12 @@ mod tests {
                 .to_string(),
             saved.context.base
         );
-        app.router.shutdown(tab_aid.clone()).await.unwrap();
+        app.router.shutdown(&tab_aid).unwrap();
     }
 
     #[tokio::test]
     async fn archive_tab_stops_agent_but_keeps_workdir() {
-        use futures::future::AbortHandle;
         use tokio::sync::mpsc::channel;
-
-        use crate::agent::router::RuntimeHandle;
 
         let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default(), Default::default());
@@ -298,12 +286,7 @@ mod tests {
         app.select_tab(Some(0));
         let (tx, _rx) = channel(8);
         let (user_tx, _user_rx) = channel(8);
-        let (abort, _reg) = AbortHandle::new_pair();
-        app.router.register_root(aid.clone()).await.unwrap();
-        app.router
-            .attach_runtime(aid.clone(), RuntimeHandle::new(tx, user_tx, abort))
-            .await
-            .unwrap();
+        app.router.attach_manual(&aid, tx, user_tx);
 
         app.archive_tab().await.unwrap();
 
@@ -311,7 +294,7 @@ mod tests {
         // workdir survives until `vc cleanup -f`
         assert!(project.agent(&aid).exists());
         // runtime is gone
-        assert!(app.router.shutdown(aid.clone()).await.is_err());
+        assert!(app.router.shutdown(&aid).is_err());
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }

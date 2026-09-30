@@ -4,7 +4,6 @@
 
 use std::time::Duration;
 
-use futures::future::AbortHandle;
 use tokio::time::timeout;
 
 use crate::agent::ActivityStatus;
@@ -13,7 +12,6 @@ use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
-use crate::agent::router::RuntimeHandle;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::api::WaitResult;
@@ -218,24 +216,18 @@ fn slot_output(
 /// register the test-driven agent with its (real) router so status reports
 /// land on a graph node `wait_idle` can watch
 async fn register(agent: &Agent) {
-    let (abort, _reg) = AbortHandle::new_pair();
-    agent.router.register_root(agent.id.clone()).await.unwrap();
     agent
         .router
-        .attach_runtime(
-            agent.id.clone(),
-            RuntimeHandle::new(agent.tx.clone(), agent.user_tx.clone(), abort),
-        )
-        .await
-        .unwrap();
-    agent.report_status(None).await.unwrap();
+        .attach_manual(&agent.id, agent.tx.clone(), agent.user_tx.clone());
+    agent.report_status(None);
 }
 
 /// pump the agent's own event loop until the router-visible idle transition
 /// fires — the step-1 liveness signal `wait` consumes
 async fn drive_until_idle(agent: &mut Agent) -> Result<WaitResult, RouterError> {
     let router = agent.router.clone();
-    let wait = router.wait_idle(agent.id.clone());
+    let aid = agent.id.clone();
+    let wait = router.wait_idle(&aid);
     let mut wait = std::pin::pin!(wait);
     timeout(TIMEOUT, async {
         loop {
@@ -809,7 +801,7 @@ async fn spawn_wait_inspect_archive_lifecycle() {
             .unwrap()
             .id;
 
-    let outcome = timeout(TIMEOUT, agent.router.wait_idle(child.clone()))
+    let outcome = timeout(TIMEOUT, agent.router.wait_idle(&child))
         .await
         .unwrap();
     similar_asserts::assert_eq!(
@@ -915,11 +907,7 @@ async fn spawn_wait_inspect_archive_lifecycle() {
     pump_until(&mut agent, |a| slot_output(a, "call-5").is_some()).await;
     similar_asserts::assert_eq!(slot_output(&agent, "call-5").unwrap(), "null");
     similar_asserts::assert_eq!(
-        agent
-            .router
-            .send_message(agent.id.clone(), child, "hi".into())
-            .await
-            .unwrap(),
+        agent.router.send_message(&agent.id, &child, "hi"),
         Err(RouterError::Unreachable)
     );
 }
@@ -994,7 +982,7 @@ async fn post_spawn_edit_reaches_neither_child_workdir_nor_history() {
     assert!(!child_workdir.join("post.txt").exists());
 
     // history: the seed request opens with the pre-spawn conversation
-    timeout(TIMEOUT, agent.router.wait_idle(child))
+    timeout(TIMEOUT, agent.router.wait_idle(&child))
         .await
         .unwrap()
         .unwrap();
@@ -1052,7 +1040,7 @@ async fn fresh_spawn_reads_instructions_from_child_workdir() {
         serde_json::from_str::<SpawnResult>(&slot_output(&agent, "call-1").unwrap())
             .unwrap()
             .id;
-    timeout(TIMEOUT, agent.router.wait_idle(child.clone()))
+    timeout(TIMEOUT, agent.router.wait_idle(&child))
         .await
         .unwrap()
         .unwrap();

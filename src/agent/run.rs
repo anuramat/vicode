@@ -28,7 +28,7 @@ impl Agent {
         // unconditional startup report: with parked deliveries outstanding the
         // router sees `processed < delivered` and keeps the node woken, so an
         // idle startup reports in without firing waits stale
-        self.report_status(None).await?;
+        self.report_status(None);
         while let Some(event) = self.next_event().await {
             // router deliveries are seq-counted; count before handling so
             // every report from here on carries the new watermark
@@ -44,7 +44,7 @@ impl Agent {
             if counted {
                 // every delivery reports — success or handler error — so a
                 // wake that starts no turn can't strand waiters
-                self.report_status(error.map(|e| e.to_string())).await?;
+                self.report_status(error.map(|e| e.to_string()));
             }
         }
         Ok(())

@@ -1,4 +1,4 @@
-//! router unit tests: through the real spawned router task,
+//! router unit tests: through the real router,
 //! with real child runtimes on scripted `FakeApi` turns
 #![cfg(test)]
 
@@ -11,7 +11,6 @@ use futures::future::AbortHandle;
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::channel;
-use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 use super::api::RouterError;
@@ -20,6 +19,7 @@ use super::api::WaitResult;
 use super::graph::NodeStatus;
 use super::*;
 use crate::agent::Agent;
+use crate::agent::event::AgentEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
 use crate::llm::history::AssistantEvent;
@@ -31,47 +31,67 @@ use crate::llm::provider::api::fake::FakeApi;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-impl RouterState {
-    /// Construct a handle backed by a dead-letter channel — for tests that
-    /// instantiate Agents without running a real router.
-    pub fn test_handle() -> Router {
-        let (router, rx) = Self::test_handle_with_rx();
-        std::mem::forget(rx);
-        router
-    }
-
-    /// Like `test_handle` but caller keeps the command receiver so test code
-    /// can observe forwarded events.
-    pub fn test_handle_with_rx() -> (Router, Receiver<RouterCommand>) {
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        (Router { tx }, rx)
-    }
-}
-
 impl Router {
+    /// a real router nobody drives — for tests that instantiate Agents or
+    /// tabs without exercising the graph
+    pub fn test_handle(project: &Project) -> Self {
+        let (app_tx, app_rx) = channel(1);
+        std::mem::forget(app_rx);
+        RouterState::start(
+            app_tx,
+            project.clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+    }
+
+    /// register a root whose channels the test drives by hand — no runtime
+    /// task, so nothing reports status on its own
+    pub fn attach_manual(
+        &self,
+        aid: &AgentId,
+        tx: Sender<AgentEvent>,
+        user_tx: Sender<AgentEvent>,
+    ) {
+        let (abort, _registration) = AbortHandle::new_pair();
+        self.register_root(aid).unwrap();
+        self.lock().attach(aid, tx, user_tx, abort).unwrap();
+    }
+
     /// Abort the agent's live runtime; the node stays reachable and the
     /// persisted state and workdir are untouched.
-    pub async fn shutdown(
+    pub fn shutdown(
         &self,
-        aid: AgentId,
-    ) -> Result<()> {
-        let (done, rx) = oneshot::channel();
-        self.tx.send(RouterCommand::Shutdown { aid, done }).await?;
-        rx.await?
+        aid: &AgentId,
+    ) -> anyhow::Result<()> {
+        let s = &mut *self.lock();
+        let abort = s.graph.get(aid).and_then(|n| n.abort.clone());
+        let abort = abort.ok_or_else(|| anyhow::anyhow!("no live runtime for {aid}"))?;
+        abort.abort();
+        s.fail_runtime(aid, "agent runtime cancelled by test".into(), false);
+        Ok(())
     }
 
     /// test-facing sync primitive: fire on the target's next idle/dead
     /// transition — the same signal `wait` consumes, minus root/cycle checks
     pub async fn wait_idle(
         &self,
-        aid: AgentId,
+        aid: &AgentId,
     ) -> Result<WaitResult, RouterError> {
-        let (done, rx) = oneshot::channel();
-        self.tx
-            .send(RouterCommand::WaitIdle { aid, done })
-            .await
-            .expect("router died");
-        rx.await.expect("router died")
+        let rx = {
+            let s = &mut *self.lock();
+            match s.graph.get(aid) {
+                None => return Err(RouterError::Unreachable),
+                Some(node) if matches!(node.status, NodeStatus::Idle | NodeStatus::Dead) => {
+                    return Ok(node.wait_result());
+                }
+                // self-edge: adds nothing reachable to the wait-for graph,
+                // so `would_deadlock` never sees it
+                Some(_) => s.register_waiter(aid, aid),
+            }
+        };
+        rx.await.expect("waiter dropped unfired")
     }
 }
 
@@ -115,14 +135,9 @@ impl Rig {
         text: &str,
     ) -> AgentId {
         self.script(text, text);
-        let child = self
-            .router
-            .spawn_agent(parent.clone(), None, "go".into())
+        let child = self.router.spawn_agent(&parent, None, "go").await.unwrap();
+        let outcome = timeout(TIMEOUT, self.router.wait(&parent, &child))
             .await
-            .unwrap();
-        let outcome = timeout(TIMEOUT, self.router.wait(parent.clone(), child.clone()))
-            .await
-            .unwrap()
             .unwrap();
         assert_eq!(
             outcome,
@@ -198,26 +213,18 @@ async fn register_primary(
         .unwrap();
     let (tx, rx) = channel(8);
     let (user_tx, user_rx) = channel(8);
-    let (abort, _reg) = AbortHandle::new_pair();
-    router.register_root(aid.clone()).await.unwrap();
-    router
-        .attach_runtime(aid.clone(), RuntimeHandle::new(tx, user_tx, abort))
-        .await
-        .unwrap();
-    router
-        .status(
-            aid.clone(),
-            graph::StatusReport {
-                processed: 0,
-                status: NodeStatus::Idle,
-                outcome: TurnOutcome {
-                    output: None,
-                    error: None,
-                },
+    router.attach_manual(&aid, tx, user_tx);
+    router.status(
+        &aid,
+        graph::StatusReport {
+            processed: 0,
+            status: NodeStatus::Idle,
+            outcome: TurnOutcome {
+                output: None,
+                error: None,
             },
-        )
-        .await
-        .unwrap();
+        },
+    );
     (aid, rx, user_rx)
 }
 
@@ -226,28 +233,21 @@ async fn start_saved_agents(
     router: &Router,
     aids: &[AgentId],
 ) {
-    let mut tasks = Vec::new();
+    let mut agents = Vec::new();
     for aid in aids {
         let state = project.store().load_state(aid).await.unwrap();
-        let agent = Agent::new(
+        agents.push(Agent::new(
             project.clone(),
             router.clone(),
             drained_app_tx(),
             aid.clone(),
             state,
-        );
-        let (runtime, task) = agent.prepare();
-        router.attach_runtime(aid.clone(), runtime).await.unwrap();
-        tasks.push(task);
+        ));
     }
-    for task in tasks {
-        task.launch();
-    }
+    router.launch(agents).unwrap();
     for aid in aids {
         assert!(matches!(
-            timeout(TIMEOUT, router.wait_idle(aid.clone()))
-                .await
-                .unwrap(),
+            timeout(TIMEOUT, router.wait_idle(&aid)).await.unwrap(),
             Ok(WaitResult { .. })
         ));
     }
@@ -268,22 +268,13 @@ async fn spawn_registers_under_parent_and_wait_collects_output() {
     let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "child result").await;
 
-    let members = rig
-        .router
-        .list(rig.primary.clone(), false)
-        .await
-        .unwrap()
-        .unwrap();
+    let members = rig.router.list(&rig.primary, false).unwrap();
     let child_member = members.iter().find(|m| m.id == child).unwrap();
     assert_eq!(child_member.parent, Some(rig.primary.clone()));
     assert_eq!(child_member.status, NodeStatus::Idle);
 
     // a second wait on the already-idle target fires immediately
-    let outcome = rig
-        .router
-        .wait(rig.primary.clone(), child.clone())
-        .await
-        .unwrap();
+    let outcome = rig.router.wait(&rig.primary, &child).await;
     assert_eq!(
         outcome,
         Ok(WaitResult {
@@ -295,10 +286,7 @@ async fn spawn_registers_under_parent_and_wait_collects_output() {
         })
     );
     assert_eq!(
-        rig.router
-            .inspect(rig.primary.clone(), child)
-            .await
-            .unwrap(),
+        rig.router.inspect(&rig.primary, &child),
         Ok(NodeStatus::Idle)
     );
 }
@@ -309,17 +297,12 @@ async fn send_bumps_delivered_so_racing_wait_returns_post_message_output() {
     let child = rig.spawn_idle_child(&rig.primary, "first").await;
 
     rig.script("second", "second");
-    let sent = rig
-        .router
-        .send_message(rig.primary.clone(), child.clone(), "more".into())
-        .await
-        .unwrap();
+    let sent = rig.router.send_message(&rig.primary, &child, "more");
     assert_eq!(sent, Ok(()));
     // the delivery is outstanding: this wait must register, not fire on the
     // pre-message idle
-    let outcome = timeout(TIMEOUT, rig.router.wait(rig.primary.clone(), child))
+    let outcome = timeout(TIMEOUT, rig.router.wait(&rig.primary, &child))
         .await
-        .unwrap()
         .unwrap();
     assert_eq!(
         outcome,
@@ -337,37 +320,19 @@ async fn send_bumps_delivered_so_racing_wait_returns_post_message_output() {
 async fn send_to_still_spawning_child_parks_in_minted_mailbox() {
     let rig = Rig::new("prime").await;
     rig.script("o1", "seeded");
-    // raw command so we see the child while its tail is still in flight
-    let (done, spawn_rx) = oneshot::channel();
-    rig.router
-        .tx
-        .send(RouterCommand::Spawn {
-            parent: rig.primary.clone(),
-            inherited_history: None,
-            prompt: "go".into(),
-            done,
-        })
-        .await
-        .unwrap();
-    // registration is synchronous in the router task: the next command sees it
-    let members = rig
-        .router
-        .list(rig.primary.clone(), true)
-        .await
-        .unwrap()
-        .unwrap();
+    // one poll registers the child under the lock and leaves its setup
+    // tail in flight, so we see it still spawning
+    let mut spawn = std::pin::pin!(rig.router.spawn_agent(&rig.primary, None, "go"));
+    assert!(futures::poll!(&mut spawn).is_pending());
+    let members = rig.router.list(&rig.primary, true).unwrap();
     let child = members.iter().find(|m| m.id != rig.primary).unwrap();
     assert_eq!(child.status, NodeStatus::Spawning);
 
     // parks behind the seed prompt — never Unreachable, never blocking
     // (busy-buffering of the parked message itself lands with step 3)
-    let sent = rig
-        .router
-        .send_message(rig.primary.clone(), child.id.clone(), "psst".into())
-        .await
-        .unwrap();
+    let sent = rig.router.send_message(&rig.primary, &child.id, "psst");
     assert_eq!(sent, Ok(()));
-    timeout(TIMEOUT, spawn_rx).await.unwrap().unwrap().unwrap();
+    timeout(TIMEOUT, spawn).await.unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -377,49 +342,32 @@ async fn cross_tab_everything_is_unreachable() {
     let (other, _rx, _user_rx) = register_primary(&rig.project, &rig.router, "other").await;
 
     assert_eq!(
-        rig.router
-            .send_message(other.clone(), child.clone(), "hi".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&other, &child, "hi"),
         Err(RouterError::Unreachable)
     );
     assert_eq!(
-        rig.router
-            .inspect(other.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.inspect(&other, &child),
         Err(RouterError::Unreachable)
     );
     assert_eq!(
-        rig.router.wait(other.clone(), child.clone()).await.unwrap(),
+        rig.router.wait(&other, &child).await,
         Err(RouterError::Unreachable)
     );
     assert_eq!(
-        rig.router
-            .archive(other.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.archive(&other, &child).await.unwrap(),
         Err(RouterError::Unreachable)
     );
     // list shows exactly the caller's tab
-    let members = rig
-        .router
-        .list(other.clone(), false)
-        .await
-        .unwrap()
-        .unwrap();
+    let members = rig.router.list(&other, false).unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].id, other);
     // unknown caller
     let ghost = AgentId::from("nobody".to_string());
     assert_eq!(
-        rig.router
-            .send_message(ghost.clone(), child, "hi".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&ghost, &child, "hi"),
         Err(RouterError::Unreachable)
     );
-    assert_eq!(rig.router.list(ghost, false).await.unwrap(), None);
+    assert_eq!(rig.router.list(&ghost, false), None);
 }
 
 #[tokio::test]
@@ -434,7 +382,7 @@ async fn archive_rejects_self_sibling_and_ancestor() {
         (c1.clone(), rig.primary.clone()),          // ancestor
     ] {
         assert_eq!(
-            rig.router.archive(caller, target).await.unwrap(),
+            rig.router.archive(&caller, &target).await.unwrap(),
             Err(RouterError::NotOwned)
         );
     }
@@ -448,29 +396,18 @@ async fn archive_reaps_exact_subtree_retaining_rows_and_workdirs() {
     let sibling = rig.spawn_idle_child(&rig.primary, "sibling").await;
 
     assert_eq!(
-        rig.router
-            .archive(rig.primary.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.archive(&rig.primary, &child).await.unwrap(),
         Ok(())
     );
 
     // exact subtree unreachable, sibling untouched
     for aid in [&child, &grandchild] {
         assert_eq!(
-            rig.router
-                .send_message(rig.primary.clone(), aid.clone(), "hi".into())
-                .await
-                .unwrap(),
+            rig.router.send_message(&rig.primary, &aid, "hi"),
             Err(RouterError::Unreachable)
         );
     }
-    let members = rig
-        .router
-        .list(rig.primary.clone(), false)
-        .await
-        .unwrap()
-        .unwrap();
+    let members = rig.router.list(&rig.primary, false).unwrap();
     let ids: Vec<_> = members.iter().map(|m| m.id.clone()).collect();
     let mut expected = vec![rig.primary.clone(), sibling.clone()];
     expected.sort();
@@ -492,12 +429,9 @@ async fn archive_tab_reaps_every_member() {
     let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "child").await;
 
-    rig.router.archive_tab(rig.primary.clone()).await.unwrap();
+    rig.router.archive_tab(&rig.primary).await.unwrap();
 
-    assert_eq!(
-        rig.router.list(rig.primary.clone(), false).await.unwrap(),
-        None
-    );
+    assert_eq!(rig.router.list(&rig.primary, false), None);
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(records[&rig.primary].archived);
     assert!(records[&child].archived);
@@ -509,7 +443,7 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let kept = rig.spawn_idle_child(&rig.primary, "kept").await;
     let archived = rig.spawn_idle_child(&rig.primary, "archived").await;
     rig.router
-        .archive(rig.primary.clone(), archived.clone())
+        .archive(&rig.primary, &archived)
         .await
         .unwrap()
         .unwrap();
@@ -532,10 +466,7 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     start_saved_agents(&rig.project, &router2, &[rig.primary.clone(), kept.clone()]).await;
 
     assert_eq!(
-        router2
-            .wait(rig.primary.clone(), kept.clone())
-            .await
-            .unwrap(),
+        router2.wait(&rig.primary, &kept).await,
         Ok(WaitResult {
             status: NodeStatus::Idle,
             outcome: TurnOutcome {
@@ -544,22 +475,13 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
             },
         })
     );
+    assert_eq!(router2.inspect(&rig.primary, &kept), Ok(NodeStatus::Idle));
     assert_eq!(
-        router2
-            .inspect(rig.primary.clone(), kept.clone())
-            .await
-            .unwrap(),
-        Ok(NodeStatus::Idle)
-    );
-    assert_eq!(
-        router2
-            .send_message(rig.primary.clone(), archived.clone(), "hi".into())
-            .await
-            .unwrap(),
+        router2.send_message(&rig.primary, &archived, "hi"),
         Err(RouterError::Unreachable)
     );
     assert_eq!(
-        router2.wait(rig.primary, archived.clone()).await.unwrap(),
+        router2.wait(&rig.primary, &archived).await,
         Err(RouterError::Unreachable)
     );
     rig.project.store().load_state(&archived).await.unwrap();
@@ -645,7 +567,7 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
     start_saved_agents(&project, &router, &[prime.clone(), descendant.clone()]).await;
 
     assert_eq!(
-        router.wait(prime.clone(), bad.clone()).await.unwrap(),
+        router.wait(&prime, &bad).await,
         Ok(WaitResult {
             status: NodeStatus::Dead,
             outcome: TurnOutcome {
@@ -654,10 +576,7 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
             },
         })
     );
-    assert_eq!(
-        router.inspect(prime, descendant).await.unwrap(),
-        Ok(NodeStatus::Idle)
-    );
+    assert_eq!(router.inspect(&prime, &descendant), Ok(NodeStatus::Idle));
 }
 
 #[tokio::test]
@@ -665,13 +584,10 @@ async fn runtime_death_is_terminal_until_restart() {
     let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "answer").await;
 
-    rig.router.shutdown(child.clone()).await.unwrap();
+    rig.router.shutdown(&child).unwrap();
 
     assert_eq!(
-        rig.router
-            .wait(rig.primary.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.wait(&rig.primary, &child).await,
         Ok(WaitResult {
             status: NodeStatus::Dead,
             outcome: TurnOutcome {
@@ -681,44 +597,30 @@ async fn runtime_death_is_terminal_until_restart() {
         })
     );
     assert_eq!(
-        rig.router
-            .send_message(rig.primary.clone(), child.clone(), "hi".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&rig.primary, &child, "hi"),
         Err(RouterError::Unreachable)
     );
-    assert!(
-        rig.router
-            .forward(child.clone(), UserCommand::Abort)
-            .await
-            .is_err()
-    );
+    assert!(rig.router.forward(&child, UserCommand::Abort).is_err());
     let err = rig
         .router
-        .spawn_agent(child.clone(), None, "go".into())
+        .spawn_agent(&child, None, "go")
         .await
         .unwrap_err();
     assert_eq!(err.to_string(), format!("agent {child} is dead"));
     // A late status report cannot revive or overwrite a terminal node.
-    rig.router
-        .status(
-            child.clone(),
-            graph::StatusReport {
-                processed: 99,
-                status: NodeStatus::Idle,
-                outcome: TurnOutcome {
-                    output: Some("ghost".into()),
-                    error: None,
-                },
+    rig.router.status(
+        &child,
+        graph::StatusReport {
+            processed: 99,
+            status: NodeStatus::Idle,
+            outcome: TurnOutcome {
+                output: Some("ghost".into()),
+                error: None,
             },
-        )
-        .await
-        .unwrap();
+        },
+    );
     assert_eq!(
-        rig.router
-            .wait(rig.primary.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.wait(&rig.primary, &child).await,
         Ok(WaitResult {
             status: NodeStatus::Dead,
             outcome: TurnOutcome {
@@ -738,7 +640,7 @@ async fn runtime_death_is_terminal_until_restart() {
     )
     .await;
     assert_eq!(
-        router2.wait(rig.primary, child).await.unwrap(),
+        router2.wait(&rig.primary, &child).await,
         Ok(WaitResult {
             status: NodeStatus::Idle,
             outcome: TurnOutcome {
@@ -787,7 +689,7 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
     start_saved_agents(&project, &router, std::slice::from_ref(&prime)).await;
 
     let err = router
-        .spawn_agent(prime.clone(), None, "go".into())
+        .spawn_agent(&prime, None, "go")
         .await
         .unwrap_err()
         .to_string();
@@ -797,21 +699,15 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
     // archive frees the slot; the next spawn goes through
     assert_eq!(
         router
-            .archive(prime.clone(), AgentId::from("m1".to_string()))
+            .archive(&prime, &AgentId::from("m1".to_string()))
             .await
             .unwrap(),
         Ok(())
     );
     script_turn(&api, "o1", "fits now");
-    let child = router
-        .spawn_agent(prime.clone(), None, "go".into())
-        .await
-        .unwrap();
+    let child = router.spawn_agent(&prime, None, "go").await.unwrap();
     assert_eq!(
-        timeout(TIMEOUT, router.wait(prime, child))
-            .await
-            .unwrap()
-            .unwrap(),
+        timeout(TIMEOUT, router.wait(&prime, &child)).await.unwrap(),
         Ok(WaitResult {
             status: NodeStatus::Idle,
             outcome: TurnOutcome {
@@ -833,28 +729,16 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     rig.api.script_hanging_turn(vec![]);
     for target in [&a, &b] {
         assert_eq!(
-            rig.router
-                .send_message(rig.primary.clone(), target.clone(), "work".into())
-                .await
-                .unwrap(),
+            rig.router.send_message(&rig.primary, &target, "work"),
             Ok(())
         );
     }
 
     // a → b edge, receiver kept alive
-    let (done, ab_rx) = oneshot::channel();
-    rig.router
-        .tx
-        .send(RouterCommand::Wait {
-            caller: a.clone(),
-            target: b.clone(),
-            done,
-        })
-        .await
-        .unwrap();
+    let ab_rx = rig.router.lock().register_waiter(&a, &b);
     // closing the cycle is rejected, typed
     assert_eq!(
-        rig.router.wait(b.clone(), a.clone()).await.unwrap(),
+        rig.router.wait(&b, &a).await,
         Err(RouterError::WouldDeadlock)
     );
 
@@ -863,14 +747,19 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     let reverse = tokio::spawn({
         let router = rig.router.clone();
         let (a, b) = (a.clone(), b.clone());
-        async move { router.wait(b, a).await.unwrap() }
+        async move { router.wait(&b, &a).await }
     });
     // the abort rides the priority user channel: let a's hanging turn start
-    // first, or the abort lands before the wake and aborts nothing
+    // first, or the abort lands before the wake and aborts nothing — a
+    // delivery alone already reads Running, so wait for a to process it
     timeout(TIMEOUT, async {
         loop {
-            let outcome = rig.router.inspect(rig.primary.clone(), a.clone()).await;
-            if matches!(outcome.unwrap(), Ok(NodeStatus::Running)) {
+            let started = {
+                let s = rig.router.lock();
+                let node = &s.graph[&a];
+                node.processed == node.delivered && node.status == NodeStatus::Running
+            };
+            if started {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -880,7 +769,7 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     .expect("a never started its hanging turn");
     // abort a's hanging turn: it idles with the typed failure, the cached
     // output intact
-    rig.router.forward(a, UserCommand::Abort).await.unwrap();
+    rig.router.forward(&a, UserCommand::Abort).unwrap();
     assert_eq!(
         timeout(TIMEOUT, reverse).await.unwrap().unwrap(),
         Ok(WaitResult {
@@ -932,10 +821,8 @@ async fn concurrent_double_spawn_pins_both_refs_on_one_oid() {
     rig.script("one", "one");
     rig.script("two", "two");
     let (a, b) = tokio::join!(
-        rig.router
-            .spawn_agent(rig.primary.clone(), None, "go".into()),
-        rig.router
-            .spawn_agent(rig.primary.clone(), None, "go".into()),
+        rig.router.spawn_agent(&rig.primary, None, "go"),
+        rig.router.spawn_agent(&rig.primary, None, "go"),
     );
     let (a, b) = (a.unwrap(), b.unwrap());
 
@@ -955,18 +842,10 @@ async fn failed_spawn_rolls_back_node_row_record_and_workdir() {
     // no workdir to copy → the detached tail fails after registration
     std::fs::remove_dir_all(rig.project.agent_workdir(&rig.primary)).unwrap();
 
-    let result = rig
-        .router
-        .spawn_agent(rig.primary.clone(), None, "go".into())
-        .await;
+    let result = rig.router.spawn_agent(&rig.primary, None, "go").await;
     assert!(result.is_err());
 
-    let members = rig
-        .router
-        .list(rig.primary.clone(), true)
-        .await
-        .unwrap()
-        .unwrap();
+    let members = rig.router.list(&rig.primary, true).unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].id, rig.primary);
     let records = rig.project.store().load_graph().await.unwrap();
@@ -988,10 +867,7 @@ async fn failed_spawn_after_mint_leaves_no_base_ref() {
         .await
         .unwrap();
 
-    let result = rig
-        .router
-        .spawn_agent(rig.primary.clone(), None, "go".into())
-        .await;
+    let result = rig.router.spawn_agent(&rig.primary, None, "go").await;
     assert!(result.is_err());
 
     // the state dies in the same redb transaction as the graph record
@@ -1015,23 +891,9 @@ async fn failed_spawn_after_mint_leaves_no_base_ref() {
 async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
     let rig = Rig::new("prime").await;
     rig.script("o1", "never collected");
-    let (done, spawn_rx) = oneshot::channel();
-    rig.router
-        .tx
-        .send(RouterCommand::Spawn {
-            parent: rig.primary.clone(),
-            inherited_history: None,
-            prompt: "go".into(),
-            done,
-        })
-        .await
-        .unwrap();
-    let members = rig
-        .router
-        .list(rig.primary.clone(), true)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut spawn = std::pin::pin!(rig.router.spawn_agent(&rig.primary, None, "go"));
+    assert!(futures::poll!(&mut spawn).is_pending());
+    let members = rig.router.list(&rig.primary, true).unwrap();
     let child = members
         .iter()
         .find(|m| m.id != rig.primary)
@@ -1041,23 +903,17 @@ async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
 
     // archive while the spawn tail is (likely) still in flight
     assert_eq!(
-        rig.router
-            .archive(rig.primary.clone(), child.clone())
-            .await
-            .unwrap(),
+        rig.router.archive(&rig.primary, &child).await.unwrap(),
         Ok(())
     );
     // Let the tail land either way. If archive won before attachment, setup
     // rolls back; if attachment won, the durable archived graph record wins.
-    drop(timeout(TIMEOUT, spawn_rx).await);
+    drop(timeout(TIMEOUT, spawn).await);
 
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(records.get(&child).is_none_or(|record| record.archived));
     assert_eq!(
-        rig.router
-            .send_message(rig.primary.clone(), child, "hi".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&rig.primary, &child, "hi"),
         Err(RouterError::Unreachable)
     );
 }
@@ -1071,28 +927,17 @@ async fn runtime_attachment_is_one_shot_and_forward_is_acknowledged() {
     let (tx1, _rx1) = channel(8);
     let (user_tx1, mut user_rx1) = channel(1);
     let (abort1, _reg1) = AbortHandle::new_pair();
-    router.register_root(aid.clone()).await.unwrap();
-    router
-        .attach_runtime(aid.clone(), RuntimeHandle::new(tx1, user_tx1, abort1))
-        .await
-        .unwrap();
+    router.register_root(&aid).unwrap();
+    router.lock().attach(&aid, tx1, user_tx1, abort1).unwrap();
 
     let (tx2, _rx2) = channel(8);
     let (user_tx2, _user_rx2) = channel(8);
     let (abort2, _reg2) = AbortHandle::new_pair();
-    assert!(
-        router
-            .attach_runtime(aid.clone(), RuntimeHandle::new(tx2, user_tx2, abort2),)
-            .await
-            .is_err()
-    );
+    assert!(router.lock().attach(&aid, tx2, user_tx2, abort2).is_err());
 
     // Success is returned only after the event is actually queued.
-    router
-        .forward(aid.clone(), UserCommand::Abort)
-        .await
-        .unwrap();
-    assert!(router.forward(aid, UserCommand::Abort).await.is_err());
+    router.forward(&aid, UserCommand::Abort).unwrap();
+    assert!(router.forward(&aid, UserCommand::Abort).is_err());
     let event = timeout(TIMEOUT, user_rx1.recv()).await.unwrap().unwrap();
     assert!(matches!(event, AgentEvent::User(UserCommand::Abort)));
 }
@@ -1107,18 +952,17 @@ async fn forward_to_closed_runtime_is_rejected_and_marks_dead() {
     assert!(
         router
             .forward(
-                aid.clone(),
+                &aid,
                 UserCommand::Submit(UserPrompt {
                     text: "hello again".into(),
                     generation: None,
-                }),
+                })
             )
-            .await
             .is_err()
     );
 
     assert_eq!(
-        router.wait_idle(aid.clone()).await,
+        router.wait_idle(&aid).await,
         Ok(WaitResult {
             status: NodeStatus::Dead,
             outcome: TurnOutcome {
@@ -1147,48 +991,22 @@ async fn wait_after_mid_idle_send_returns_post_message_output() {
 
     // the primary's (emulated) turn ends; its idle report is still in flight…
     rig.router
-        .status(rig.primary.clone(), report(0, NodeStatus::Running, None))
-        .await
-        .unwrap();
+        .status(&rig.primary, report(0, NodeStatus::Running, None));
     // …when the child's message is delivered
     assert_eq!(
-        rig.router
-            .send_message(child.clone(), rig.primary.clone(), "more".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&child, &rig.primary, "more"),
         Ok(())
     );
     // the stale pre-delivery idle report arrives: processed < delivered, so a
     // wait registered now must not fire on "old"
     rig.router
-        .status(
-            rig.primary.clone(),
-            report(0, NodeStatus::Idle, Some("old")),
-        )
-        .await
-        .unwrap();
-    let (done, wait_rx) = oneshot::channel();
-    rig.router
-        .tx
-        .send(RouterCommand::Wait {
-            caller: child,
-            target: rig.primary.clone(),
-            done,
-        })
-        .await
-        .unwrap();
+        .status(&rig.primary, report(0, NodeStatus::Idle, Some("old")));
+    let wait_rx = rig.router.lock().register_waiter(&child, &rig.primary);
     // the agent catches up: processes the delivery, runs its turn to idle
     rig.router
-        .status(rig.primary.clone(), report(1, NodeStatus::Running, None))
-        .await
-        .unwrap();
+        .status(&rig.primary, report(1, NodeStatus::Running, None));
     rig.router
-        .status(
-            rig.primary.clone(),
-            report(1, NodeStatus::Idle, Some("new")),
-        )
-        .await
-        .unwrap();
+        .status(&rig.primary, report(1, NodeStatus::Idle, Some("new")));
     assert_eq!(
         timeout(TIMEOUT, wait_rx).await.unwrap().unwrap(),
         Ok(WaitResult {
@@ -1207,17 +1025,11 @@ async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
     let router = spawn_router(&project, Default::default());
     let (aid, _rx, _user_rx) = register_primary(&project, &router, "prime").await;
 
-    router
-        .runtime_down(aid.clone(), "first failure".into())
-        .await
-        .unwrap();
-    router
-        .runtime_down(aid.clone(), "second failure".into())
-        .await
-        .unwrap();
+    router.runtime_down(&aid, "first failure".into());
+    router.runtime_down(&aid, "second failure".into());
 
     assert_eq!(
-        timeout(TIMEOUT, router.wait_idle(aid)).await.unwrap(),
+        timeout(TIMEOUT, router.wait_idle(&aid)).await.unwrap(),
         Ok(WaitResult {
             status: NodeStatus::Dead,
             outcome: TurnOutcome {
@@ -1231,17 +1043,16 @@ async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
 #[tokio::test]
 async fn forwarded_abort_to_dead_primary_is_rejected() {
     let rig = Rig::new("prime").await;
-    rig.router.shutdown(rig.primary.clone()).await.unwrap();
+    rig.router.shutdown(&rig.primary).unwrap();
 
     assert!(
         rig.router
-            .forward(rig.primary.clone(), UserCommand::Abort)
-            .await
+            .forward(&rig.primary, UserCommand::Abort)
             .is_err()
     );
 
     assert_eq!(
-        timeout(TIMEOUT, rig.router.wait_idle(rig.primary.clone()))
+        timeout(TIMEOUT, rig.router.wait_idle(&rig.primary))
             .await
             .unwrap(),
         Ok(WaitResult {
@@ -1281,17 +1092,16 @@ async fn failed_wake_fires_wait_with_typed_error() {
 
     router
         .forward(
-            prime.clone(),
+            &prime,
             UserCommand::Submit(UserPrompt {
                 text: "hi".into(),
                 generation: None,
             }),
         )
-        .await
         .unwrap();
 
     assert_eq!(
-        timeout(TIMEOUT, router.wait_idle(prime)).await.unwrap(),
+        timeout(TIMEOUT, router.wait_idle(&prime)).await.unwrap(),
         Ok(WaitResult {
             status: NodeStatus::Idle,
             outcome: TurnOutcome {
@@ -1314,16 +1124,12 @@ async fn failed_turn_fires_wait_typed_without_clobbering_output_cache() {
         ended_at: 9,
     }]);
     assert_eq!(
-        rig.router
-            .send_message(rig.primary.clone(), child.clone(), "again".into())
-            .await
-            .unwrap(),
+        rig.router.send_message(&rig.primary, &child, "again"),
         Ok(())
     );
 
-    let outcome = timeout(TIMEOUT, rig.router.wait(rig.primary.clone(), child))
+    let outcome = timeout(TIMEOUT, rig.router.wait(&rig.primary, &child))
         .await
-        .unwrap()
         .unwrap();
     assert_eq!(
         outcome,
@@ -1350,9 +1156,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
     loop {
         let outcome = rig
             .router
-            .send_message(child.clone(), rig.primary.clone(), format!("m{sent}"))
-            .await
-            .unwrap();
+            .send_message(&child, &rig.primary, &format!("m{sent}"));
         match outcome {
             Ok(()) => sent += 1,
             Err(RouterError::Busy) => break,
@@ -1364,17 +1168,15 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
     // the user channel is a separate lane: control still lands while full
     rig.router
         .forward(
-            rig.primary.clone(),
+            &rig.primary,
             UserCommand::Submit(UserPrompt {
                 text: "user".into(),
                 generation: None,
             }),
         )
-        .await
         .unwrap();
     rig.router
-        .forward(rig.primary.clone(), UserCommand::Abort)
-        .await
+        .forward(&rig.primary, UserCommand::Abort)
         .unwrap();
     let first = timeout(TIMEOUT, rig._user_rx.recv())
         .await
@@ -1403,9 +1205,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
     for i in 1..=10 {
         let outcome = rig
             .router
-            .send_message(rig.primary.clone(), child.clone(), format!("b{i}"))
-            .await
-            .unwrap();
+            .send_message(&rig.primary, &child, &format!("b{i}"));
         assert_eq!(outcome, Ok(()));
     }
     timeout(TIMEOUT, async {
@@ -1429,4 +1229,92 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
     })
     .await
     .expect("burst never drained into the child's history");
+}
+
+async fn supervised(
+    future: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    cancel: bool,
+) -> Result<WaitResult, RouterError> {
+    let project = Project::new_test().unwrap().0;
+    let (app_tx, _app_rx) = channel(8);
+    let router = RouterState::start(
+        app_tx,
+        project,
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    );
+    let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
+    router.register_root(&aid).unwrap();
+    let (tx, _rx) = channel(1);
+    let (user_tx, _user_rx) = channel(1);
+    let (abort, registration) = AbortHandle::new_pair();
+    router
+        .lock()
+        .attach(&aid, tx, user_tx, abort.clone())
+        .unwrap();
+    tokio::spawn(ops::runtime::supervise(
+        aid.clone(),
+        router.clone(),
+        future,
+        registration,
+    ));
+    if cancel {
+        abort.abort();
+    }
+    timeout(Duration::from_secs(1), router.wait_idle(&aid))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn supervisor_reports_return_error_panic_and_cancellation() {
+    assert_eq!(
+        supervised(async { Ok(()) }, false).await,
+        Ok(WaitResult {
+            status: NodeStatus::Dead,
+            outcome: TurnOutcome {
+                output: None,
+                error: Some("agent runtime exited unexpectedly".into()),
+            },
+        })
+    );
+    assert_eq!(
+        supervised(async { Err(anyhow::anyhow!("fatal")) }, false).await,
+        Ok(WaitResult {
+            status: NodeStatus::Dead,
+            outcome: TurnOutcome {
+                output: None,
+                error: Some("agent runtime failed: fatal".into()),
+            },
+        })
+    );
+    assert_eq!(
+        supervised(
+            async {
+                panic!("boom");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+            false,
+        )
+        .await,
+        Ok(WaitResult {
+            status: NodeStatus::Dead,
+            outcome: TurnOutcome {
+                output: None,
+                error: Some("agent runtime panicked: boom".into()),
+            },
+        })
+    );
+    assert_eq!(
+        supervised(futures::future::pending(), true).await,
+        Ok(WaitResult {
+            status: NodeStatus::Dead,
+            outcome: TurnOutcome {
+                output: None,
+                error: Some("agent runtime cancelled unexpectedly".into()),
+            },
+        })
+    );
 }
