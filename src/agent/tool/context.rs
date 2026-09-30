@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::agent::id::AgentId;
 use crate::agent::router::Router;
-use crate::agent::task::sink::OutputSink;
+use crate::agent::task::sink::TaskSink;
 use crate::config::Config;
 use crate::llm::history::History;
 use crate::project::Project;
@@ -15,7 +15,8 @@ pub struct ToolRuntimeContext {
     pub agent_id: AgentId,
     pub project: Project,
     pub router: Router,
-    pub output: OutputSink,
+    /// streams output chunks back to the agent
+    pub sink: TaskSink,
     /// parent history for `spawn` calls with inherit=true
     pub inherited_history: Option<History>,
 }
@@ -25,14 +26,14 @@ impl ToolRuntimeContext {
         agent_id: AgentId,
         project: Project,
         router: Router,
-        output: OutputSink,
+        sink: TaskSink,
         inherited_history: Option<History>,
     ) -> Self {
         Self {
             agent_id,
             project,
             router,
-            output,
+            sink,
             inherited_history,
         }
     }

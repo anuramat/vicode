@@ -5,7 +5,7 @@ use anyhow::Result;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-use crate::agent::task::sink::OutputSink;
+use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::Function;
 use crate::sandbox::SandboxRunner;
@@ -20,7 +20,7 @@ impl Function<(), BashResult> for BashArguments {
     ) -> Result<(BashResult, ())> {
         let runner = ctx.sandbox_runner()?;
         let shell_cmd = ctx.config().shell_cmd.clone();
-        let result = exec_streaming(&runner, shell_cmd, self.command.clone(), &ctx.output).await?;
+        let result = exec_streaming(&runner, shell_cmd, self.command.clone(), &ctx.sink).await?;
         Ok((result, ()))
     }
 
@@ -33,13 +33,13 @@ impl Function<(), BashResult> for BashArguments {
 }
 
 /// incremental exec: chunks stream through the sink as they arrive (stdout
-/// and stderr interleaved); the `Agent`'s accumulator is the authoritative
-/// text, the return carries only the exit status
+/// and stderr interleaved); the partial the core accumulates is the
+/// authoritative text, the return carries only the exit status
 pub async fn exec_streaming(
     runner: &SandboxRunner,
     shell_cmd: Vec<String>,
     script: String,
-    sink: &OutputSink,
+    sink: &TaskSink,
 ) -> Result<BashResult> {
     let mut child = runner.spawn(shell_cmd, script)?;
     let out = child.stdout.take().context("no stdout pipe")?;
@@ -56,14 +56,14 @@ pub async fn exec_streaming(
 /// read a pipe to EOF, streaming each chunk to the sink (lossy per chunk)
 async fn drain(
     mut reader: impl AsyncRead + Unpin,
-    sink: &OutputSink,
+    sink: &TaskSink,
 ) {
     let mut buf = [0u8; 8192];
     while let Ok(n) = reader.read(&mut buf).await {
         if n == 0 {
             break;
         }
-        sink.send(String::from_utf8_lossy(&buf[..n]).into()).await;
+        sink.output(String::from_utf8_lossy(&buf[..n]).into()).await;
     }
 }
 
@@ -72,6 +72,9 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
+    use crate::agent::event::AgentEvent;
+    use crate::agent::task::ledger::Task;
+    use crate::agent::task::ledger::TaskLedger;
 
     #[tokio::test]
     async fn exec_streams_chunks_and_returns_status_only() {
@@ -81,7 +84,8 @@ mod tests {
             cwd: std::env::temp_dir(),
         };
         let (tx, mut rx) = channel(64);
-        let sink = OutputSink::new("call-1".into(), tx);
+        let tid = TaskLedger::default().register(Task::turn());
+        let sink = TaskSink::new(tid, tx);
 
         let mut result = exec_streaming(
             &runner,
@@ -101,11 +105,14 @@ mod tests {
                 signal: None,
             }
         );
-        // every chunk reached the sink, tagged with the call id; composing
+        // every chunk reached the sink, tagged with the task id; composing
         // the accumulated stream fills the output text
         let mut streamed = String::new();
-        while let Ok((call_id, chunk)) = rx.try_recv() {
-            assert_eq!(call_id, "call-1");
+        while let Ok(event) = rx.try_recv() {
+            let AgentEvent::Output(id, chunk) = event else {
+                panic!("expected output, got {event:?}");
+            };
+            assert_eq!(id, tid);
             streamed.push_str(&chunk);
         }
         assert_eq!(streamed.len(), "one\ntwo\n".len());

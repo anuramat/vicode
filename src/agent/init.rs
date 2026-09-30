@@ -51,7 +51,7 @@ impl Agent {
         rx: Receiver<AgentEvent>,
     ) -> Self {
         let (user_tx, user_rx) = channel(CHANNEL_CAPACITY);
-        let (out_tx, out_rx) = channel(CHANNEL_CAPACITY);
+        let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
         Self {
             core: AgentCore::new(state, project.assistants().clone()),
             project,
@@ -64,10 +64,8 @@ impl Agent {
             processed: 0,
             executor: Default::default(),
             tx,
-            out_tx,
-            out_rx,
-            accumulators: Default::default(),
-            dup_ack: None,
+            task_tx,
+            task_rx,
         }
     }
 
@@ -177,7 +175,7 @@ async fn supervise(
         Ok(Err(_)) => "agent runtime cancelled unexpectedly".into(),
         Err(payload) => format!(
             "agent runtime panicked: {}",
-            crate::agent::run::panic_message(&*payload)
+            crate::agent::task::executor::panic_message(&*payload)
         ),
     };
     drop(router.runtime_down(aid, error).await);
@@ -313,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn try_duplicate_registers_copy_with_router() {
         let project = Project::new_test().unwrap().0;
-        let (app_tx, _app_rx) = channel(8);
+        let (app_tx, mut app_rx) = channel(8);
         let router = RouterState::start(
             app_tx.clone(),
             project.clone(),
@@ -345,18 +343,25 @@ mod tests {
         );
 
         let copy_aid = router.allocate_agent_id().await.unwrap();
-        let (ack, ack_rx) = tokio::sync::oneshot::channel();
         parent
             .handle(crate::agent::event::AgentEvent::User(
-                crate::agent::event::UserCommand::DuplicateRequest {
-                    copy: copy_aid.clone(),
-                    ack,
-                },
+                crate::agent::event::UserCommand::Duplicate(copy_aid.clone()),
             ))
             .await
             .unwrap();
-        // the ack fires only after the copy is registered
-        ack_rx.await.unwrap();
+        // the copy registered in-handler: nothing reported a failure
+        while let Ok(event) = app_rx.try_recv() {
+            assert!(
+                !matches!(
+                    event,
+                    crate::tui::app::AppEvent::Agent(
+                        _,
+                        crate::agent::event::UiEvent::DuplicateFailed { .. }
+                    )
+                ),
+                "{event:?}"
+            );
+        }
 
         // the copy starts with the one-line "new empty tab" devmsg
         // and an empty buffer (new-empty-root rule)

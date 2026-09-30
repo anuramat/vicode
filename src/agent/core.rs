@@ -1,5 +1,5 @@
 //! pure agent decision logic: no IO, no clocks, no channels, no tokio. The
-//! `Agent` (`shell.rs`) translates wire events into [`CoreEvent`]s, calls
+//! `Agent` (`shell.rs`) hands every [`AgentEvent`] to
 //! [`AgentCore::handle`], and interprets the produced [`Effect`]s in order.
 
 use std::sync::Arc;
@@ -8,12 +8,16 @@ use anyhow::Result;
 
 use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
 use crate::agent::id::AgentId;
+use crate::agent::task::ledger::Task;
 use crate::agent::task::ledger::TaskId;
 use crate::agent::task::ledger::TaskLedger;
-use crate::agent::task::sink::TurnType;
+use crate::agent::task::ledger::TurnType;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::forward;
@@ -41,44 +45,18 @@ pub struct AgentCore {
     pub assistants: Arc<AssistantPool>,
 }
 
-/// `AgentEvent` minus IO payloads: oneshots are stripped by `Agent`
-#[derive(Debug)]
-pub enum CoreEvent {
-    TaskDone(TaskId, Result<(), String>),
-    TaskEvent(TaskId, HistoryGeneration, HistoryUpdate),
-    /// reaper: a tool future returned its resolved item
-    ToolResolved(TaskId, Box<ToolCallItem>),
-    /// reaper: a tool future panicked or was cancelled; `error` carries the
-    /// marker plus whatever output `Agent` accumulated before the drop
-    ToolFailed {
-        id: TaskId,
-        call_id: String,
-        error: String,
-    },
-    /// inbound inter-agent message: wake if idle, buffer if busy — never
-    /// mid-stream, never mid-compact
-    Message(UserMessage),
-    Submit(UserPrompt),
-    Compact(usize),
-    Retry,
-    Abort,
-    Undo(usize),
-    SetAssistant(String),
-    Duplicate(AgentId),
-}
-
 /// fat effects: all decision-time state is captured at push time, so the
 /// `Agent` interprets them blindly and strictly in order
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum Effect {
-    Emit(UiEvent),
+    Ui(UiEvent),
+    /// the derived status changed: `Agent` reports it to the router and the UI
+    Status(ActivityStatus),
     /// marker; `Agent` serializes the core state as of this position
     Save,
     StartTurn {
         id: TaskId,
-        generation: HistoryGeneration,
-        turn_type: TurnType,
         assistant: Assistant,
         #[cfg_attr(test, serde(skip))]
         tools: ToolRegistry,
@@ -95,9 +73,12 @@ pub enum Effect {
         #[cfg_attr(test, serde(skip))]
         inherited_history: Option<History>,
     },
+    /// cancel every task future; the core already resolved them
     AbortTasks,
     /// `Agent`: save state-with-new; on success apply + emit `AssistantSet`
     SetAssistant(String),
+    /// `Agent`: clone into a new root; a failure comes back to the UI as
+    /// `DuplicateFailed`
     Duplicate(AgentId),
 }
 
@@ -127,47 +108,45 @@ impl AgentCore {
     pub fn handle(
         &mut self,
         now: u64,
-        event: CoreEvent,
+        event: AgentEvent,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        #[allow(clippy::enum_glob_use)]
-        use CoreEvent::*;
-
         let result = match event {
-            TaskDone(tid, result) => self.task_done(now, tid, result, effects),
-            TaskEvent(tid, generation, event) => {
-                if self.ledger.pending(&tid) {
-                    self.handle_history(generation, event, effects)
-                } else {
-                    Ok(())
-                }
+            AgentEvent::User(command) => self.command(now, command, effects),
+            AgentEvent::Inbound(msg) => self.message(now, msg, effects),
+            AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
+                Some(&Task::Turn {
+                    generation,
+                    turn_type,
+                }) => self.handle_history(generation, turn_type.wrap(event), effects),
+                _ => Ok(()),
+            },
+            AgentEvent::Output(tid, chunk) => {
+                self.output(tid, chunk, effects);
+                Ok(())
             }
-            // reaper terminals resolve at the current generation and past a
-            // cleared ledger: the slot must land its output even post-abort
-            ToolResolved(tid, item) => {
-                let g = self.history().generation();
-                self.handle_history(
-                    g,
-                    HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(
-                        AssistantItem::ToolCall(*item),
-                    ))),
-                    effects,
-                )?;
-                self.task_finished(now, tid, effects)
-            }
-            ToolFailed { id, call_id, error } => {
-                let g = self.history().generation();
-                self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error }, effects)?;
-                self.task_finished(now, id, effects)
-            }
-            Message(msg) => self.message(now, msg, effects),
-            Submit(prompt) => self.submit(now, prompt, effects),
-            Compact(n) => {
+            AgentEvent::Done(tid, result) => self.task_done(now, tid, result, effects),
+        };
+        if result.is_ok() {
+            self.sync_status(effects);
+        }
+        result
+    }
+
+    fn command(
+        &mut self,
+        now: u64,
+        command: UserCommand,
+        effects: &mut Vec<Effect>,
+    ) -> Result<()> {
+        match command {
+            UserCommand::Submit(prompt) => self.submit(now, prompt, effects),
+            UserCommand::Compact(n) => {
                 self.idle()?;
                 self.init_compact(now, n, effects)?;
                 self.compact_turn(now, effects)
             }
-            Retry => {
+            UserCommand::Retry => {
                 self.idle()?;
                 self.increment_generation(effects)?;
                 if self.history().compacting() {
@@ -176,28 +155,30 @@ impl AgentCore {
                     self.start_turn(now, effects)
                 }
             }
-            Abort => self.abort(now, effects),
-            Undo(n) => {
+            UserCommand::Abort => self.abort(now, effects),
+            UserCommand::Undo(n) => {
                 self.idle()?;
                 let g = self.increment_generation(effects)?;
                 self.handle_history(g, HistoryUpdate::Pop(n), effects)
             }
-            SetAssistant(id) => {
+            UserCommand::SetAssistant(id) => {
                 self.idle()?;
                 let new = self.assistants.assistant(&id)?;
                 effects.push(Effect::SetAssistant(new.id));
                 Ok(())
             }
-            Duplicate(aid) => {
-                self.idle()?;
-                effects.push(Effect::Duplicate(aid));
+            // the rejection names the copy, so the app can drop its preview
+            UserCommand::Duplicate(copy) => {
+                effects.push(match self.idle() {
+                    Ok(()) => Effect::Duplicate(copy),
+                    Err(e) => Effect::Ui(UiEvent::DuplicateFailed {
+                        copy,
+                        error: e.to_string(),
+                    }),
+                });
                 Ok(())
             }
-        };
-        if result.is_ok() {
-            self.sync_status(effects);
         }
-        result
     }
 
     pub fn derive_status(&self) -> ActivityStatus {
@@ -219,7 +200,7 @@ impl AgentCore {
             return;
         }
         self.state.status = new_status.clone();
-        effects.push(Effect::Emit(UiEvent::StatusUpdate(new_status)));
+        effects.push(Effect::Status(new_status));
     }
 
     pub fn idle(&self) -> Result<()> {
@@ -252,7 +233,7 @@ impl AgentCore {
                 | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
                 | HistoryUpdate::CompactResponse(AssistantEvent::Delta(_))
         );
-        effects.push(Effect::Emit(UiEvent::HistoryUpdate(generation, event)));
+        effects.push(Effect::Ui(UiEvent::HistoryUpdate(generation, event)));
         if skip_save {
             return Ok(());
         }
@@ -285,11 +266,30 @@ impl AgentCore {
             .inherit_history()
             .then(|| self.history().subagent());
         effects.push(Effect::RunTool {
-            id: self.ledger.register(),
+            id: self.ledger.register(Task::Tool {
+                call_id: call.call_id.clone(),
+                partial: String::new(),
+            }),
             call: call.clone(),
             inherited_history,
         });
         Ok(())
+    }
+
+    /// accumulate (authoritative) + tee to the app for live render
+    fn output(
+        &mut self,
+        tid: TaskId,
+        chunk: String,
+        effects: &mut Vec<Effect>,
+    ) {
+        if let Some(Task::Tool { call_id, partial }) = self.ledger.get_mut(tid) {
+            partial.push_str(&chunk);
+            effects.push(Effect::Ui(UiEvent::ToolOutput {
+                call_id: call_id.clone(),
+                chunk,
+            }));
+        }
     }
 
     fn increment_generation(
@@ -301,28 +301,57 @@ impl AgentCore {
         Ok(self.history().generation())
     }
 
+    /// the single resolver: a task's terminal lands in history, then the
+    /// agent continues if that was the last one
     fn task_done(
         &mut self,
         now: u64,
-        id: TaskId,
-        result: Result<(), String>,
+        tid: TaskId,
+        result: TaskResult,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        // stale failures still surface: emit before the ledger check
-        if let Err(err) = result {
-            effects.push(Effect::Emit(UiEvent::Error(err)));
+        let Some(task) = self.ledger.finish(tid) else {
+            // stale (aborted) failures still surface
+            if let Err(err) = result {
+                effects.push(Effect::Ui(UiEvent::Error(err)));
+            }
+            return Ok(());
+        };
+        let g = self.history().generation();
+        match (task, result) {
+            (Task::Turn { .. }, Ok(_)) => {}
+            // an erroring or panicking turn terminates its response, so the
+            // next flush can't stack a turn on an orphaned InProgress one
+            (
+                Task::Turn {
+                    generation,
+                    turn_type,
+                },
+                Err(message),
+            ) => {
+                effects.push(Effect::Ui(UiEvent::Error(message.clone())));
+                let failed = AssistantEvent::Failed {
+                    message,
+                    ended_at: now,
+                };
+                self.handle_history(generation, turn_type.wrap(failed), effects)?;
+            }
+            // a streaming tool's authoritative text is the partial; its
+            // return carries only metadata
+            (Task::Tool { partial, .. }, Ok(Some(mut item))) => {
+                item.task.compose(partial);
+                let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
+                self.handle_history(g, HistoryUpdate::TurnResponse(item), effects)?;
+            }
+            (Task::Tool { call_id, partial }, result) => {
+                let marker = result
+                    .err()
+                    .unwrap_or_else(|| "tool returned no item".into());
+                let error = with_partial(marker, &partial);
+                self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error }, effects)?;
+            }
         }
-        self.task_finished(now, id, effects)
-    }
-
-    /// shared continuation for everything that finishes a ledger task
-    fn task_finished(
-        &mut self,
-        now: u64,
-        id: TaskId,
-        effects: &mut Vec<Effect>,
-    ) -> Result<()> {
-        if !self.ledger.finish(&id) || !self.ledger.idle() {
+        if !self.ledger.idle() {
             return Ok(());
         }
         // flush at the true idle; a flushed message wakes on its own
@@ -347,14 +376,14 @@ impl AgentCore {
             self.flush_pending(effects)?;
             self.start_turn(now, effects)
         } else {
-            // buffered and saved: survives restart and hibernation
+            // buffered and saved: survives restart
             effects.push(Effect::Save);
             Ok(())
         }
     }
 
     /// startup wake: a restored idle agent flushes messages buffered
-    /// before the restart/hibernation and starts their turn — otherwise they
+    /// before the restart and starts their turn — otherwise they
     /// sit unread until an unrelated event pokes the agent, and a post-restart
     /// `wait` fires on the pre-message output
     pub fn resume(
@@ -426,12 +455,15 @@ impl AgentCore {
         self.start_turn(now, effects)
     }
 
+    /// resolve everything in flight right here — the failed turn, and each
+    /// tool call with what it streamed so far — then cancel the futures,
+    /// whose late events the cleared ledger ignores
     fn abort(
         &mut self,
         now: u64,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        self.ledger.clear();
+        let tasks = self.ledger.clear();
         let g = self.increment_generation(effects)?;
         let event = if self.history().compacting() {
             Some(HistoryUpdate::CompactAbort)
@@ -451,10 +483,12 @@ impl AgentCore {
         if let Some(event) = event {
             self.handle_history(g, event, effects)?;
         }
-        // pushed last: the mirror must apply the generation bump (and the
-        // turn's Failed response) before AbortTasks reaps in-flight tools —
-        // those finalizations emit at the new generation, and a mirror still
-        // on the old one rejects them as a generation mismatch
+        for task in tasks {
+            if let Task::Tool { call_id, partial } = task {
+                let error = with_partial(ABORTED_BY_USER.into(), &partial);
+                self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error }, effects)?;
+            }
+        }
         effects.push(Effect::AbortTasks);
         Ok(())
     }
@@ -524,15 +558,28 @@ impl AgentCore {
         let instructions = self.history().instructions().to_string();
         self.handle_history(generation, created, effects)?;
         effects.push(Effect::StartTurn {
-            id: self.ledger.register(),
-            generation,
-            turn_type,
+            id: self.ledger.register(Task::Turn {
+                generation,
+                turn_type,
+            }),
             assistant,
             tools,
             instructions,
             messages,
         });
         Ok(())
+    }
+}
+
+/// a failed tool's error: the marker plus whatever it streamed first
+fn with_partial(
+    marker: String,
+    partial: &str,
+) -> String {
+    if partial.is_empty() {
+        marker
+    } else {
+        format!("{marker}; partial output:\n{partial}")
     }
 }
 
@@ -559,25 +606,29 @@ mod tests {
     fn drive(
         core: &mut AgentCore,
         now: u64,
-        event: CoreEvent,
+        event: AgentEvent,
     ) -> (Result<()>, Vec<Effect>) {
         let mut effects = Vec::new();
         let result = core.handle(now, event, &mut effects);
         (result, effects)
     }
 
+    fn user(command: UserCommand) -> AgentEvent {
+        AgentEvent::User(command)
+    }
+
     fn submit(
         text: &str,
         generation: HistoryGeneration,
-    ) -> CoreEvent {
-        CoreEvent::Submit(UserPrompt {
+    ) -> AgentEvent {
+        user(UserCommand::Submit(UserPrompt {
             text: text.into(),
             generation: Some(generation),
-        })
+        }))
     }
 
-    fn message(text: &str) -> CoreEvent {
-        CoreEvent::Message(UserMessage::new(text.into(), 5))
+    fn message(text: &str) -> AgentEvent {
+        AgentEvent::Inbound(UserMessage::new(text.into(), 5))
     }
 
     /// id of the task the effects started
@@ -607,25 +658,21 @@ mod tests {
         }
     }
 
-    fn todo_call(output: Option<std::result::Result<TodoResult, String>>) -> HistoryUpdate {
-        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
-            todo_item(output),
-        ))))
+    fn todo_call(output: Option<std::result::Result<TodoResult, String>>) -> AssistantEvent {
+        AssistantEvent::Item(Box::new(AssistantItem::ToolCall(todo_item(output))))
     }
 
     fn text_output(
         id: &str,
         text: &str,
-    ) -> HistoryUpdate {
-        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
-            OutputItem {
-                id: id.into(),
-                content: vec![OutputContent::Text(text.into())],
-                token_count: 0,
-                started_at: 1,
-                ended_at: None,
-            },
-        ))))
+    ) -> AssistantEvent {
+        AssistantEvent::Item(Box::new(AssistantItem::Output(OutputItem {
+            id: id.into(),
+            content: vec![OutputContent::Text(text.into())],
+            token_count: 0,
+            started_at: 1,
+            ended_at: None,
+        })))
     }
 
     macro_rules! assert_handled {
@@ -651,7 +698,7 @@ mod tests {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 7, submit("hi", 0), @"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - UserMessage:
@@ -659,11 +706,11 @@ mod tests {
                     token_count: 1
                     created_at: 7
           - Save
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -671,12 +718,9 @@ mod tests {
                       created_at: 7
           - StartTurn:
               id: 0
-              generation: 1
-              turn_type: Default
               assistant: test
-          - Emit:
-              StatusUpdate:
-                Normal: InProgress
+          - Status:
+              Normal: InProgress
         ");
     }
 
@@ -693,13 +737,12 @@ mod tests {
     #[test]
     fn submit_while_busy_queues_as_pending() {
         let mut core = AgentCore::fake();
-        core.ledger.register();
+        core.ledger.register(Task::turn());
         assert_handled!(&mut core, 7, submit("hi", 0), @"
         - Normal: InProgress
         - - Save
-          - Emit:
-              StatusUpdate:
-                Normal: InProgress
+          - Status:
+              Normal: InProgress
         ");
         assert_eq!(core.state.pending_messages.len(), 1);
     }
@@ -718,15 +761,11 @@ mod tests {
         drive(
             &mut core,
             3,
-            CoreEvent::TaskEvent(
-                turn,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
-            ),
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
         )
         .0
         .unwrap();
-        let (result, effects) = drive(&mut core, 4, CoreEvent::TaskDone(turn, Ok(())));
+        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)));
         result.unwrap();
         assert!(serde_json::to_string(&effects).unwrap().contains("steer"));
         assert!(
@@ -757,7 +796,7 @@ mod tests {
         );
         core.idle().unwrap();
         // `Agent` applies SetAssistant; a resubmit then turns normally
-        drive(&mut core, 8, CoreEvent::SetAssistant("test".into()))
+        drive(&mut core, 8, user(UserCommand::SetAssistant("test".into())))
             .0
             .unwrap();
         core.state.assistant_id = "test".into();
@@ -772,14 +811,14 @@ mod tests {
     fn abort_fails_inflight_turn() {
         let mut core = AgentCore::fake();
         drive(&mut core, 7, submit("hi", 0)).0.unwrap();
-        assert_handled!(&mut core, 9, CoreEvent::Abort, @"
+        assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
         - Normal:
             Failed: aborted by user
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 1
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 2
                 - TurnResponse:
@@ -788,10 +827,9 @@ mod tests {
                       ended_at: 9
           - Save
           - AbortTasks
-          - Emit:
-              StatusUpdate:
-                Normal:
-                  Failed: aborted by user
+          - Status:
+              Normal:
+                Failed: aborted by user
         ");
         assert!(matches!(
             core.history().state().last(),
@@ -831,13 +869,13 @@ mod tests {
             )
             .unwrap();
 
-        assert_handled!(&mut core, 7, CoreEvent::Retry, @"
+        assert_handled!(&mut core, 7, user(UserCommand::Retry), @"
         - Compact: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - CompactResponse:
@@ -846,12 +884,9 @@ mod tests {
           - Save
           - StartTurn:
               id: 0
-              generation: 1
-              turn_type: Compact
               assistant: test
-          - Emit:
-              StatusUpdate:
-                Compact: InProgress
+          - Status:
+              Compact: InProgress
         ");
         assert!(core.history().compacting());
     }
@@ -865,7 +900,7 @@ mod tests {
                 HistoryUpdate::UserMessage(UserMessage::new("short".into(), 0)),
             )
             .unwrap();
-        assert_rejected!(&mut core, 7, CoreEvent::Compact(0), @"
+        assert_rejected!(&mut core, 7, user(UserCommand::Compact(0)), @"
         - no compact available
         - Normal: Idle
         - []
@@ -902,15 +937,17 @@ mod tests {
                 }),
             )
             .unwrap();
-        let tid = core.ledger.register();
+        let tid = core.ledger.register(Task::Turn {
+            generation: 0,
+            turn_type: TurnType::Compact,
+        });
 
-        assert_handled!(&mut core, 7, CoreEvent::TaskDone(tid, Ok(())), @"
+        assert_handled!(&mut core, 7, AgentEvent::Done(tid, Ok(None)), @"
         - Compact:
             Failed: oops
-        - - Emit:
-              StatusUpdate:
-                Compact:
-                  Failed: oops
+        - - Status:
+              Compact:
+                Failed: oops
         ");
         assert!(core.ledger.idle());
         assert!(core.history().compacting());
@@ -942,25 +979,32 @@ mod tests {
                 }),
             )
             .unwrap();
-        let tid = core.ledger.register();
+        let tid = core.ledger.register(Task::turn());
 
-        assert_handled!(&mut core, 7, CoreEvent::TaskDone(tid, Err("oops".into())), @"
+        assert_handled!(&mut core, 7, AgentEvent::Done(tid, Err("oops".into())), @"
         - Normal:
             Failed: oops
-        - - Emit:
+        - - Ui:
               Error: oops
-          - Emit:
-              StatusUpdate:
-                Normal:
-                  Failed: oops
+          - Ui:
+              HistoryUpdate:
+                - 0
+                - TurnResponse:
+                    Failed:
+                      message: oops
+                      ended_at: 7
+          - Save
+          - Status:
+              Normal:
+                Failed: oops
         ");
     }
 
     #[test]
     fn set_assistant_rejected_while_busy() {
         let mut core = AgentCore::fake();
-        core.ledger.register();
-        assert_rejected!(&mut core, 7, CoreEvent::SetAssistant("test2".into()), @"
+        core.ledger.register(Task::turn());
+        assert_rejected!(&mut core, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - agent is busy
         - Normal: InProgress
         - []
@@ -971,7 +1015,7 @@ mod tests {
     #[test]
     fn set_assistant_resolves_to_single_effect() {
         let mut core = AgentCore::fake();
-        assert_handled!(&mut core, 7, CoreEvent::SetAssistant("test2".into()), @"
+        assert_handled!(&mut core, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - Normal: Idle
         - - SetAssistant: test2
         ");
@@ -982,7 +1026,7 @@ mod tests {
     #[test]
     fn set_assistant_unknown_id_is_rejected() {
         let mut core = AgentCore::fake();
-        assert_rejected!(&mut core, 7, CoreEvent::SetAssistant("nope".into()), @r#"
+        assert_rejected!(&mut core, 7, user(UserCommand::SetAssistant("nope".into())), @r#"
         - "unknown assistant \"nope\""
         - Normal: Idle
         - []
@@ -998,23 +1042,24 @@ mod tests {
                 HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
             )
             .unwrap();
-        drive(&mut core, 5, CoreEvent::Compact(1)).0.unwrap();
+        drive(&mut core, 5, user(UserCommand::Compact(1)))
+            .0
+            .unwrap();
 
-        assert_handled!(&mut core, 9, CoreEvent::Abort, @"
+        assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
         - Normal: Idle
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - CompactAbort
           - Save
           - AbortTasks
-          - Emit:
-              StatusUpdate:
-                Normal: Idle
+          - Status:
+              Normal: Idle
         ");
         assert!(!core.history().compacting());
     }
@@ -1022,9 +1067,9 @@ mod tests {
     #[test]
     fn abort_while_idle_emits_no_history_event() {
         let mut core = AgentCore::fake();
-        assert_handled!(&mut core, 9, CoreEvent::Abort, @"
+        assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
         - Normal: Idle
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
@@ -1037,12 +1082,12 @@ mod tests {
         let mut core = AgentCore::fake();
         let (_, effects) = drive(&mut core, 1, submit("hi", 0));
         let tid = started_task(&effects);
-        drive(&mut core, 2, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 2, user(UserCommand::Abort)).0.unwrap();
 
-        assert_handled!(&mut core, 3, CoreEvent::TaskDone(tid, Err("stream closed".into())), @"
+        assert_handled!(&mut core, 3, AgentEvent::Done(tid, Err("stream closed".into())), @"
         - Normal:
             Failed: aborted by user
-        - - Emit:
+        - - Ui:
               Error: stream closed
         ");
     }
@@ -1052,9 +1097,9 @@ mod tests {
         let mut core = AgentCore::fake();
         let (_, effects) = drive(&mut core, 1, submit("hi", 0));
         let tid = started_task(&effects);
-        drive(&mut core, 2, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 2, user(UserCommand::Abort)).0.unwrap();
 
-        assert_handled!(&mut core, 3, CoreEvent::TaskEvent(tid, 1, text_output("out", "late")), @"
+        assert_handled!(&mut core, 3, AgentEvent::Stream(tid, text_output("out", "late")), @"
         - Normal:
             Failed: aborted by user
         - []
@@ -1067,7 +1112,7 @@ mod tests {
         let (_, effects) = drive(&mut core, 1, submit("hi", 0));
         let turn = started_task(&effects);
 
-        let (result, effects) = drive(&mut core, 2, CoreEvent::TaskEvent(turn, 1, todo_call(None)));
+        let (result, effects) = drive(&mut core, 2, AgentEvent::Stream(turn, todo_call(None)));
         result.unwrap();
         let tool = started_task(&effects);
         insta::assert_yaml_snapshot!(effects, @r#"
@@ -1086,7 +1131,7 @@ mod tests {
               started_at: 2
               ended_at: 3
               ready_at: ~
-        - Emit:
+        - Ui:
             HistoryUpdate:
               - 1
               - TurnResponse:
@@ -1110,26 +1155,22 @@ mod tests {
         drive(
             &mut core,
             3,
-            CoreEvent::TaskEvent(
-                turn,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
-            ),
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
         )
         .0
         .unwrap();
         // the turn task finishing leaves the tool task pending: no new turn yet
-        let (result, effects) = drive(&mut core, 4, CoreEvent::TaskDone(turn, Ok(())));
+        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)));
         result.unwrap();
         assert!(effects.is_empty());
 
         // the reaper's terminal resolves the slot and starts the follow-up
         assert_handled!(
             &mut core, 6,
-            CoreEvent::ToolResolved(tool, Box::new(todo_item(Some(Ok(TodoResult {}))))),
+            AgentEvent::Done(tool, Ok(Some(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
             @r#"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1149,7 +1190,7 @@ mod tests {
                         ended_at: 3
                         ready_at: ~
           - Save
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1157,8 +1198,6 @@ mod tests {
                       created_at: 6
           - StartTurn:
               id: 2
-              generation: 1
-              turn_type: Default
               assistant: test
         "#);
     }
@@ -1168,42 +1207,37 @@ mod tests {
         let mut core = AgentCore::fake();
         let (_, effects) = drive(&mut core, 1, submit("hi", 0));
         let turn = started_task(&effects);
-        let (_, effects) = drive(&mut core, 2, CoreEvent::TaskEvent(turn, 1, todo_call(None)));
+        let (_, effects) = drive(&mut core, 2, AgentEvent::Stream(turn, todo_call(None)));
         let tool = started_task(&effects);
         drive(
             &mut core,
             3,
-            CoreEvent::TaskEvent(
-                turn,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
-            ),
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
         )
         .0
         .unwrap();
-        drive(&mut core, 4, CoreEvent::TaskDone(turn, Ok(())))
+        drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)))
             .0
             .unwrap();
 
-        // panic/cancel finalize: slot gets the error, ledger unsticks, and
-        // the model sees the failure next turn
+        drive(&mut core, 5, AgentEvent::Output(tool, "abc".into()))
+            .0
+            .unwrap();
+        // a panic finalizes: slot gets the error plus the streamed partial,
+        // ledger unsticks, and the model sees the failure next turn
         assert_handled!(
             &mut core, 5,
-            CoreEvent::ToolFailed {
-                id: tool,
-                call_id: "call-1".into(),
-                error: "tool panicked: boom; partial output:\nabc".into(),
-            },
+            AgentEvent::Done(tool, Err("tool panicked: boom".into())),
             @r#"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 1
                 - ToolCallFailed:
                     call_id: call-1
                     error: "tool panicked: boom; partial output:\nabc"
           - Save
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1211,8 +1245,6 @@ mod tests {
                       created_at: 5
           - StartTurn:
               id: 2
-              generation: 1
-              turn_type: Default
               assistant: test
         "#);
         // the slot itself holds the error (the follow-up Created appended a
@@ -1236,7 +1268,7 @@ mod tests {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 7, message("[from: kid]\nhi"), @r#"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - UserMessage:
@@ -1244,7 +1276,7 @@ mod tests {
                     token_count: 5
                     created_at: 5
           - Save
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 0
                 - TurnResponse:
@@ -1252,12 +1284,9 @@ mod tests {
                       created_at: 7
           - StartTurn:
               id: 0
-              generation: 0
-              turn_type: Default
               assistant: test
-          - Emit:
-              StatusUpdate:
-                Normal: InProgress
+          - Status:
+              Normal: InProgress
         "#);
         assert!(core.state.pending_messages.is_empty());
     }
@@ -1278,18 +1307,14 @@ mod tests {
         drive(
             &mut core,
             3,
-            CoreEvent::TaskEvent(
-                turn,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
-            ),
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
         )
         .0
         .unwrap();
         // idle: the buffer flushes and wakes the agent
-        assert_handled!(&mut core, 4, CoreEvent::TaskDone(turn, Ok(())), @r#"
+        assert_handled!(&mut core, 4, AgentEvent::Done(turn, Ok(None)), @r#"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 1
                 - UserMessage:
@@ -1297,7 +1322,7 @@ mod tests {
                     token_count: 6
                     created_at: 5
           - Save
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1305,8 +1330,6 @@ mod tests {
                       created_at: 4
           - StartTurn:
               id: 1
-              generation: 1
-              turn_type: Default
               assistant: test
         "#);
         assert!(core.state.pending_messages.is_empty());
@@ -1321,7 +1344,7 @@ mod tests {
                 HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
             )
             .unwrap();
-        let (_, effects) = drive(&mut core, 5, CoreEvent::Compact(1));
+        let (_, effects) = drive(&mut core, 5, user(UserCommand::Compact(1)));
         let compact = started_task(&effects);
 
         assert_handled!(&mut core, 6, message("[from: kid]\nmid compact"), @"
@@ -1334,18 +1357,17 @@ mod tests {
         drive(
             &mut core,
             7,
-            CoreEvent::TaskEvent(
+            AgentEvent::Stream(
                 compact,
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed {
+                AssistantEvent::Failed {
                     message: "oops".into(),
                     ended_at: 7,
-                }),
+                },
             ),
         )
         .0
         .unwrap();
-        let (result, effects) = drive(&mut core, 8, CoreEvent::TaskDone(compact, Ok(())));
+        let (result, effects) = drive(&mut core, 8, AgentEvent::Done(compact, Ok(None)));
         result.unwrap();
         assert!(
             !serde_json::to_string(&effects)
@@ -1364,7 +1386,7 @@ mod tests {
             .0
             .unwrap();
         // abort clears the ledger but deliberately never flushes
-        drive(&mut core, 3, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
         assert_eq!(core.state.pending_messages.len(), 1);
 
         // stale generation: rejected before the flush — the buffer is intact
@@ -1381,7 +1403,7 @@ mod tests {
         drive(&mut core, 2, message("[from: kid]\nstranded"))
             .0
             .unwrap();
-        drive(&mut core, 3, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
 
         let (result, effects) = drive(&mut core, 4, submit("continue", 2));
         result.unwrap();
@@ -1408,7 +1430,7 @@ mod tests {
         drive(&mut core, 2, message("[from: kid]\npersisted"))
             .0
             .unwrap();
-        drive(&mut core, 3, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
 
         // simulated restart: rebuild the core from the persisted state
         let json = serde_json::to_value(&core.state).unwrap();
@@ -1440,7 +1462,7 @@ mod tests {
         drive(&mut core, 2, message("[from: kid]\npersisted"))
             .0
             .unwrap();
-        drive(&mut core, 3, CoreEvent::Abort).0.unwrap();
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
 
         let json = serde_json::to_value(&core.state).unwrap();
         let restored: AgentState = serde_json::from_value(json).unwrap();
@@ -1468,10 +1490,8 @@ mod tests {
         let turn = started_task(&effects);
 
         let capture_of = |core: &mut AgentCore, item: ToolCallItem| {
-            let update = HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(
-                AssistantItem::ToolCall(item),
-            )));
-            let (result, effects) = drive(core, 2, CoreEvent::TaskEvent(turn, 1, update));
+            let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(item)));
+            let (result, effects) = drive(core, 2, AgentEvent::Stream(turn, item));
             result.unwrap();
             effects
                 .into_iter()
@@ -1525,27 +1545,22 @@ mod tests {
         drive(
             &mut core,
             2,
-            CoreEvent::TaskEvent(tid, 1, text_output("out", "done")),
+            AgentEvent::Stream(tid, text_output("out", "done")),
         )
         .0
         .unwrap();
         drive(
             &mut core,
             3,
-            CoreEvent::TaskEvent(
-                tid,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 3 }),
-            ),
+            AgentEvent::Stream(tid, AssistantEvent::Completed { ended_at: 3 }),
         )
         .0
         .unwrap();
 
-        assert_handled!(&mut core, 4, CoreEvent::TaskDone(tid, Ok(())), @"
+        assert_handled!(&mut core, 4, AgentEvent::Done(tid, Ok(None)), @"
         - Normal: Idle
-        - - Emit:
-              StatusUpdate:
-                Normal: Idle
+        - - Status:
+              Normal: Idle
         ");
     }
 
@@ -1557,27 +1572,33 @@ mod tests {
         drive(
             &mut core,
             2,
-            CoreEvent::TaskEvent(
+            AgentEvent::Stream(
                 tid,
-                1,
-                HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                AssistantEvent::Failed {
                     message: "boom".into(),
                     ended_at: 2,
-                }),
+                },
             ),
         )
         .0
         .unwrap();
 
-        assert_handled!(&mut core, 3, CoreEvent::TaskDone(tid, Err("boom".into())), @"
+        assert_handled!(&mut core, 3, AgentEvent::Done(tid, Err("boom".into())), @"
         - Normal:
             Failed: boom
-        - - Emit:
+        - - Ui:
               Error: boom
-          - Emit:
-              StatusUpdate:
-                Normal:
-                  Failed: boom
+          - Ui:
+              HistoryUpdate:
+                - 1
+                - TurnResponse:
+                    Failed:
+                      message: boom
+                      ended_at: 3
+          - Save
+          - Status:
+              Normal:
+                Failed: boom
         ");
     }
 
@@ -1589,10 +1610,10 @@ mod tests {
 
         assert_handled!(
             &mut core, 2,
-            CoreEvent::TaskEvent(tid, 1, todo_call(Some(Ok(TodoResult {})))),
+            AgentEvent::Stream(tid, todo_call(Some(Ok(TodoResult {})))),
             @r#"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1642,13 +1663,13 @@ mod tests {
             )
             .unwrap();
 
-        assert_handled!(&mut core, 7, CoreEvent::Retry, @"
+        assert_handled!(&mut core, 7, user(UserCommand::Retry), @"
         - Normal: InProgress
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - TurnResponse:
@@ -1657,12 +1678,9 @@ mod tests {
           - Save
           - StartTurn:
               id: 0
-              generation: 1
-              turn_type: Default
               assistant: test
-          - Emit:
-              StatusUpdate:
-                Normal: InProgress
+          - Status:
+              Normal: InProgress
         ");
     }
 
@@ -1679,13 +1697,13 @@ mod tests {
                 .unwrap();
         }
 
-        assert_handled!(&mut core, 7, CoreEvent::Undo(1), @"
+        assert_handled!(&mut core, 7, user(UserCommand::Undo(1)), @"
         - Normal: Idle
-        - - Emit:
+        - - Ui:
               HistoryUpdate:
                 - 0
                 - GenerationIncremented
-          - Emit:
+          - Ui:
               HistoryUpdate:
                 - 1
                 - Pop: 1

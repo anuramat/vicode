@@ -1,18 +1,13 @@
-//! the effects interpreter: every event is translated
-//! into a [`CoreEvent`], handed to the pure [`AgentCore`], and the resulting
-//! effects are drained fully and in order — even when the core or an effect
-//! fails, so the ledger and the TUI history mirror never desync.
-
-use std::panic::AssertUnwindSafe;
+//! the effects interpreter: every event is handed to the pure
+//! [`AgentCore`](crate::agent::core::AgentCore), and the resulting effects
+//! are drained fully and in order — even when the core or an effect fails,
+//! so the ledger and the TUI history mirror never desync.
 
 use anyhow::Result;
-use anyhow::anyhow;
-use futures::FutureExt;
 use tracing::debug;
 use tracing::instrument;
 
 use crate::agent::Agent;
-use crate::agent::core::CoreEvent;
 use crate::agent::core::Effect;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
@@ -20,11 +15,10 @@ use crate::agent::event::UserCommand;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::StatusReport;
-use crate::agent::task::sink::OutputSink;
-use crate::agent::task::sink::TurnHandle;
+use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::context::ToolRuntimeContext;
-use crate::llm::history::AssistantEvent;
 use crate::llm::history::TurnStatus;
+use crate::tui::app::AppEvent;
 use crate::utils::now;
 
 impl Agent {
@@ -34,20 +28,25 @@ impl Agent {
         event: AgentEvent,
     ) -> Result<()> {
         debug!(event = ?event, "handling agent event");
-        let event = translate(event, &mut self.dup_ack);
-        let mut effects = Vec::new();
-        let result = self.core.handle(now(), event, &mut effects);
-        let mut drain_err = None;
-        for effect in effects {
-            if let Err(e) = self.interpret(effect).await {
-                drain_err.get_or_insert(e);
+        // an abort keeps everything its tools streamed before it: apply the
+        // queued output first (queued turn events die with the turn anyway)
+        if matches!(event, AgentEvent::User(UserCommand::Abort)) {
+            for _ in 0..self.task_rx.len() {
+                if let Ok(output @ AgentEvent::Output(..)) = self.task_rx.try_recv() {
+                    self.apply(output).await?;
+                }
             }
         }
-        // an ack the drain didn't consume drops here: the core's busy
-        // rejection and a failed duplicate alike resolve the app's receiver
-        // as an error
-        self.dup_ack = None;
-        result.and(drain_err.map_or(Ok(()), Err))
+        self.apply(event).await
+    }
+
+    async fn apply(
+        &mut self,
+        event: AgentEvent,
+    ) -> Result<()> {
+        let mut effects = Vec::new();
+        let result = self.core.handle(now(), event, &mut effects);
+        result.and(self.interpret_all(effects).await)
     }
 
     /// startup wake: run the core's resume (flush mail buffered before a
@@ -55,10 +54,22 @@ impl Agent {
     pub async fn resume(&mut self) -> Result<()> {
         let mut effects = Vec::new();
         self.core.resume(now(), &mut effects)?;
+        self.interpret_all(effects).await
+    }
+
+    /// interpret every effect, even past a failure; the first error wins
+    async fn interpret_all(
+        &mut self,
+        effects: Vec<Effect>,
+    ) -> Result<()> {
+        let mut result = Ok(());
         for effect in effects {
-            self.interpret(effect).await?;
+            let outcome = self.interpret(effect).await;
+            if result.is_ok() {
+                result = outcome;
+            }
         }
-        Ok(())
+        result
     }
 
     async fn interpret(
@@ -66,51 +77,34 @@ impl Agent {
         effect: Effect,
     ) -> Result<()> {
         match effect {
-            Effect::Emit(event) => {
-                // double-send: liveness to the router, rendering to the app —
-                // so rendering stays independent of the router loop
-                if matches!(event, UiEvent::StatusUpdate(_)) {
-                    self.report_status(None).await?;
-                }
-                self.emit(event).await?;
+            // droppable: a full app bus costs render frames, never stalls us
+            Effect::Ui(event @ UiEvent::ToolOutput { .. }) => {
+                drop(
+                    self.app_tx
+                        .try_send(AppEvent::Agent(self.id.clone(), event)),
+                );
+            }
+            Effect::Ui(event) => self.emit(event).await?,
+            // liveness to the router, rendering to the app — so rendering
+            // stays independent of the router loop
+            Effect::Status(status) => {
+                self.report_status(None).await?;
+                self.emit(UiEvent::StatusUpdate(status)).await?;
             }
             Effect::Save => self.save().await?,
             Effect::StartTurn {
                 id,
-                generation,
-                turn_type,
                 assistant,
                 tools,
                 instructions,
                 messages,
             } => {
-                let handle = TurnHandle::new(id, generation, turn_type, self.tx.clone());
-                self.executor.spawn_turn(id, async move {
-                    // catch a panic so a panicked turn still lands its terminal
-                    // Failed event — otherwise the assistant message stays
-                    // InProgress forever and the next flush stacks a turn on
-                    // the orphan; a panic thus becomes the same clean Err path
-                    // as any turn failure
-                    let outcome = AssertUnwindSafe(Self::turn(
-                        handle.clone(),
-                        &assistant,
-                        tools,
-                        instructions,
-                        messages,
-                    ))
-                    .catch_unwind()
-                    .await;
-                    let result = outcome.unwrap_or_else(|panic| {
-                        Err(anyhow!(
-                            "turn panicked: {}",
-                            crate::agent::run::panic_message(&*panic)
-                        ))
-                    });
-                    if let Err(err) = result {
-                        handle.send(AssistantEvent::failed(err.to_string())).await?;
-                        return Err(err);
-                    }
-                    Ok(())
+                let sink = TaskSink::new(id, self.task_tx.clone());
+                self.executor.spawn(id, "turn", async move {
+                    Self::turn(sink, &assistant, tools, instructions, messages)
+                        .await
+                        .map(|()| None)
+                        .map_err(|e| e.to_string())
                 });
             }
             Effect::RunTool {
@@ -122,26 +116,16 @@ impl Agent {
                     self.id.clone(),
                     self.project.clone(),
                     self.router.clone(),
-                    OutputSink::new(call.call_id.clone(), self.out_tx.clone()),
+                    TaskSink::new(id, self.task_tx.clone()),
                     inherited_history,
                 );
-                self.executor
-                    .spawn_tool(id, call.call_id.clone(), async move {
-                        call.task.run(ctx).await;
-                        call.touch_ready_at_now();
-                        call
-                    });
+                self.executor.spawn(id, "tool", async move {
+                    call.task.run(ctx).await;
+                    call.touch_ready_at_now();
+                    Ok(Some(Box::new(call)))
+                });
             }
-            Effect::AbortTasks => {
-                // hard-abort, then reap synchronously: every in-flight call
-                // is finalized (partial output retained) before abort returns
-                self.executor.abort_all();
-                while let Some((meta, output)) = self.executor.reap().await {
-                    if let Some(event) = self.reap_event(meta, output) {
-                        Box::pin(self.handle(event)).await?;
-                    }
-                }
-            }
+            Effect::AbortTasks => self.executor.abort_all(),
             Effect::SetAssistant(new) => {
                 // state applied iff persisted: the TUI never sees an unsaved assistant
                 let mut state = self.core.state.clone();
@@ -150,12 +134,12 @@ impl Agent {
                 self.core.state.assistant_id = new.clone();
                 self.emit(UiEvent::AssistantSet(new)).await?;
             }
-            Effect::Duplicate(aid) => {
-                self.try_duplicate(aid).await?;
-                // ack only a registered copy; the copy's own Started event
-                // wires the app's preview tab
-                if let Some(ack) = self.dup_ack.take() {
-                    let _ = ack.send(());
+            // success needs no reply: the copy's own Started event attaches
+            // the app's preview tab
+            Effect::Duplicate(copy) => {
+                if let Err(e) = self.try_duplicate(copy.clone()).await {
+                    let error = format!("{e:#}");
+                    self.emit(UiEvent::DuplicateFailed { copy, error }).await?;
                 }
             }
         }
@@ -193,39 +177,6 @@ impl Agent {
     }
 }
 
-/// oneshots are stripped here: the ack parks in the `Agent`'s slot, so the
-/// core stays channel-free
-fn translate(
-    event: AgentEvent,
-    dup_ack: &mut Option<tokio::sync::oneshot::Sender<()>>,
-) -> CoreEvent {
-    match event {
-        AgentEvent::TaskDone(tid, result) => {
-            CoreEvent::TaskDone(tid, result.map_err(|e| e.to_string()))
-        }
-        AgentEvent::TaskEvent(tid, generation, update) => {
-            CoreEvent::TaskEvent(tid, generation, update)
-        }
-        AgentEvent::ToolResolved(tid, item) => CoreEvent::ToolResolved(tid, item),
-        AgentEvent::ToolFailed { id, call_id, error } => {
-            CoreEvent::ToolFailed { id, call_id, error }
-        }
-        AgentEvent::Inbound(msg) => CoreEvent::Message(msg),
-        AgentEvent::User(event) => match event {
-            UserCommand::Submit(prompt) => CoreEvent::Submit(prompt),
-            UserCommand::Compact(n) => CoreEvent::Compact(n),
-            UserCommand::Retry => CoreEvent::Retry,
-            UserCommand::Abort => CoreEvent::Abort,
-            UserCommand::Undo(n) => CoreEvent::Undo(n),
-            UserCommand::SetAssistant(id) => CoreEvent::SetAssistant(id),
-            UserCommand::DuplicateRequest { copy, ack } => {
-                *dup_ack = Some(ack);
-                CoreEvent::Duplicate(copy)
-            }
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc::Receiver;
@@ -234,7 +185,7 @@ mod tests {
 
     use super::*;
     use crate::agent::event::UserPrompt;
-    use crate::tui::app::AppEvent;
+    use crate::agent::task::ledger::Task;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -269,24 +220,24 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// a rejected duplicate (busy original) drops the ack — the app's
-    /// receiver resolves as an error and the preview tab rolls back; the old
-    /// code returned the error with no signal at all
+    /// a rejected duplicate (busy original) reports back naming the copy,
+    /// so the app can roll its preview tab back
     #[tokio::test]
-    async fn duplicate_request_while_busy_drops_the_ack() {
-        let (mut agent, _api, _parent_rx) = Agent::fake("dup-busy").await;
-        agent.core.ledger.register();
+    async fn duplicate_while_busy_reports_failure_for_the_copy() {
+        let (mut agent, _api, mut parent_rx) = Agent::fake("dup-busy").await;
+        agent.core.ledger.register(Task::turn());
 
-        let (ack, ack_rx) = tokio::sync::oneshot::channel();
-        let result = agent
-            .handle(AgentEvent::User(UserCommand::DuplicateRequest {
-                copy: crate::agent::id::AgentId::from("copy".to_string()),
-                ack,
-            }))
-            .await;
+        let copy = crate::agent::id::AgentId::from("copy".to_string());
+        agent
+            .handle(AgentEvent::User(UserCommand::Duplicate(copy.clone())))
+            .await
+            .unwrap();
 
-        assert!(result.is_err());
-        assert!(ack_rx.await.is_err(), "ack must drop, not fire");
+        let event = ui_event(recv(&mut parent_rx, "ui event").await);
+        assert!(
+            matches!(&event, UiEvent::DuplicateFailed { copy: c, error } if *c == copy && error == "agent is busy"),
+            "{event:?}"
+        );
     }
 
     #[tokio::test]

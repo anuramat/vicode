@@ -12,7 +12,7 @@ fn core_is_pure() {
         "async fn",
         ".await",
         "tokio::",
-        "Command::",
+        "process::",
         "std::process",
         "fs::",
     ] {

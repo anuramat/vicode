@@ -4,85 +4,35 @@ use tokio::sync::mpsc::Sender;
 use crate::agent::event::AgentEvent;
 use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::HistoryGeneration;
-use crate::llm::history::HistoryUpdate;
 
-/// tool output chunk, tagged with its `call_id`
-pub type OutputChunk = (String, String);
-
-/// for tool output
+/// a task's line back to its agent: the turn's stream events, or a tool's
+/// output chunks
 #[derive(Clone, Debug)]
-pub struct OutputSink {
-    call_id: String,
-    tx: Sender<OutputChunk>,
-}
-
-impl OutputSink {
-    pub fn new(
-        call_id: String,
-        tx: Sender<OutputChunk>,
-    ) -> Self {
-        Self { call_id, tx }
-    }
-
-    pub async fn send(
-        &self,
-        chunk: String,
-    ) {
-        drop(self.tx.send((self.call_id.clone(), chunk)).await);
-    }
-}
-
-#[derive(Clone)]
-pub struct TurnHandle {
-    tid: TaskId,
-    generation: HistoryGeneration,
-    turn_type: TurnType,
+pub struct TaskSink {
+    id: TaskId,
     tx: Sender<AgentEvent>,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(serde::Serialize))]
-pub enum TurnType {
-    Default,
-    Compact,
-}
-
-impl TurnType {
-    pub fn wrap(
-        self,
-        event: AssistantEvent,
-    ) -> HistoryUpdate {
-        match self {
-            Self::Default => HistoryUpdate::TurnResponse(event),
-            Self::Compact => HistoryUpdate::CompactResponse(event),
-        }
-    }
-}
-
-impl TurnHandle {
+impl TaskSink {
     pub fn new(
-        tid: TaskId,
-        generation: HistoryGeneration,
-        turn_type: TurnType,
+        id: TaskId,
         tx: Sender<AgentEvent>,
     ) -> Self {
-        Self {
-            tid,
-            generation,
-            turn_type,
-            tx,
-        }
+        Self { id, tx }
     }
 
-    pub async fn send(
+    pub async fn stream(
         &self,
         event: AssistantEvent,
     ) -> Result<()> {
-        let event = self.turn_type.wrap(event);
-        self.tx
-            .send(AgentEvent::TaskEvent(self.tid, self.generation, event))
-            .await?;
+        self.tx.send(AgentEvent::Stream(self.id, event)).await?;
         Ok(())
+    }
+
+    pub async fn output(
+        &self,
+        chunk: String,
+    ) {
+        drop(self.tx.send(AgentEvent::Output(self.id, chunk)).await);
     }
 }

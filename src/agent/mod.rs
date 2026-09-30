@@ -11,8 +11,6 @@ pub mod task;
 pub mod tool;
 pub mod turn;
 
-use std::collections::HashMap;
-
 use derive_more::Display;
 pub use id::*;
 use serde::Deserialize;
@@ -25,7 +23,6 @@ use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::router::Router;
 use crate::agent::task::executor::TaskExecutor;
-use crate::agent::task::sink::OutputChunk;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
@@ -43,7 +40,7 @@ pub struct Agent {
     pub router: Router,
     /// the app bus: history/status/output updates for rendering
     pub app_tx: Sender<AppEvent>,
-    // agent event loop: inter-agent + task mailbox
+    /// router-delivered mailbox: inter-agent messages
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,
     /// app-originated events, drained with priority by the run loop
@@ -53,17 +50,9 @@ pub struct Agent {
     pub processed: u64,
     /// runs the core's task effects on tokio tasks
     pub executor: TaskExecutor,
-    /// dedicated tool-output channel
-    pub out_tx: Sender<OutputChunk>,
-    pub out_rx: Receiver<OutputChunk>,
-    /// per-call streamed output, keyed by `call_id`; outlives the tool future, so abort/panic finalize from it
-    pub accumulators: HashMap<String, String>,
-    /// the in-flight `DuplicateRequest` ack, armed by `Agent` before the
-    /// core runs (the core stays channel-free) and fired by a successful
-    /// `Effect::Duplicate`; any other outcome — busy rejection, failure,
-    /// panic — drops it, resolving the app's receiver as the total failure
-    /// signal
-    pub dup_ack: Option<tokio::sync::oneshot::Sender<()>>,
+    /// the tasks' own lane: turn streams and tool output
+    pub task_tx: Sender<AgentEvent>,
+    pub task_rx: Receiver<AgentEvent>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

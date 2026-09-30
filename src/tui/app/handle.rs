@@ -30,12 +30,6 @@ impl App<'_> {
                 self.handle_agent_event(agent_id, event).await?;
                 self.dirty = true;
             }
-            // the failed copy's preview tab must not linger
-            DuplicateFailed(copy) => {
-                self.tabs.shift_remove(&copy);
-                self.rebuild_tablist();
-                self.dirty = true;
-            }
             Redraw => {
                 self.dirty = true;
             }
@@ -79,6 +73,12 @@ impl App<'_> {
             }
             ToolOutput { call_id, chunk } => {
                 tab.stream_tool_output(call_id, &chunk);
+            }
+            // the failed copy's preview tab must not linger
+            DuplicateFailed { copy, error } => {
+                self.tabs.shift_remove(&copy);
+                self.rebuild_tablist();
+                self.notify(NotificationKind::Error, error);
             }
         }
         Ok(())
@@ -165,9 +165,15 @@ mod tests {
         }
         app.rebuild_tablist();
 
-        app.handle(AppEvent::DuplicateFailed(copy.clone()))
-            .await
-            .unwrap();
+        app.handle(AppEvent::Agent(
+            original.clone(),
+            UiEvent::DuplicateFailed {
+                copy: copy.clone(),
+                error: "agent is busy".into(),
+            },
+        ))
+        .await
+        .unwrap();
 
         assert!(!app.tabs.contains_key(&copy));
         assert_eq!(app.tabs.len(), 1);

@@ -97,7 +97,7 @@ impl ToolCall for StreamTestCall {
         ctx: ToolRuntimeContext,
     ) {
         for chunk in &self.chunks {
-            ctx.output.send(chunk.clone()).await;
+            ctx.sink.output(chunk.clone()).await;
         }
         if self.hang {
             std::future::pending::<()>().await;
@@ -460,8 +460,6 @@ async fn tool_output_streams_to_app_and_terminal_item_resolves() {
     );
     // every chunk reached the app in order, tagged by call id
     assert_eq!(drain_chunks(&mut app_rx, "call-1"), ["a", "b"]);
-    // terminal resolution drained the accumulator
-    assert!(agent.accumulators.is_empty());
     // history holds the one terminal item — chunks never became messages
     assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
     - role: user
@@ -555,7 +553,6 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     // abort returned with the call already finalized: partial output kept,
     // marked aborted, ledger unstuck
     assert!(agent.core.ledger.idle());
-    assert!(agent.accumulators.is_empty());
     assert!(matches!(
         agent.core.state.status,
         ActivityStatus::Normal(TurnStatus::Idle)
@@ -730,8 +727,8 @@ async fn panicking_turn_finalizes_the_history_turn() {
     fake.script_panicking_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
     agent.handle(submit()).await.unwrap();
-    // drive to the turn's terminal; the ledger unsticks under both the bug and
-    // the fix (via TaskDone), but only the fix marks the history turn Error
+    // drive to the turn's terminal; the ledger unsticks either way, but the
+    // turn's Done must also mark the history turn Error
     pump_until(&mut agent, |a| a.core.ledger.idle()).await;
 
     let assistants: Vec<_> = agent

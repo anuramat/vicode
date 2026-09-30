@@ -1,76 +1,44 @@
-use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 
-use anyhow::Result;
-use tokio::task::JoinError;
+use futures::FutureExt;
 use tokio::task::JoinSet;
 
+use crate::agent::event::TaskResult;
 use crate::agent::task::ledger::TaskId;
-use crate::llm::history::message::ToolCallItem;
-
-#[derive(Debug)]
-pub enum TaskOutput {
-    Turn(Result<()>),
-    Tool(Box<ToolCallItem>),
-}
-
-#[derive(Debug)]
-pub struct TaskMeta {
-    /// id in the ledger
-    pub id: TaskId,
-    /// for tool calls
-    pub call_id: Option<String>,
-}
 
 #[derive(Debug, Default)]
 pub struct TaskExecutor {
-    tasks: JoinSet<TaskOutput>,
-    meta: HashMap<tokio::task::Id, TaskMeta>,
+    tasks: JoinSet<(TaskId, TaskResult)>,
 }
 
 impl TaskExecutor {
-    pub fn spawn_turn<F>(
+    /// run a task to its terminal; a panic becomes an `Err` naming the `kind`
+    pub fn spawn(
         &mut self,
         id: TaskId,
-        task: F,
-    ) where
-        F: Future<Output = Result<()>> + Send + 'static,
-    {
-        let handle = self
-            .tasks
-            .spawn(async move { TaskOutput::Turn(task.await) });
-        self.meta
-            .insert(handle.id(), TaskMeta { id, call_id: None });
+        kind: &'static str,
+        task: impl Future<Output = TaskResult> + Send + 'static,
+    ) {
+        self.tasks.spawn(async move {
+            let result = AssertUnwindSafe(task)
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|panic| {
+                    Err(format!("{kind} panicked: {}", panic_message(&*panic)))
+                });
+            (id, result)
+        });
     }
 
-    pub fn spawn_tool<F>(
-        &mut self,
-        id: TaskId,
-        call_id: String,
-        task: F,
-    ) where
-        F: Future<Output = ToolCallItem> + Send + 'static,
-    {
-        let handle = self
-            .tasks
-            .spawn(async move { TaskOutput::Tool(Box::new(task.await)) });
-        self.meta.insert(
-            handle.id(),
-            TaskMeta {
-                id,
-                call_id: Some(call_id),
-            },
-        );
-    }
-
-    /// reap the next terminated task; None iff no tasks are in flight
-    pub async fn reap(&mut self) -> Option<(TaskMeta, Result<TaskOutput, JoinError>)> {
-        let (id, output) = match self.tasks.join_next_with_id().await? {
-            Ok((id, output)) => (id, Ok(output)),
-            Err(e) => (e.id(), Err(e)),
-        };
-        let meta = self.meta.remove(&id).expect("reaped an unregistered task");
-        Some((meta, output))
+    /// the next terminal; None iff no tasks are in flight. Cancelled tasks
+    /// are skipped: only `abort_all` cancels, after the core resolved them
+    pub async fn reap(&mut self) -> Option<(TaskId, TaskResult)> {
+        loop {
+            if let Ok(done) = self.tasks.join_next().await? {
+                return Some(done);
+            }
+        }
     }
 
     pub fn abort_all(&mut self) {
@@ -78,32 +46,42 @@ impl TaskExecutor {
     }
 }
 
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tid() -> TaskId {
-        crate::agent::task::ledger::TaskLedger::default().register()
-    }
+    use crate::agent::task::ledger::Task;
+    use crate::agent::task::ledger::TaskLedger;
 
     #[tokio::test]
-    async fn returning_panicking_and_cancelled_tasks_each_reap_exactly_once() {
+    async fn returning_and_panicking_tasks_reap_once_cancelled_ones_never() {
+        let mut ledger = TaskLedger::default();
         let mut executor = TaskExecutor::default();
-        executor.spawn_turn(tid(), async { Ok(()) });
-        let (meta, output) = executor.reap().await.unwrap();
-        assert_eq!(meta.call_id, None);
-        assert!(matches!(output, Ok(TaskOutput::Turn(Ok(())))));
 
-        executor.spawn_turn(tid(), async { panic!("boom") });
-        let (_, output) = executor.reap().await.unwrap();
-        assert!(output.unwrap_err().is_panic());
+        let ok = ledger.register(Task::turn());
+        executor.spawn(ok, "turn", async { Ok(None) });
+        assert!(matches!(executor.reap().await, Some((id, Ok(None))) if id == ok));
 
-        executor.spawn_turn(tid(), std::future::pending());
+        let boom = ledger.register(Task::turn());
+        executor.spawn(boom, "tool", async { panic!("boom") });
+        assert!(matches!(
+            executor.reap().await,
+            Some((id, Err(e))) if id == boom && e == "tool panicked: boom"
+        ));
+
+        executor.spawn(
+            ledger.register(Task::turn()),
+            "turn",
+            std::future::pending(),
+        );
         executor.abort_all();
-        let (_, output) = executor.reap().await.unwrap();
-        assert!(output.unwrap_err().is_cancelled());
-
-        // each task terminated exactly one reap: the set is now empty
         assert!(executor.reap().await.is_none());
     }
 }

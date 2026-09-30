@@ -39,7 +39,7 @@ pub enum AppFocus {
 }
 
 /// events on the app channel — external sources only (the crossterm
-/// translator, agents, and detached watcher tasks); the app loop
+/// translator and agents); the app loop
 /// itself never sends here, so it can never block on its own bounded
 /// queue
 #[derive(Debug)]
@@ -48,10 +48,6 @@ pub enum AppEvent {
     Paste(String),
 
     Agent(AgentId, UiEvent),
-
-    /// the duplicate watcher saw the ack channel close unresolved: roll back
-    /// the copy's preview tab
-    DuplicateFailed(AgentId),
 
     Redraw,
 }

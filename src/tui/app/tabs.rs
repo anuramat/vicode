@@ -8,7 +8,6 @@ use crate::agent::AgentState;
 use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
 use crate::tui::app::App;
-use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 
@@ -126,24 +125,13 @@ impl<'a> App<'a> {
         let original_aid = original.aid.clone();
         let state = original.state.clone();
 
-        let aid = self.router.allocate_agent_id().await?;
-        self.insert_tab(aid.clone(), state);
-
-        // the ack resolves iff the copy registered; every failure path just
-        // drops the sender, so the watcher rolls the preview back
-        let (ack, ack_rx) = tokio::sync::oneshot::channel();
-        let (tx, copy) = (self.tx.clone(), aid.clone());
-        tokio::spawn(async move {
-            if ack_rx.await.is_err() {
-                drop(tx.send(AppEvent::DuplicateFailed(copy)).await);
-            }
-        });
+        let copy = self.router.allocate_agent_id().await?;
         router
-            .forward(
-                original_aid,
-                UserCommand::DuplicateRequest { copy: aid, ack },
-            )
+            .forward(original_aid, UserCommand::Duplicate(copy.clone()))
             .await?;
+        // a preview until the copy's Started attaches it; the original
+        // reports a failure as DuplicateFailed, which drops it again
+        self.insert_tab(copy, state);
         Ok(())
     }
 
@@ -329,7 +317,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_duplicate_rolls_back_preview() {
+    async fn undeliverable_duplicate_adds_no_preview() {
         let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default(), Default::default());
         let original = AgentId::from("original".to_string());
@@ -345,14 +333,9 @@ mod tests {
         app.rebuild_tablist();
         app.select_tab(Some(0));
 
+        // the original has no runtime: the request is rejected before any
+        // preview exists
         assert!(app.duplicate_tab().await.is_err());
-        assert_eq!(app.tabs.len(), 2);
-        let event = tokio::time::timeout(std::time::Duration::from_secs(1), app.rx.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        app.handle(event).await.unwrap();
-
         assert_eq!(app.tabs.len(), 1);
         assert!(app.tabs.contains_key(&original));
     }
