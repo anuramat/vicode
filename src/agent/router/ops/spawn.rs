@@ -3,17 +3,14 @@
 //! failure rolls back through `rollback_spawn`
 
 use anyhow::Result;
-use tokio::sync::mpsc::channel;
 
-use super::inbound;
+use super::peer_message;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
-use crate::agent::init::CHANNEL_CAPACITY;
 use crate::agent::router::Router;
 use crate::agent::router::TAB_AGENT_CAP;
-use crate::agent::router::api::RouterError;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::llm::history::History;
@@ -27,10 +24,10 @@ impl Router {
         inherited_history: Option<History>,
         prompt: &str,
     ) -> Result<AgentId> {
-        let (aid, tx, rx, record_write, project, app_tx) = {
+        let (aid, record_write, project, app_tx) = {
             let s = &mut *self.lock();
             let root = match s.graph.get(parent) {
-                Some(node) if node.status != NodeStatus::Dead => node.root.clone(),
+                Some(node) if node.status() != NodeStatus::Dead => node.root.clone(),
                 Some(_) => anyhow::bail!("agent {parent} is dead"),
                 None => anyhow::bail!("unknown agent {parent}"),
             };
@@ -42,25 +39,15 @@ impl Router {
                  free slots (list shows every member and its status)"
             );
             let aid = s.allocate();
-            let (tx, rx) = channel(CHANNEL_CAPACITY);
-            // fresh channel: the seed can't fail, and nothing can precede it
-            drop(tx.try_send(inbound(parent, prompt)));
-            let mut node = AgentNode::new(root, Some(parent.clone()), NodeStatus::Spawning);
-            node.mailbox = Some(tx.clone());
-            node.delivered = 1; // the parked seed
+            let node = AgentNode::new(root, Some(parent.clone()));
             // submitted under the lock, FIFO-ordered ahead of the tail's state
             // save; the tail awaits this write so a failed graph write aborts
             // the spawn instead of leaving state without a graph record
             let record_write = s.project.store().save_graph(&aid, &node.record(false));
             s.graph.insert(aid.clone(), node);
-            (
-                aid,
-                tx,
-                rx,
-                record_write,
-                s.project.clone(),
-                s.app_tx.clone(),
-            )
+            // a fresh mailbox: the seed parks first, ahead of anything else
+            s.deliver(&aid, peer_message(parent, prompt))?;
+            (aid, record_write, s.project.clone(), s.app_tx.clone())
         };
 
         let router = self.clone();
@@ -109,16 +96,14 @@ impl Router {
                 // committed, so check its receiver before writing the state
                 record_write.await?;
                 project.store().save_state(&child, &state).await?;
-                let agent = Agent::with_mailbox(
+                let agent = Agent::new(
                     project.clone(),
                     router.clone(),
                     app_tx,
                     child.clone(),
                     state,
-                    tx,
-                    rx,
                 );
-                router.launch([agent])
+                router.launch(agent)
             }
             .await;
             guard.defuse();
@@ -145,12 +130,7 @@ impl Router {
     ) -> Result<()> {
         let (write, project) = {
             let s = &mut *self.lock();
-            if let Some(node) = s.graph.remove(aid) {
-                if let Some(abort) = node.abort {
-                    abort.abort();
-                }
-                s.fire_waiters(aid, Err(RouterError::Unreachable));
-            }
+            s.drop_node(aid);
             (s.project.store().delete_agent(aid), s.project.clone())
         };
         write.await?;

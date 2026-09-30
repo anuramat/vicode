@@ -33,7 +33,6 @@ impl Tab<'_> {
         &self,
         prev: bool,
     ) -> Result<()> {
-        let router = self.router()?;
         if !self.state.status.idle() {
             return Ok(());
         }
@@ -42,8 +41,7 @@ impl Tab<'_> {
             .assistants()
             .switch_assistant(&self.state.assistant_id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
-        router.forward(&self.aid, UserCommand::SetAssistant(id))?;
-        Ok(())
+        self.send(UserCommand::SetAssistant(id))
     }
 
     // TODO clean up if trimmed is empty
@@ -75,7 +73,6 @@ impl Tab<'_> {
     }
 
     pub fn submit(&mut self) -> Result<()> {
-        self.router()?;
         let editor_text = self.input.take_area().lines().join("\n");
         let text = editor_text.trim().to_string();
         self.input.set_focus(false);
@@ -83,13 +80,11 @@ impl Tab<'_> {
             return Ok(());
         }
         let prompt = UserPrompt {
-            text: text.clone(),
+            text,
             generation: Some(self.history().generation()),
         };
 
-        let result = self
-            .router()?
-            .forward(&self.aid, UserCommand::Submit(prompt));
+        let result = self.send(UserCommand::Submit(prompt));
         if result.is_err() {
             self.input.textarea.insert_str(&editor_text);
             self.update_input_title();
@@ -98,25 +93,24 @@ impl Tab<'_> {
     }
 
     pub fn retry(&self) -> Result<()> {
-        self.router()?.forward(&self.aid, UserCommand::Retry)
+        self.send(UserCommand::Retry)
     }
 
     pub fn compact(
         &self,
         n: Option<&str>,
     ) -> Result<()> {
-        self.router()?;
         let n = if let Some(n) = n {
             n.parse()
                 .with_context(|| format!("invalid compact number: {n}"))?
         } else {
             self.history().state().len()
         };
-        self.router()?.forward(&self.aid, UserCommand::Compact(n))
+        self.send(UserCommand::Compact(n))
     }
 
     pub fn abort(&self) -> Result<()> {
-        self.router()?.forward(&self.aid, UserCommand::Abort)
+        self.send(UserCommand::Abort)
     }
 
     pub fn undo(
@@ -127,7 +121,7 @@ impl Tab<'_> {
             n <= self.history().state().len(),
             "cannot undo {n} messages, history is shorter"
         );
-        self.router()?.forward(&self.aid, UserCommand::Undo(n))
+        self.send(UserCommand::Undo(n))
     }
 
     pub fn undo_user(&self) -> Result<()> {
@@ -169,8 +163,6 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::id::AgentId;
-    use crate::agent::router::Router;
-    use crate::agent::router::RouterState;
     use crate::project::Project;
     use crate::tui::widgets::input::InputOpts;
 
@@ -179,7 +171,12 @@ mod tests {
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState::fake();
-        let mut tab = Tab::new(Some(Router::test_handle(&project)), aid, state, &project);
+        let mut tab = Tab::new(
+            Some(tokio::sync::mpsc::unbounded_channel().0),
+            aid,
+            state,
+            &project,
+        );
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',
@@ -239,23 +236,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cycle_assistant_forwards_switch_only_when_idle() {
+    async fn cycle_assistant_sends_switch_only_when_idle() {
         use crate::agent::ActivityStatus;
-        use crate::agent::event::AgentEvent;
         use crate::llm::history::TurnStatus;
 
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("cycle".to_string());
-        let router = Router::test_handle(&project);
-        let (tx, _rx) = tokio::sync::mpsc::channel(8);
-        let (user_tx, mut user_rx) = tokio::sync::mpsc::channel(8);
-        router.attach_manual(&aid, tx, user_tx);
-        let mut tab = Tab::new(Some(router), aid, AgentState::fake(), &project);
+        let (control, mut user_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
 
         tab.cycle_assistant(false).unwrap();
         assert!(matches!(
             user_rx.try_recv(),
-            Ok(AgentEvent::User(UserCommand::SetAssistant(id))) if id == "test2"
+            Ok(UserCommand::SetAssistant(id)) if id == "test2"
         ));
 
         tab.state.status = ActivityStatus::Normal(TurnStatus::InProgress);
@@ -279,15 +272,9 @@ mod tests {
     async fn rejected_submit_restores_input() {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("rejected-submit".to_string());
-        let (app_tx, _app_rx) = tokio::sync::mpsc::channel(8);
-        let router = RouterState::start(
-            app_tx,
-            project.clone(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        );
-        let mut tab = Tab::new(Some(router), aid, AgentState::fake(), &project);
+        // the agent is gone: its control lane is closed
+        let control = tokio::sync::mpsc::unbounded_channel().0;
+        let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
         tab.input.textarea.insert_str("  do work  ");
 
         assert!(tab.submit().is_err());

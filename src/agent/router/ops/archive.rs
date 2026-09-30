@@ -8,7 +8,9 @@ use crate::agent::AgentId;
 use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::api::RouterError;
+use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::GraphRecord;
+use crate::agent::router::graph::Runtime;
 
 impl Router {
     /// resolves once the subtree's graph records are durably archived and its
@@ -59,6 +61,20 @@ impl Router {
 }
 
 impl RouterState {
+    /// remove a node from the live graph: its runtime is aborted and its
+    /// waiters fire `Unreachable`
+    pub fn drop_node(
+        &mut self,
+        aid: &AgentId,
+    ) -> Option<AgentNode> {
+        let node = self.graph.remove(aid)?;
+        if let Runtime::Live { abort, .. } = &node.runtime {
+            abort.abort();
+        }
+        self.fire_waiters(aid, |_| true, &Err(RouterError::Unreachable));
+        Some(node)
+    }
+
     /// synchronous teardown (remove from graph, abort runtimes, fire waiters
     /// `Unreachable`, enqueue the archived flips as one redb transaction —
     /// all-or-nothing, so a crash can't leave a live member under an archived
@@ -71,14 +87,7 @@ impl RouterState {
     ) -> JoinHandle<Result<()>> {
         let flips: Vec<(AgentId, GraphRecord)> = members
             .iter()
-            .filter_map(|aid| {
-                let node = self.graph.remove(aid)?;
-                if let Some(abort) = &node.abort {
-                    abort.abort();
-                }
-                self.fire_waiters(aid, Err(RouterError::Unreachable));
-                Some((aid.clone(), node.record(true)))
-            })
+            .filter_map(|aid| Some((aid.clone(), self.drop_node(aid)?.record(true))))
             .collect();
         let write = self.project.store().save_graph_batch(&flips);
         let project = self.project.clone();

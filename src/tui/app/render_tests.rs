@@ -45,7 +45,12 @@ fn app_with_tab(
     state.context.history = history;
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
-    let mut tab = Tab::new(Some(app.router.clone()), aid.clone(), state, &project);
+    let mut tab = Tab::new(
+        Some(tokio::sync::mpsc::unbounded_channel().0),
+        aid.clone(),
+        state,
+        &project,
+    );
     // the fake assistant has no window; the statusline needs one
     tab.assistant_config.as_mut().unwrap().window = Some(32000);
     app.tabs.insert(aid, tab);

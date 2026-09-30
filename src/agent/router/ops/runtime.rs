@@ -1,6 +1,6 @@
-//! lifecycle: registration, id allocation, UI-event forwarding, status
-//! reports, and the one way to start an agent — `launch` — whose runtime
-//! runs supervised until its terminal `runtime_down`
+//! lifecycle: registration, id allocation, status reports, and the one way
+//! to start an agent — `launch` — whose runtime runs supervised until its
+//! terminal `runtime_down`
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -10,19 +10,17 @@ use futures::FutureExt;
 use futures::future::AbortHandle;
 use futures::future::AbortRegistration;
 use futures::future::Abortable;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::free_variant;
 use crate::agent::Agent;
 use crate::agent::AgentId;
-use crate::agent::event::AgentEvent;
-use crate::agent::event::UserCommand;
+use crate::agent::event::Mail;
 use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
-use crate::agent::router::graph::StatusReport;
+use crate::agent::router::graph::Runtime;
 
 impl Router {
     /// primary registration (`new_tab`/duplicate): root = own id
@@ -33,7 +31,7 @@ impl Router {
         let s = &mut *self.lock();
         anyhow::ensure!(!s.graph.contains_key(aid), "agent {aid} already exists");
         s.all_ids.insert(aid.clone());
-        let node = AgentNode::new(aid.clone(), None, NodeStatus::Spawning);
+        let node = AgentNode::new(aid.clone(), None);
         drop(s.project.store().save_graph(aid, &node.record(false)));
         s.graph.insert(aid.clone(), node);
         Ok(())
@@ -43,87 +41,36 @@ impl Router {
         self.lock().allocate()
     }
 
-    pub fn forward(
+    /// informational: what `list`/`inspect` show, and the output a wait on
+    /// a dead agent returns
+    pub fn report_status(
         &self,
         aid: &AgentId,
-        event: UserCommand,
-    ) -> Result<()> {
-        let s = &mut *self.lock();
-        let Some(node) = s.graph.get_mut(aid) else {
-            anyhow::bail!("agent {aid} is unreachable");
-        };
-        if node.status == NodeStatus::Dead {
-            anyhow::bail!("agent {aid} is dead");
-        }
-        let Some(tx) = node.user_tx.clone() else {
-            anyhow::bail!("agent {aid} runtime is not attached");
-        };
-        match tx.try_send(AgentEvent::User(event)) {
-            Ok(()) => {
-                node.delivered += 1;
-                if node.status == NodeStatus::Idle {
-                    node.status = NodeStatus::Running;
-                }
-                Ok(())
-            }
-            Err(TrySendError::Full(_)) => anyhow::bail!("agent {aid} mailbox is full"),
-            Err(TrySendError::Closed(_)) => {
-                s.fail_runtime(aid, "agent runtime mailbox closed".into(), true);
-                anyhow::bail!("agent {aid} is unreachable")
-            }
-        }
-    }
-
-    pub fn status(
-        &self,
-        aid: &AgentId,
-        report: StatusReport,
+        status: NodeStatus,
+        output: Option<String>,
     ) {
         let s = &mut *self.lock();
-        let Some(node) = s.graph.get_mut(aid) else {
-            return;
-        };
-        // A terminal node never accepts a late in-flight report.
-        if node.status == NodeStatus::Dead {
-            return;
-        }
-        node.processed = report.processed;
-        if report.outcome.output.is_some() {
-            node.outcome.output = report.outcome.output;
-        }
-        node.outcome.error = report.outcome.error;
-        // An idle report older than a committed delivery is still effectively
-        // running. The post-delivery report is the one that may settle the node.
-        node.status = if report.status == NodeStatus::Idle && node.processed < node.delivered {
-            NodeStatus::Running
-        } else {
-            report.status
-        };
-        if node.status == NodeStatus::Idle {
-            let result = node.wait_result();
-            s.fire_waiters(aid, Ok(result));
+        // a terminal node never accepts a late in-flight report
+        if let Some(node) = s.graph.get_mut(aid)
+            && let Runtime::Live {
+                status: current, ..
+            } = &mut node.runtime
+        {
+            *current = status;
+            node.output = output;
         }
     }
 
-    /// attach every agent to its registered node, then start them all —
-    /// so none can reach a sibling that isn't attached yet
+    /// the one way to start an agent: hand its registered node's mailbox to
+    /// the runtime and run it supervised
     pub fn launch(
         &self,
-        agents: impl IntoIterator<Item = Agent>,
+        agent: Agent,
     ) -> Result<()> {
-        let mut started = Vec::new();
-        {
-            let s = &mut *self.lock();
-            for agent in agents {
-                let (abort, registration) = AbortHandle::new_pair();
-                s.attach(&agent.id, agent.tx.clone(), agent.user_tx.clone(), abort)?;
-                started.push((agent, registration));
-            }
-        }
-        for (agent, registration) in started {
-            let aid = agent.id.clone();
-            tokio::spawn(supervise(aid, self.clone(), agent.run(), registration));
-        }
+        let (abort, registration) = AbortHandle::new_pair();
+        let mail = self.lock().go_live(&agent.id, abort)?;
+        let aid = agent.id.clone();
+        tokio::spawn(supervise(aid, self.clone(), agent.run(mail), registration));
         Ok(())
     }
 
@@ -143,27 +90,29 @@ impl RouterState {
         aid
     }
 
-    /// one-shot: a node's runtime is attached at most once per process
-    pub fn attach(
+    /// one-shot: take the pending mailbox, the node is live from now on
+    pub fn go_live(
         &mut self,
         aid: &AgentId,
-        mailbox: Sender<AgentEvent>,
-        user_tx: Sender<AgentEvent>,
         abort: AbortHandle,
-    ) -> Result<()> {
+    ) -> Result<UnboundedReceiver<Mail>> {
         let node = self
             .graph
             .get_mut(aid)
             .ok_or_else(|| anyhow::anyhow!("agent {aid} is unreachable"))?;
-        anyhow::ensure!(node.status != NodeStatus::Dead, "agent {aid} is dead");
-        anyhow::ensure!(
-            node.abort.is_none(),
-            "agent {aid} runtime is already attached"
-        );
-        node.mailbox = Some(mailbox);
-        node.user_tx = Some(user_tx);
-        node.abort = Some(abort);
-        Ok(())
+        match node.runtime {
+            Runtime::Pending(_) => {}
+            Runtime::Live { .. } => anyhow::bail!("agent {aid} runtime is already attached"),
+            Runtime::Dead(_) => anyhow::bail!("agent {aid} is dead"),
+        }
+        let live = Runtime::Live {
+            abort,
+            status: NodeStatus::Spawning,
+        };
+        let Runtime::Pending(mail) = std::mem::replace(&mut node.runtime, live) else {
+            unreachable!("checked above");
+        };
+        Ok(mail)
     }
 }
 

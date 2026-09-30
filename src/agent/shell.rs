@@ -12,12 +12,9 @@ use crate::agent::core::Effect;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
-use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::graph::NodeStatus;
-use crate::agent::router::graph::StatusReport;
 use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::context::ToolRuntimeContext;
-use crate::llm::history::TurnStatus;
 use crate::tui::app::AppEvent;
 use crate::utils::now;
 
@@ -85,11 +82,12 @@ impl Agent {
                 );
             }
             Effect::Ui(event) => self.emit(event).await?,
-            // liveness to the router, rendering to the app
+            // for the router's list/inspect, and for rendering
             Effect::Status(status) => {
-                self.report_status(None);
+                self.report_status();
                 self.emit(UiEvent::StatusUpdate(status)).await?;
             }
+            Effect::Settled { waits, outcome } => self.router.settle(&self.id, &waits, &outcome),
             Effect::Save => self.save().await?,
             Effect::StartTurn {
                 id,
@@ -145,34 +143,16 @@ impl Agent {
         Ok(())
     }
 
-    /// the `Agent`→router status report carrying the processed-delivery
-    /// watermark; the idle report carries the last
-    /// assistant text (`wait`'s return), a failed turn its typed error
-    /// instead — the output cache is never clobbered by a failure.
-    /// `error` is a handler failure from the run loop (a wake that couldn't
-    /// start its turn), surfaced the same way.
-    pub fn report_status(
-        &self,
-        error: Option<String>,
-    ) {
-        let (status, output, turn_error) = match self.core.state.status.turn() {
-            TurnStatus::InProgress => (NodeStatus::Running, None, None),
-            TurnStatus::Idle => (
-                NodeStatus::Idle,
-                self.core.history().state().last_text_output().ok(),
-                None,
-            ),
-            TurnStatus::Failed(msg) => (NodeStatus::Idle, None, Some(msg.clone())),
+    /// informational (the router's `list`/`inspect`), plus the last good
+    /// output, which a wait on this agent returns once it's dead
+    pub fn report_status(&self) {
+        let status = if self.core.state.status.idle() {
+            NodeStatus::Idle
+        } else {
+            NodeStatus::Running
         };
-        let report = StatusReport {
-            processed: self.processed,
-            status,
-            outcome: TurnOutcome {
-                output,
-                error: error.or(turn_error),
-            },
-        };
-        self.router.status(&self.id, report);
+        let output = self.core.history().state().last_good_output();
+        self.router.report_status(&self.id, status, output);
     }
 }
 

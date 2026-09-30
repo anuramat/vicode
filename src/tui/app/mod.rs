@@ -159,12 +159,9 @@ mod tests {
         ) -> Self {
             // TODO figure out what should stay here, and what belongs to run()/launch()
             let (tx, rx) = channel(CHANNEL_CAPACITY);
-            let outcomes = records
-                .keys()
-                .map(|a| (a.clone(), Default::default()))
-                .collect();
+            let restored = records.keys().map(|a| (a.clone(), None)).collect();
             let router =
-                RouterState::start(tx.clone(), project.clone(), records, state_ids, outcomes);
+                RouterState::start(tx.clone(), project.clone(), records, state_ids, restored);
             Self::with_router(project, tx, rx, router)
         }
     }

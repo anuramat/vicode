@@ -22,7 +22,6 @@ use super::CHANNEL_CAPACITY;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::agent::router::RouterState;
-use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::graph::GraphRecord;
 use crate::config::Config;
 use crate::llm::provider::assistant::AssistantPool;
@@ -60,7 +59,7 @@ impl App<'_> {
             project.clone(),
             records,
             state_ids,
-            boot.outcomes,
+            boot.restored,
         );
         let mut app = Self::with_router(project, tx, rx, router);
         if !boot.failures.is_empty() {
@@ -114,7 +113,7 @@ impl App<'_> {
         // create shared lowerdir
         self.project.init().await?;
         // load tabs
-        self.load_tabs(tabs, agents).await?;
+        self.load_tabs(tabs, agents)?;
 
         tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
@@ -189,7 +188,8 @@ impl App<'_> {
 struct BootAgents {
     tabs: Vec<(AgentId, AgentState)>,
     agents: Vec<(AgentId, AgentState)>,
-    outcomes: HashMap<AgentId, TurnOutcome>,
+    /// the router's boot graph: `Some(error)` = an unloadable child
+    restored: HashMap<AgentId, Option<String>>,
     failures: Vec<(AgentId, String)>,
 }
 
@@ -227,30 +227,18 @@ fn load_boot_agents(
     children.sort();
     loaded.extend(children.iter().map(load));
 
-    let mut outcomes = HashMap::new();
+    let mut restored = HashMap::new();
     let mut failures = Vec::new();
     for aid in roots.iter().chain(children.iter()) {
         match &loaded[aid] {
-            Ok(state) => {
-                outcomes.insert(
-                    aid.clone(),
-                    TurnOutcome {
-                        output: state.context.history.state().last_text_output().ok(),
-                        error: None,
-                    },
-                );
+            Ok(_) => {
+                restored.insert(aid.clone(), None);
             }
             Err(error) => {
                 failures.push((aid.clone(), error.clone()));
                 // Invalid roots and their tabs are omitted entirely.
                 if records[aid].parent.is_some() {
-                    outcomes.insert(
-                        aid.clone(),
-                        TurnOutcome {
-                            output: None,
-                            error: Some(error.clone()),
-                        },
-                    );
+                    restored.insert(aid.clone(), Some(error.clone()));
                 }
             }
         }
@@ -267,7 +255,7 @@ fn load_boot_agents(
     BootAgents {
         tabs,
         agents,
-        outcomes,
+        restored,
         failures,
     }
 }
@@ -424,9 +412,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![aid("bad-root"), aid("bad-child")]
         );
-        assert!(boot.outcomes[&aid("bad-child")].error.is_some());
-        assert!(!boot.outcomes.contains_key(&aid("bad-root")));
-        assert!(!boot.outcomes.contains_key(&aid("under-bad-root")));
+        assert!(boot.restored[&aid("bad-child")].is_some());
+        assert!(!boot.restored.contains_key(&aid("bad-root")));
+        assert!(!boot.restored.contains_key(&aid("under-bad-root")));
         assert!(store.state_ids().unwrap().contains(&aid("bad-child")));
         std::fs::remove_dir_all(&dir).ok();
     }

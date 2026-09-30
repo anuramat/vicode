@@ -11,13 +11,16 @@ use crate::agent::router::graph::NodeStatus;
 pub enum RouterError {
     #[error("target unreachable: not a live agent in your tab")]
     Unreachable,
-    #[error("target mailbox full; retry later")]
-    Busy,
     #[error("this wait would close a wait cycle")]
     WouldDeadlock,
     #[error("target is not a strict spawn-descendant of yours")]
     NotOwned,
 }
+
+/// a registered `wait`, as delivered into its target's mailbox
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Serialize))]
+pub struct WaitId(pub u64);
 
 /// last output text and typed failure
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

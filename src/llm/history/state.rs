@@ -1,4 +1,3 @@
-use anyhow::Result;
 use derive_more::AsMut;
 use derive_more::AsRef;
 use derive_more::Deref;
@@ -86,12 +85,15 @@ impl HistoryState {
         })
     }
 
-    pub fn last_text_output(&self) -> Result<String> {
-        if let Some(Message::Assistant(msg)) = self.last() {
-            Ok(msg.text_output())
-        } else {
-            Err(anyhow::anyhow!("last message is not from the assistant",))
-        }
+    /// text of the last assistant message that completed — what `wait`
+    /// returns; a failed turn never clobbers it
+    pub fn last_good_output(&self) -> Option<String> {
+        self.iter().rev().find_map(|message| match message {
+            Message::Assistant(msg) if matches!(msg.status, AssistantStatus::Success) => {
+                Some(msg.text_output())
+            }
+            _ => None,
+        })
     }
 
     pub fn text_outputs_after(

@@ -208,7 +208,7 @@ mod tests {
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState::fake();
         let mut tab = Tab::new(
-            Some(crate::agent::router::Router::test_handle(&project)),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             state,
             &project,

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use git2::Repository;
 use indexmap::IndexMap;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::instrument;
 
 use crate::agent::Agent;
@@ -18,7 +19,7 @@ impl<'a> App<'a> {
         self.select_tab(self.selected_tab_idx());
     }
 
-    pub async fn load_tabs(
+    pub fn load_tabs(
         &mut self,
         tab_agents: Vec<(AgentId, AgentState)>,
         agents: Vec<(AgentId, AgentState)>,
@@ -33,16 +34,18 @@ impl<'a> App<'a> {
         self.tabs = tabs;
         self.rebuild_tablist();
 
-        let agents = agents.into_iter().map(|(aid, state)| {
-            Agent::new(
+        // every node's mailbox exists already: launch order doesn't matter
+        for (aid, state) in agents {
+            let agent = Agent::new(
                 self.project.clone(),
                 self.router.clone(),
                 self.tx.clone(),
                 aid,
                 state,
-            )
-        });
-        self.router.launch(agents)
+            );
+            self.router.launch(agent)?;
+        }
+        Ok(())
     }
 
     /// create a new primary agent, and a corresponding tab
@@ -92,8 +95,8 @@ impl<'a> App<'a> {
         &mut self,
         aid: &AgentId,
         state: AgentState,
+        control: UnboundedSender<UserCommand>,
     ) -> Result<()> {
-        let router = self.router.clone();
         let tab = self.tab_mut_by_aid(aid)?;
         tab.state = state;
         // a (re)start's fresh runtime has no in-flight calls; the prior
@@ -101,7 +104,7 @@ impl<'a> App<'a> {
         // deduplicated StatusUpdate(Idle) would skip set_state's clear
         tab.live_output.clear();
         tab.refresh_assistant_config();
-        tab.router = Some(router);
+        tab.control = Some(control);
         tab.refresh_file_completion()?;
         tab.refresh_info().await?;
         self.rebuild_tablist();
@@ -112,14 +115,12 @@ impl<'a> App<'a> {
     #[instrument(skip(self))]
     pub async fn duplicate_tab(&mut self) -> Result<()> {
         let original = self.selected_tab()?;
-        let Some(router) = original.router.clone() else {
+        if original.control.is_none() {
             return Ok(());
-        };
-        let original_aid = original.aid.clone();
+        }
         let state = original.state.clone();
-
         let copy = self.router.allocate_agent_id();
-        router.forward(&original_aid, UserCommand::Duplicate(copy.clone()))?;
+        original.send(UserCommand::Duplicate(copy.clone()))?;
         // a preview until the copy's Started attaches it; the original
         // reports a failure as DuplicateFailed, which drops it again
         self.insert_tab(copy, state);
@@ -136,7 +137,7 @@ impl<'a> App<'a> {
             .tabs
             .get_index(idx)
             .ok_or_else(|| anyhow::anyhow!("tab with idx {idx} not found"))?;
-        tab.router()?;
+        anyhow::ensure!(tab.control.is_some(), "agent isn't attached (yet?)");
         let (aid, _) = self
             .tabs
             .shift_remove_index(idx)
@@ -269,14 +270,12 @@ mod tests {
 
     #[tokio::test]
     async fn archive_tab_stops_agent_but_keeps_workdir() {
-        use tokio::sync::mpsc::channel;
-
         let project = crate::project::Project::new_test().unwrap().0;
         let mut app = App::new(project.clone(), Default::default(), Default::default());
         let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
         let tab = Tab::new(
-            Some(app.router.clone()),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             AgentState::fake(),
             &project,
@@ -284,9 +283,7 @@ mod tests {
         app.tabs.insert(aid.clone(), tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
-        let (tx, _rx) = channel(8);
-        let (user_tx, _user_rx) = channel(8);
-        app.router.attach_manual(&aid, tx, user_tx);
+        let _mail = app.router.attach_manual(&aid);
 
         app.archive_tab().await.unwrap();
 
@@ -307,7 +304,7 @@ mod tests {
         app.tabs.insert(
             original.clone(),
             Tab::new(
-                Some(app.router.clone()),
+                Some(tokio::sync::mpsc::unbounded_channel().0),
                 original.clone(),
                 AgentState::fake(),
                 &project,

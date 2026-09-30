@@ -1,7 +1,7 @@
 use anyhow::Result;
-use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::ActivityStatus;
 use crate::agent::Agent;
@@ -9,7 +9,6 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::core::AgentCore;
-use crate::agent::event::AgentEvent;
 use crate::agent::router::Router;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
@@ -21,6 +20,8 @@ pub const CHANNEL_CAPACITY: usize = 100;
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
 impl Agent {
+    /// the mailbox isn't the agent's: the router mints it with the node
+    /// and hands it to the runtime at `launch`
     pub fn new(
         project: Project,
         router: Router,
@@ -28,22 +29,7 @@ impl Agent {
         id: AgentId,
         state: AgentState,
     ) -> Self {
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
-        Self::with_mailbox(project, router, app_tx, id, state, tx, rx)
-    }
-
-    /// attach to a router-minted mailbox; a spawned child's seed prompt is
-    /// already parked there before the runtime exists
-    pub fn with_mailbox(
-        project: Project,
-        router: Router,
-        app_tx: Sender<AppEvent>,
-        id: AgentId,
-        state: AgentState,
-        tx: Sender<AgentEvent>,
-        rx: Receiver<AgentEvent>,
-    ) -> Self {
-        let (user_tx, user_rx) = channel(CHANNEL_CAPACITY);
+        let (user_tx, user_rx) = unbounded_channel();
         let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
         Self {
             core: AgentCore::new(state, project.assistants().clone()),
@@ -51,12 +37,9 @@ impl Agent {
             id,
             router,
             app_tx,
-            rx,
             user_tx,
             user_rx,
-            processed: 0,
             executor: Default::default(),
-            tx,
             task_tx,
             task_rx,
         }
@@ -112,7 +95,7 @@ impl Agent {
             // and a duplicated tab, which inherits its `base` by clone
             self.project.pin_base(&aid, &self.core.state.context.base)?;
             self.save().await?;
-            router.launch([self])
+            router.launch(self)
         }
         .await;
         if result.is_err() {

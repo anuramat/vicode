@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use anyhow::Result;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::AgentState;
+use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
-use crate::agent::router::Router;
 use crate::forward;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ModelConfig;
@@ -45,7 +46,8 @@ pub fn message_views<'s>(
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    pub router: Option<Router>,
+    /// the agent's control lane, from its `Started`; `None` = not attached
+    pub control: Option<UnboundedSender<UserCommand>>,
     pub aid: AgentId,
     pub state: AgentState,
     /// assistant cached for ui
@@ -66,13 +68,13 @@ impl Tab<'_> {
     }
 
     pub fn new(
-        router: Option<Router>,
+        control: Option<UnboundedSender<UserCommand>>,
         aid: AgentId,
         state: AgentState,
         project: &Project,
     ) -> Self {
         let mut tab = Self {
-            router,
+            control,
             aid,
             state,
             assistant_config: None,
@@ -103,7 +105,7 @@ impl Tab<'_> {
     }
 
     pub fn label(&self) -> String {
-        let prefix = if self.router.is_none() {
+        let prefix = if self.control.is_none() {
             "*"
         } else {
             self.state.status.label()
@@ -112,7 +114,7 @@ impl Tab<'_> {
     }
 
     pub async fn refresh_info(&mut self) -> Result<()> {
-        if self.router.is_none() {
+        if self.control.is_none() {
             return Ok(());
         }
         self.info = InfoWidget::new(&self.project, &self.aid).await?;
@@ -127,9 +129,17 @@ impl Tab<'_> {
         self.scroll.scroll(&views, op);
     }
 
-    pub fn router(&self) -> Result<&Router> {
-        self.router
+    /// straight to the agent; a closed lane means its runtime is gone
+    pub fn send(
+        &self,
+        command: UserCommand,
+    ) -> Result<()> {
+        let control = self
+            .control
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))
+            .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))?;
+        control
+            .send(command)
+            .map_err(|_| anyhow::anyhow!("agent {} is dead", self.aid))
     }
 }

@@ -13,7 +13,7 @@ declare_tool!(
     name: "send",
     description: "Send a plain-text message to another agent in your tab. Non-blocking: \
         success means accepted into its mailbox (wakes an idle target, or is buffered until \
-        its current turn ends) — not durably delivered; a full mailbox errors, retry later. \
+        its current turn ends) — not durably delivered. \
         Use it for mid-work updates and questions; collect a finished agent's result with \
         wait, not send.",
     call: SendCall,

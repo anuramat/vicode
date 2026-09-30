@@ -50,9 +50,9 @@ impl App<'_> {
             return Ok(());
         };
         match event {
-            Started(state) => {
+            Started { state, control } => {
                 // TODO this calls tab_mut_by_aid again, which is sad
-                self.handle_started(&aid, *state).await?;
+                self.handle_started(&aid, *state, control).await?;
             }
             HistoryUpdate(loc, event) => {
                 tab.update(loc, event)?;
@@ -133,7 +133,7 @@ mod tests {
         Repository::init(&workdir).unwrap();
         let state = AgentState::fake();
         let tab = Tab::new(
-            Some(crate::agent::router::Router::test_handle(&project)),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             state,
             &project,
@@ -190,7 +190,7 @@ mod tests {
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
         let tab = Tab::new(
-            Some(crate::agent::router::Router::test_handle(&project)),
+            Some(tokio::sync::mpsc::unbounded_channel().0),
             aid.clone(),
             AgentState::fake(),
             &project,
@@ -253,7 +253,7 @@ mod tests {
         app.tabs.insert(
             aid.clone(),
             Tab::new(
-                Some(crate::agent::router::Router::test_handle(&project)),
+                Some(tokio::sync::mpsc::unbounded_channel().0),
                 aid.clone(),
                 state.clone(),
                 &project,

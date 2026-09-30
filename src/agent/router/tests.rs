@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use futures::future::AbortHandle;
 use similar_asserts::assert_eq;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::channel;
 use tokio::time::timeout;
 
@@ -17,11 +17,10 @@ use super::api::RouterError;
 use super::api::TurnOutcome;
 use super::api::WaitResult;
 use super::graph::NodeStatus;
+use super::graph::Runtime;
 use super::*;
 use crate::agent::Agent;
-use crate::agent::event::AgentEvent;
-use crate::agent::event::UserCommand;
-use crate::agent::event::UserPrompt;
+use crate::agent::event::Mail;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
@@ -46,17 +45,15 @@ impl Router {
         )
     }
 
-    /// register a root whose channels the test drives by hand — no runtime
-    /// task, so nothing reports status on its own
+    /// register a root whose mailbox the test drives by hand — no runtime
+    /// task, so nothing reports status or settles waits on its own
     pub fn attach_manual(
         &self,
         aid: &AgentId,
-        tx: Sender<AgentEvent>,
-        user_tx: Sender<AgentEvent>,
-    ) {
+    ) -> UnboundedReceiver<Mail> {
         let (abort, _registration) = AbortHandle::new_pair();
         self.register_root(aid).unwrap();
-        self.lock().attach(aid, tx, user_tx, abort).unwrap();
+        self.lock().go_live(aid, abort).unwrap()
     }
 
     /// Abort the agent's live runtime; the node stays reachable and the
@@ -66,30 +63,27 @@ impl Router {
         aid: &AgentId,
     ) -> anyhow::Result<()> {
         let s = &mut *self.lock();
-        let abort = s.graph.get(aid).and_then(|n| n.abort.clone());
-        let abort = abort.ok_or_else(|| anyhow::anyhow!("no live runtime for {aid}"))?;
+        let Some(Runtime::Live { abort, .. }) = s.graph.get(aid).map(|n| &n.runtime) else {
+            anyhow::bail!("no live runtime for {aid}");
+        };
         abort.abort();
         s.fail_runtime(aid, "agent runtime cancelled by test".into(), false);
         Ok(())
     }
 
-    /// test-facing sync primitive: fire on the target's next idle/dead
-    /// transition — the same signal `wait` consumes, minus root/cycle checks
+    /// test-facing sync primitive: `wait` minus the root/cycle checks — fires
+    /// once the target handled everything delivered before it and is idle
     pub async fn wait_idle(
         &self,
         aid: &AgentId,
     ) -> Result<WaitResult, RouterError> {
         let rx = {
             let s = &mut *self.lock();
-            match s.graph.get(aid) {
-                None => return Err(RouterError::Unreachable),
-                Some(node) if matches!(node.status, NodeStatus::Idle | NodeStatus::Dead) => {
-                    return Ok(node.wait_result());
-                }
-                // self-edge: adds nothing reachable to the wait-for graph,
-                // so `would_deadlock` never sees it
-                Some(_) => s.register_waiter(aid, aid),
+            let node = s.graph.get(aid).ok_or(RouterError::Unreachable)?;
+            if let Some(death) = node.death() {
+                return Ok(death);
             }
+            s.enqueue_wait(aid, aid)
         };
         rx.await.expect("waiter dropped unfired")
     }
@@ -100,23 +94,21 @@ struct Rig {
     api: Arc<FakeApi>,
     router: Router,
     primary: AgentId,
-    // keep the dummy primary runtime's channels open
-    _rx: Receiver<AgentEvent>,
-    _user_rx: Receiver<AgentEvent>,
+    /// the dummy primary's mailbox: nobody runs it
+    primary_mail: UnboundedReceiver<Mail>,
 }
 
 impl Rig {
     async fn new(name: &str) -> Self {
         let (project, api) = Project::new_test().unwrap();
         let router = spawn_router(&project, Default::default());
-        let (primary, _rx, _user_rx) = register_primary(&project, &router, name).await;
+        let (primary, primary_mail) = register_primary(&project, &router, name).await;
         Self {
             project,
             api,
             router,
             primary,
-            _rx,
-            _user_rx,
+            primary_mail,
         }
     }
 
@@ -183,25 +175,23 @@ fn spawn_router(
     project: &Project,
     records: BTreeMap<AgentId, graph::GraphRecord>,
 ) -> Router {
-    let outcomes = records
-        .keys()
-        .map(|a| (a.clone(), Default::default()))
-        .collect();
+    let restored = records.keys().map(|a| (a.clone(), None)).collect();
     RouterState::start(
         drained_app_tx(),
         project.clone(),
         records,
         Default::default(),
-        outcomes,
+        restored,
     )
 }
 
-/// a primary with a workdir + saved state and a dummy (test-held) runtime
+/// a primary with a workdir + saved state and a dummy (test-held) runtime,
+/// reported idle
 async fn register_primary(
     project: &Project,
     router: &Router,
     name: &str,
-) -> (AgentId, Receiver<AgentEvent>, Receiver<AgentEvent>) {
+) -> (AgentId, UnboundedReceiver<Mail>) {
     let aid = AgentId::from(name.to_string());
     tokio::fs::create_dir_all(project.agent_workdir(&aid))
         .await
@@ -211,21 +201,9 @@ async fn register_primary(
         .save_state(&aid, &project.fake_state())
         .await
         .unwrap();
-    let (tx, rx) = channel(8);
-    let (user_tx, user_rx) = channel(8);
-    router.attach_manual(&aid, tx, user_tx);
-    router.status(
-        &aid,
-        graph::StatusReport {
-            processed: 0,
-            status: NodeStatus::Idle,
-            outcome: TurnOutcome {
-                output: None,
-                error: None,
-            },
-        },
-    );
-    (aid, rx, user_rx)
+    let mail = router.attach_manual(&aid);
+    router.report_status(&aid, NodeStatus::Idle, None);
+    (aid, mail)
 }
 
 async fn start_saved_agents(
@@ -233,18 +211,17 @@ async fn start_saved_agents(
     router: &Router,
     aids: &[AgentId],
 ) {
-    let mut agents = Vec::new();
     for aid in aids {
         let state = project.store().load_state(aid).await.unwrap();
-        agents.push(Agent::new(
+        let agent = Agent::new(
             project.clone(),
             router.clone(),
             drained_app_tx(),
             aid.clone(),
             state,
-        ));
+        );
+        router.launch(agent).unwrap();
     }
-    router.launch(agents).unwrap();
     for aid in aids {
         assert!(matches!(
             timeout(TIMEOUT, router.wait_idle(&aid)).await.unwrap(),
@@ -292,15 +269,15 @@ async fn spawn_registers_under_parent_and_wait_collects_output() {
 }
 
 #[tokio::test]
-async fn send_bumps_delivered_so_racing_wait_returns_post_message_output() {
+async fn wait_after_send_returns_post_message_output() {
     let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "first").await;
 
     rig.script("second", "second");
     let sent = rig.router.send_message(&rig.primary, &child, "more");
     assert_eq!(sent, Ok(()));
-    // the delivery is outstanding: this wait must register, not fire on the
-    // pre-message idle
+    // the wait's marker queues behind the message: it is answered after the
+    // message's turn, never on the pre-message idle
     let outcome = timeout(TIMEOUT, rig.router.wait(&rig.primary, &child))
         .await
         .unwrap();
@@ -339,7 +316,7 @@ async fn send_to_still_spawning_child_parks_in_minted_mailbox() {
 async fn cross_tab_everything_is_unreachable() {
     let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "mine").await;
-    let (other, _rx, _user_rx) = register_primary(&rig.project, &rig.router, "other").await;
+    let (other, _other_mail) = register_primary(&rig.project, &rig.router, "other").await;
 
     assert_eq!(
         rig.router.send_message(&other, &child, "hi"),
@@ -532,28 +509,10 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
             .await
             .unwrap();
     }
-    let outcomes = [
-        (
-            prime.clone(),
-            TurnOutcome {
-                output: None,
-                error: None,
-            },
-        ),
-        (
-            bad.clone(),
-            TurnOutcome {
-                output: None,
-                error: Some("corrupt child row".into()),
-            },
-        ),
-        (
-            descendant.clone(),
-            TurnOutcome {
-                output: None,
-                error: None,
-            },
-        ),
+    let restored = [
+        (prime.clone(), None),
+        (bad.clone(), Some("corrupt child row".to_string())),
+        (descendant.clone(), None),
     ]
     .into_iter()
     .collect();
@@ -562,7 +521,7 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
         project.clone(),
         records,
         Default::default(),
-        outcomes,
+        restored,
     );
     start_saved_agents(&project, &router, &[prime.clone(), descendant.clone()]).await;
 
@@ -600,7 +559,6 @@ async fn runtime_death_is_terminal_until_restart() {
         rig.router.send_message(&rig.primary, &child, "hi"),
         Err(RouterError::Unreachable)
     );
-    assert!(rig.router.forward(&child, UserCommand::Abort).is_err());
     let err = rig
         .router
         .spawn_agent(&child, None, "go")
@@ -608,17 +566,8 @@ async fn runtime_death_is_terminal_until_restart() {
         .unwrap_err();
     assert_eq!(err.to_string(), format!("agent {child} is dead"));
     // A late status report cannot revive or overwrite a terminal node.
-    rig.router.status(
-        &child,
-        graph::StatusReport {
-            processed: 99,
-            status: NodeStatus::Idle,
-            outcome: TurnOutcome {
-                output: Some("ghost".into()),
-                error: None,
-            },
-        },
-    );
+    rig.router
+        .report_status(&child, NodeStatus::Idle, Some("ghost".into()));
     assert_eq!(
         rig.router.wait(&rig.primary, &child).await,
         Ok(WaitResult {
@@ -723,19 +672,11 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     let rig = Rig::new("prime").await;
     let a = rig.spawn_idle_child(&rig.primary, "a").await;
     let b = rig.spawn_idle_child(&rig.primary, "b").await;
-    // make both busy: each gets a message whose scripted turn hangs — the
-    // outstanding delivery alone makes a racing wait register
+    // b busy on a hanging turn: the a → b marker parks behind the message
     rig.api.script_hanging_turn(vec![]);
-    rig.api.script_hanging_turn(vec![]);
-    for target in [&a, &b] {
-        assert_eq!(
-            rig.router.send_message(&rig.primary, &target, "work"),
-            Ok(())
-        );
-    }
+    assert_eq!(rig.router.send_message(&rig.primary, &b, "work"), Ok(()));
+    let ab_rx = rig.router.lock().enqueue_wait(&a, &b);
 
-    // a → b edge, receiver kept alive
-    let ab_rx = rig.router.lock().register_waiter(&a, &b);
     // closing the cycle is rejected, typed
     assert_eq!(
         rig.router.wait(&b, &a).await,
@@ -743,40 +684,15 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     );
 
     // dropped registration = stale edge: pruned, the reverse wait registers
+    // and the idle a settles it
     drop(ab_rx);
-    let reverse = tokio::spawn({
-        let router = rig.router.clone();
-        let (a, b) = (a.clone(), b.clone());
-        async move { router.wait(&b, &a).await }
-    });
-    // the abort rides the priority user channel: let a's hanging turn start
-    // first, or the abort lands before the wake and aborts nothing — a
-    // delivery alone already reads Running, so wait for a to process it
-    timeout(TIMEOUT, async {
-        loop {
-            let started = {
-                let s = rig.router.lock();
-                let node = &s.graph[&a];
-                node.processed == node.delivered && node.status == NodeStatus::Running
-            };
-            if started {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("a never started its hanging turn");
-    // abort a's hanging turn: it idles with the typed failure, the cached
-    // output intact
-    rig.router.forward(&a, UserCommand::Abort).unwrap();
     assert_eq!(
-        timeout(TIMEOUT, reverse).await.unwrap().unwrap(),
+        timeout(TIMEOUT, rig.router.wait(&b, &a)).await.unwrap(),
         Ok(WaitResult {
             status: NodeStatus::Idle,
             outcome: TurnOutcome {
                 output: Some("a".into()),
-                error: Some("aborted by user".into()),
+                error: None,
             },
         })
     );
@@ -919,48 +835,27 @@ async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
 }
 
 #[tokio::test]
-async fn runtime_attachment_is_one_shot_and_forward_is_acknowledged() {
+async fn launch_is_one_shot() {
     let (project, _api) = Project::new_test().unwrap();
     let router = spawn_router(&project, Default::default());
     let aid = AgentId::from("dup".to_string());
+    let _mail = router.attach_manual(&aid);
 
-    let (tx1, _rx1) = channel(8);
-    let (user_tx1, mut user_rx1) = channel(1);
-    let (abort1, _reg1) = AbortHandle::new_pair();
-    router.register_root(&aid).unwrap();
-    router.lock().attach(&aid, tx1, user_tx1, abort1).unwrap();
-
-    let (tx2, _rx2) = channel(8);
-    let (user_tx2, _user_rx2) = channel(8);
-    let (abort2, _reg2) = AbortHandle::new_pair();
-    assert!(router.lock().attach(&aid, tx2, user_tx2, abort2).is_err());
-
-    // Success is returned only after the event is actually queued.
-    router.forward(&aid, UserCommand::Abort).unwrap();
-    assert!(router.forward(&aid, UserCommand::Abort).is_err());
-    let event = timeout(TIMEOUT, user_rx1.recv()).await.unwrap().unwrap();
-    assert!(matches!(event, AgentEvent::User(UserCommand::Abort)));
+    let (abort, _registration) = AbortHandle::new_pair();
+    assert!(router.lock().go_live(&aid, abort).is_err());
 }
 
 #[tokio::test]
-async fn forward_to_closed_runtime_is_rejected_and_marks_dead() {
+async fn send_to_closed_mailbox_is_rejected_and_marks_dead() {
     let (project, _api) = Project::new_test().unwrap();
     let router = spawn_router(&project, Default::default());
-    let (aid, _rx, user_rx) = register_primary(&project, &router, "prime").await;
-    drop(user_rx); // the agent died without the router noticing
+    let (aid, mail) = register_primary(&project, &router, "prime").await;
+    drop(mail); // the runtime died without the router noticing
 
-    assert!(
-        router
-            .forward(
-                &aid,
-                UserCommand::Submit(UserPrompt {
-                    text: "hello again".into(),
-                    generation: None,
-                })
-            )
-            .is_err()
+    assert_eq!(
+        router.send_message(&aid, &aid, "hello again"),
+        Err(RouterError::Unreachable)
     );
-
     assert_eq!(
         router.wait_idle(&aid).await,
         Ok(WaitResult {
@@ -973,57 +868,55 @@ async fn forward_to_closed_runtime_is_rejected_and_marks_dead() {
     );
 }
 
-/// a send that lands while the target's pre-send idle report is still in
-/// flight must not fire a later wait with the previous turn's output — the
-/// delivery seqnums swallow the stale report
+/// the mailbox is the protocol: a settle answers exactly the waits the agent
+/// reached — one delivered behind a message waits for the next settle
 #[tokio::test]
-async fn wait_after_mid_idle_send_returns_post_message_output() {
-    let rig = Rig::new("prime").await;
+async fn waits_settle_in_mailbox_order() {
+    let mut rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "seed").await;
-    let report = |processed, status, output: Option<&str>| graph::StatusReport {
-        processed,
-        status,
-        outcome: TurnOutcome {
-            output: output.map(Into::into),
-            error: None,
-        },
-    };
-
-    // the primary's (emulated) turn ends; its idle report is still in flight…
-    rig.router
-        .status(&rig.primary, report(0, NodeStatus::Running, None));
-    // …when the child's message is delivered
+    let early = rig.router.lock().enqueue_wait(&child, &rig.primary);
     assert_eq!(
         rig.router.send_message(&child, &rig.primary, "more"),
         Ok(())
     );
-    // the stale pre-delivery idle report arrives: processed < delivered, so a
-    // wait registered now must not fire on "old"
-    rig.router
-        .status(&rig.primary, report(0, NodeStatus::Idle, Some("old")));
-    let wait_rx = rig.router.lock().register_waiter(&child, &rig.primary);
-    // the agent catches up: processes the delivery, runs its turn to idle
-    rig.router
-        .status(&rig.primary, report(1, NodeStatus::Running, None));
-    rig.router
-        .status(&rig.primary, report(1, NodeStatus::Idle, Some("new")));
-    assert_eq!(
-        timeout(TIMEOUT, wait_rx).await.unwrap().unwrap(),
+    let mut late = rig.router.lock().enqueue_wait(&child, &rig.primary);
+
+    // the (emulated) primary drains its mailbox in order
+    let Some(Mail::Wait(first)) = rig.primary_mail.recv().await else {
+        panic!("expected the early wait first");
+    };
+    assert!(matches!(
+        rig.primary_mail.recv().await,
+        Some(Mail::Message(_))
+    ));
+    let Some(Mail::Wait(second)) = rig.primary_mail.recv().await else {
+        panic!("expected the late wait last");
+    };
+    let outcome = |text: &str| TurnOutcome {
+        output: Some(text.into()),
+        error: None,
+    };
+    let idle = |text: &str| {
         Ok(WaitResult {
             status: NodeStatus::Idle,
-            outcome: TurnOutcome {
-                output: Some("new".into()),
-                error: None,
-            },
+            outcome: outcome(text),
         })
-    );
+    };
+
+    // idle before the message's turn: only the early wait fires
+    rig.router.settle(&rig.primary, &[first], &outcome("old"));
+    assert_eq!(timeout(TIMEOUT, early).await.unwrap().unwrap(), idle("old"));
+    assert!(late.try_recv().is_err());
+    // the message's turn ended: the late wait gets its output
+    rig.router.settle(&rig.primary, &[second], &outcome("new"));
+    assert_eq!(timeout(TIMEOUT, late).await.unwrap().unwrap(), idle("new"));
 }
 
 #[tokio::test]
 async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
     let (project, _api) = Project::new_test().unwrap();
     let router = spawn_router(&project, Default::default());
-    let (aid, _rx, _user_rx) = register_primary(&project, &router, "prime").await;
+    let (aid, _mail) = register_primary(&project, &router, "prime").await;
 
     router.runtime_down(&aid, "first failure".into());
     router.runtime_down(&aid, "second failure".into());
@@ -1040,33 +933,8 @@ async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
     );
 }
 
-#[tokio::test]
-async fn forwarded_abort_to_dead_primary_is_rejected() {
-    let rig = Rig::new("prime").await;
-    rig.router.shutdown(&rig.primary).unwrap();
-
-    assert!(
-        rig.router
-            .forward(&rig.primary, UserCommand::Abort)
-            .is_err()
-    );
-
-    assert_eq!(
-        timeout(TIMEOUT, rig.router.wait_idle(&rig.primary))
-            .await
-            .unwrap(),
-        Ok(WaitResult {
-            status: NodeStatus::Dead,
-            outcome: TurnOutcome {
-                output: None,
-                error: Some("agent runtime cancelled by test".into()),
-            },
-        })
-    );
-}
-
-/// a wake whose turn fails to start still reports — the wait fires with
-/// the typed handler error instead of hanging forever
+/// a wake whose turn fails to start is remembered — the wait behind it fires
+/// with the typed error instead of looking like a quiet idle
 #[tokio::test]
 async fn failed_wake_fires_wait_with_typed_error() {
     let (project, _api) = Project::new_test().unwrap();
@@ -1090,15 +958,7 @@ async fn failed_wake_fires_wait_with_typed_error() {
     project.store().save_state(&prime, &state).await.unwrap();
     start_saved_agents(&project, &router, std::slice::from_ref(&prime)).await;
 
-    router
-        .forward(
-            &prime,
-            UserCommand::Submit(UserPrompt {
-                text: "hi".into(),
-                generation: None,
-            }),
-        )
-        .unwrap();
+    assert_eq!(router.send_message(&prime, &prime, "hi"), Ok(()));
 
     assert_eq!(
         timeout(TIMEOUT, router.wait_idle(&prime)).await.unwrap(),
@@ -1112,8 +972,6 @@ async fn failed_wake_fires_wait_with_typed_error() {
     );
 }
 
-/// a failed turn fires the wait typed — `error` carries the
-/// failure and the cache keeps the last good output
 #[tokio::test]
 async fn failed_turn_fires_wait_typed_without_clobbering_output_cache() {
     let rig = Rig::new("prime").await;
@@ -1143,57 +1001,12 @@ async fn failed_turn_fires_wait_typed_without_clobbering_output_cache() {
     );
 }
 
-/// A send burst that fills the inter-agent mailbox surfaces `Busy` without
-/// starving the separate user-control channel, and a live run loop drains a
-/// burst back down into the target's history.
+/// the mailbox never pushes back: a live run loop drains a burst into the
+/// target's history
 #[tokio::test]
-async fn send_burst_fills_mailbox_without_starving_user_channel() {
-    let mut rig = Rig::new("prime").await;
+async fn send_burst_drains_into_the_target_history() {
+    let rig = Rig::new("prime").await;
     let child = rig.spawn_idle_child(&rig.primary, "seed").await;
-
-    // saturate the primary's test-held mailbox: nothing drains it
-    let mut sent = 0;
-    loop {
-        let outcome = rig
-            .router
-            .send_message(&child, &rig.primary, &format!("m{sent}"));
-        match outcome {
-            Ok(()) => sent += 1,
-            Err(RouterError::Busy) => break,
-            other => panic!("{other:?}"),
-        }
-        assert!(sent <= 64, "mailbox never filled");
-    }
-
-    // the user channel is a separate lane: control still lands while full
-    rig.router
-        .forward(
-            &rig.primary,
-            UserCommand::Submit(UserPrompt {
-                text: "user".into(),
-                generation: None,
-            }),
-        )
-        .unwrap();
-    rig.router
-        .forward(&rig.primary, UserCommand::Abort)
-        .unwrap();
-    let first = timeout(TIMEOUT, rig._user_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        matches!(first, AgentEvent::User(UserCommand::Submit(_))),
-        "{first:?}"
-    );
-    let second = timeout(TIMEOUT, rig._user_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        matches!(second, AgentEvent::User(UserCommand::Abort)),
-        "{second:?}"
-    );
 
     // a real run loop drains a burst: the first message wakes a turn, the
     // rest buffer and flush on idle — how they split into waves is timing-
@@ -1246,13 +1059,8 @@ async fn supervised(
     );
     let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
     router.register_root(&aid).unwrap();
-    let (tx, _rx) = channel(1);
-    let (user_tx, _user_rx) = channel(1);
     let (abort, registration) = AbortHandle::new_pair();
-    router
-        .lock()
-        .attach(&aid, tx, user_tx, abort.clone())
-        .unwrap();
+    let _mail = router.lock().go_live(&aid, abort.clone()).unwrap();
     tokio::spawn(ops::runtime::supervise(
         aid.clone(),
         router.clone(),

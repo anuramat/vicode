@@ -10,11 +10,11 @@ use tokio::sync::oneshot;
 
 use crate::agent::AgentId;
 use crate::agent::router::api::RouterError;
-use crate::agent::router::api::TurnOutcome;
+use crate::agent::router::api::WaitId;
 use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::GraphRecord;
-use crate::agent::router::graph::NodeStatus;
+use crate::agent::router::graph::Runtime;
 use crate::project::Project;
 use crate::tui::app::AppEvent;
 
@@ -29,6 +29,7 @@ pub const TAB_AGENT_CAP: usize = 32;
 /// live `wait` requests
 #[derive(Debug)]
 pub struct Waiter {
+    pub id: WaitId,
     pub caller: AgentId,
     pub done: oneshot::Sender<Result<WaitResult, RouterError>>,
 }
@@ -48,18 +49,21 @@ pub struct RouterState {
     pub all_ids: BTreeSet<AgentId>,
     /// keyed by target
     pub waiters: HashMap<AgentId, Vec<Waiter>>,
+    pub next_wait: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct Router(Arc<Mutex<RouterState>>);
 
 impl RouterState {
+    /// `restored`: the boot-loaded agents to put in the graph — `None` to
+    /// be launched, `Some(error)` if unloadable (a terminal `Dead` node)
     pub fn start(
         app_tx: Sender<AppEvent>,
         project: Project,
         records: BTreeMap<AgentId, GraphRecord>,
         state_ids: BTreeSet<AgentId>,
-        mut outcomes: HashMap<AgentId, TurnOutcome>,
+        mut restored: HashMap<AgentId, Option<String>>,
     ) -> Router {
         let mut all_ids = state_ids;
         all_ids.extend(records.keys().cloned());
@@ -69,17 +73,11 @@ impl RouterState {
                 if record.archived {
                     return None;
                 }
-                let outcome = outcomes.remove(&aid)?;
-                let mut node = AgentNode::new(
-                    record.root,
-                    record.parent,
-                    if outcome.error.is_some() {
-                        NodeStatus::Dead
-                    } else {
-                        NodeStatus::Spawning
-                    },
-                );
-                node.outcome = outcome;
+                let error = restored.remove(&aid)?;
+                let mut node = AgentNode::new(record.root, record.parent);
+                if let Some(error) = error {
+                    node.runtime = Runtime::Dead(error);
+                }
                 Some((aid, node))
             })
             .collect();
@@ -89,6 +87,7 @@ impl RouterState {
             graph,
             all_ids,
             waiters: HashMap::new(),
+            next_wait: 0,
         })))
     }
 }

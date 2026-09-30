@@ -2,10 +2,12 @@ use derive_more::Display;
 use futures::future::AbortHandle;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::AgentId;
-use crate::agent::event::AgentEvent;
+use crate::agent::event::Mail;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::api::WaitResult;
 
@@ -14,13 +16,6 @@ pub struct GraphRecord {
     pub root: AgentId,
     pub parent: Option<AgentId>,
     pub archived: bool,
-}
-
-#[derive(Debug)]
-pub struct StatusReport {
-    pub processed: u64,
-    pub status: NodeStatus,
-    pub outcome: TurnOutcome,
 }
 
 #[derive(
@@ -35,38 +30,40 @@ pub enum NodeStatus {
 
 #[derive(Debug)]
 pub struct AgentNode {
-    /// inter-agent/task events
-    pub mailbox: Option<Sender<AgentEvent>>,
-    /// ui events, prioritized over mailbox
-    pub user_tx: Option<Sender<AgentEvent>>,
-    pub abort: Option<AbortHandle>,
-
-    pub delivered: u64,
-    pub processed: u64,
-
     pub root: AgentId,
     pub parent: Option<AgentId>,
-    pub status: NodeStatus,
-    /// cache
-    pub outcome: TurnOutcome,
+    /// minted with the node, so mail sent before the runtime starts parks here
+    pub mailbox: UnboundedSender<Mail>,
+    pub runtime: Runtime,
+    /// last good output, as last reported: a wait on a dead agent still gets it
+    pub output: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum Runtime {
+    /// the mailbox's receiving end, until `launch` hands it to the runtime
+    Pending(UnboundedReceiver<Mail>),
+    /// `status` stays `Spawning` until the runtime's startup report
+    Live {
+        abort: AbortHandle,
+        status: NodeStatus,
+    },
+    /// terminal for this process, with the error that ended it
+    Dead(String),
 }
 
 impl AgentNode {
     pub fn new(
         root: AgentId,
         parent: Option<AgentId>,
-        status: NodeStatus,
     ) -> Self {
+        let (mailbox, rx) = unbounded_channel();
         Self {
-            mailbox: None,
-            user_tx: None,
-            abort: None,
-            delivered: 0,
-            processed: 0,
             root,
             parent,
-            status,
-            outcome: TurnOutcome::default(),
+            mailbox,
+            runtime: Runtime::Pending(rx),
+            output: None,
         }
     }
 
@@ -81,10 +78,25 @@ impl AgentNode {
         }
     }
 
-    pub fn wait_result(&self) -> WaitResult {
-        WaitResult {
-            status: self.status,
-            outcome: self.outcome.clone(),
+    pub fn status(&self) -> NodeStatus {
+        match &self.runtime {
+            Runtime::Pending(_) => NodeStatus::Spawning,
+            Runtime::Live { status, .. } => *status,
+            Runtime::Dead(_) => NodeStatus::Dead,
         }
+    }
+
+    /// what a wait on a dead agent returns
+    pub fn death(&self) -> Option<WaitResult> {
+        let Runtime::Dead(error) = &self.runtime else {
+            return None;
+        };
+        Some(WaitResult {
+            status: NodeStatus::Dead,
+            outcome: TurnOutcome {
+                output: self.output.clone(),
+                error: Some(error.clone()),
+            },
+        })
     }
 }

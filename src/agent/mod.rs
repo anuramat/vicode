@@ -17,10 +17,13 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::core::AgentCore;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::router::Router;
 use crate::agent::task::executor::TaskExecutor;
 use crate::llm::history::History;
@@ -40,14 +43,10 @@ pub struct Agent {
     pub router: Router,
     /// the app bus: history/status/output updates for rendering
     pub app_tx: Sender<AppEvent>,
-    /// router-delivered mailbox: inter-agent messages
-    pub tx: Sender<AgentEvent>,
-    pub rx: Receiver<AgentEvent>,
-    /// app-originated events, drained with priority by the run loop
-    pub user_tx: Sender<AgentEvent>,
-    pub user_rx: Receiver<AgentEvent>,
-    /// router deliveries processed so far
-    pub processed: u64,
+    /// the app's control lane, drained with priority by the run loop; the
+    /// sender goes to the app in `Started`
+    pub user_tx: UnboundedSender<UserCommand>,
+    pub user_rx: UnboundedReceiver<UserCommand>,
     /// runs the core's task effects on tokio tasks
     pub executor: TaskExecutor,
     /// the tasks' own lane: turn streams and tool output

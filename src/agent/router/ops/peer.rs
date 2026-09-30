@@ -3,16 +3,18 @@
 
 use std::collections::HashSet;
 
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 
-use super::inbound;
+use super::peer_message;
 use crate::agent::AgentId;
+use crate::agent::event::Mail;
 use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::Waiter;
 use crate::agent::router::api::ListEntry;
 use crate::agent::router::api::RouterError;
+use crate::agent::router::api::TurnOutcome;
+use crate::agent::router::api::WaitId;
 use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
@@ -25,33 +27,8 @@ impl Router {
         text: &str,
     ) -> Result<(), RouterError> {
         let s = &mut *self.lock();
-        if s.same_tab(caller, target).is_none() {
-            return Err(RouterError::Unreachable);
-        }
-        let node = s.graph.get_mut(target).expect("checked above");
-        if node.status == NodeStatus::Dead {
-            return Err(RouterError::Unreachable);
-        }
-        let Some(tx) = node.mailbox.clone() else {
-            return Err(RouterError::Unreachable);
-        };
-        match tx.try_send(inbound(caller, text)) {
-            Ok(()) => {
-                // the delivery commits the target to a turn: `delivered`
-                // outruns `processed`, so a racing `wait` registers instead
-                // of firing stale
-                node.delivered += 1;
-                if node.status == NodeStatus::Idle {
-                    node.status = NodeStatus::Running;
-                }
-                Ok(())
-            }
-            Err(TrySendError::Full(_)) => Err(RouterError::Busy),
-            Err(TrySendError::Closed(_)) => {
-                s.fail_runtime(target, "agent runtime mailbox closed".into(), true);
-                Err(RouterError::Unreachable)
-            }
-        }
+        s.same_tab(caller, target).ok_or(RouterError::Unreachable)?;
+        s.deliver(target, peer_message(caller, text))
     }
 
     pub fn inspect(
@@ -61,11 +38,12 @@ impl Router {
     ) -> Result<NodeStatus, RouterError> {
         self.lock()
             .same_tab(caller, target)
-            .map(|n| n.status)
+            .map(AgentNode::status)
             .ok_or(RouterError::Unreachable)
     }
 
-    /// suspends until the target next goes idle (or dies)
+    /// suspends until the target has handled everything delivered to it
+    /// before this wait, and is idle (or dies)
     pub async fn wait(
         &self,
         caller: &AgentId,
@@ -73,15 +51,14 @@ impl Router {
     ) -> Result<WaitResult, RouterError> {
         let rx = {
             let s = &mut *self.lock();
-            let Some(result) = s.same_tab(caller, target).map(AgentNode::wait_result) else {
-                return Err(RouterError::Unreachable);
-            };
-            match result.status {
-                NodeStatus::Idle | NodeStatus::Dead => return Ok(result),
-                // Spawning/Running: a delivered message committed the target to a turn.
-                _ if s.would_deadlock(caller, target) => return Err(RouterError::WouldDeadlock),
-                _ => s.register_waiter(caller, target),
+            let node = s.same_tab(caller, target).ok_or(RouterError::Unreachable)?;
+            if let Some(death) = node.death() {
+                return Ok(death);
             }
+            if s.would_deadlock(caller, target) {
+                return Err(RouterError::WouldDeadlock);
+            }
+            s.enqueue_wait(caller, target)
         };
         // a waiter is only ever dropped unfired with its target
         rx.await.unwrap_or(Err(RouterError::Unreachable))
@@ -103,28 +80,49 @@ impl Router {
             .map(|(id, n)| ListEntry {
                 id: id.clone(),
                 parent: n.parent.clone(),
-                status: n.status,
+                status: n.status(),
             })
             .collect();
         members.sort_by(|a, b| a.id.cmp(&b.id));
         Some(members)
     }
+
+    /// the agent got to its delivered `waits` idle: fire exactly those
+    pub fn settle(
+        &self,
+        aid: &AgentId,
+        waits: &[WaitId],
+        outcome: &TurnOutcome,
+    ) {
+        let result = WaitResult {
+            status: NodeStatus::Idle,
+            outcome: outcome.clone(),
+        };
+        self.lock()
+            .fire_waiters(aid, |w| waits.contains(&w.id), &Ok(result));
+    }
 }
 
 impl RouterState {
-    pub fn register_waiter(
+    /// register a waiter and deliver its marker behind everything already in
+    /// the target's mailbox; a closed mailbox fires it `Dead` right away
+    pub fn enqueue_wait(
         &mut self,
         caller: &AgentId,
         target: &AgentId,
     ) -> oneshot::Receiver<Result<WaitResult, RouterError>> {
+        let id = WaitId(self.next_wait);
+        self.next_wait += 1;
         let (done, rx) = oneshot::channel();
         self.waiters
             .entry(target.clone())
             .or_default()
             .push(Waiter {
+                id,
                 caller: caller.clone(),
                 done,
             });
+        drop(self.deliver(target, Mail::Wait(id)));
         rx
     }
 

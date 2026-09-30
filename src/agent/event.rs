@@ -1,7 +1,10 @@
 //! agent wire types: what the `Agent` consumes and what it tells the UI
 
+use tokio::sync::mpsc::UnboundedSender;
+
 use crate::agent::ActivityStatus;
 use crate::agent::id::AgentId;
+use crate::agent::router::api::WaitId;
 use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
@@ -14,9 +17,7 @@ use crate::llm::history::message::UserMessage;
 #[derive(Debug)]
 pub enum AgentEvent {
     User(UserCommand),
-    /// inter-agent message (router `send` / spawn seed): wakes a turn if
-    /// idle, buffers if busy
-    Inbound(UserMessage),
+    Mail(Mail),
     /// a turn's provider stream
     Stream(TaskId, AssistantEvent),
     /// a streaming tool's output chunk
@@ -29,10 +30,27 @@ pub enum AgentEvent {
 /// a turn resolves to `None`, a tool to its item; `Err` = turn error or panic
 pub type TaskResult = Result<Option<Box<ToolCallItem>>, String>;
 
+/// router-delivered; the mailbox is FIFO, which is the whole delivery
+/// protocol: a `Wait` is answered only after every message its caller sent
+/// before it
+#[derive(Debug)]
+pub enum Mail {
+    /// inter-agent message (router `send` / spawn seed): wakes a turn if
+    /// idle, buffers if busy
+    Message(UserMessage),
+    /// a registered `wait`: settled as soon as this agent is idle
+    Wait(WaitId),
+}
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum UiEvent {
-    Started(Box<crate::agent::AgentState>),
+    /// the runtime is up: the app's tab takes the state and the control lane
+    Started {
+        state: Box<crate::agent::AgentState>,
+        #[cfg_attr(test, serde(skip))]
+        control: UnboundedSender<UserCommand>,
+    },
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
     StatusUpdate(ActivityStatus),
     AssistantSet(String),

@@ -4,12 +4,13 @@
 use std::collections::BTreeSet;
 
 use super::RouterState;
+use super::Waiter;
 use crate::agent::AgentId;
-use crate::agent::event::AgentEvent;
+use crate::agent::event::Mail;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::AgentNode;
-use crate::agent::router::graph::NodeStatus;
+use crate::agent::router::graph::Runtime;
 use crate::llm::history::message::UserMessage;
 use crate::utils::now;
 
@@ -30,29 +31,53 @@ impl RouterState {
         let Some(node) = self.graph.get_mut(aid) else {
             return;
         };
-        if node.status == NodeStatus::Dead {
+        if matches!(node.runtime, Runtime::Dead(_)) {
             return;
         }
-        if let Some(handle) = node.abort.take()
+        if let Runtime::Live { abort: handle, .. } =
+            std::mem::replace(&mut node.runtime, Runtime::Dead(error))
             && abort
         {
             handle.abort();
         }
-        node.mailbox = None;
-        node.user_tx = None;
-        node.status = NodeStatus::Dead;
-        node.outcome.error = Some(error);
-        let result = node.wait_result();
-        self.fire_waiters(aid, Ok(result));
+        let death = node.death().expect("just died");
+        self.fire_waiters(aid, |_| true, &Ok(death));
     }
 
-    fn fire_waiters(
+    /// the one delivery path: FIFO into the target's mailbox, which exists
+    /// from node creation; a closed one means the runtime is gone
+    pub fn deliver(
         &mut self,
         aid: &AgentId,
-        outcome: Result<WaitResult, RouterError>,
+        mail: Mail,
+    ) -> Result<(), RouterError> {
+        let node = self.graph.get(aid).ok_or(RouterError::Unreachable)?;
+        if matches!(node.runtime, Runtime::Dead(_)) {
+            return Err(RouterError::Unreachable);
+        }
+        if node.mailbox.send(mail).is_err() {
+            self.fail_runtime(aid, "agent runtime mailbox closed".into(), true);
+            return Err(RouterError::Unreachable);
+        }
+        Ok(())
+    }
+
+    /// resolve `aid`'s waiters matching `pick` with `outcome`
+    pub fn fire_waiters(
+        &mut self,
+        aid: &AgentId,
+        pick: impl Fn(&Waiter) -> bool,
+        outcome: &Result<WaitResult, RouterError>,
     ) {
-        for waiter in self.waiters.remove(aid).unwrap_or_default() {
+        let Some(waiters) = self.waiters.remove(aid) else {
+            return;
+        };
+        let (fired, kept): (Vec<_>, Vec<_>) = waiters.into_iter().partition(|w| pick(w));
+        for waiter in fired {
             drop(waiter.done.send(outcome.clone()));
+        }
+        if !kept.is_empty() {
+            self.waiters.insert(aid.clone(), kept);
         }
     }
 
@@ -85,13 +110,13 @@ impl RouterState {
     }
 }
 
-/// inbound inter-agent message: user-role, tagged in-body with the sender id
-/// — stamped by the router, so it can't be spoofed
-fn inbound(
+/// inter-agent message: user-role, tagged in-body with the sender id —
+/// stamped by the router, so it can't be spoofed
+fn peer_message(
     sender: &AgentId,
     text: &str,
-) -> AgentEvent {
-    AgentEvent::Inbound(UserMessage::new(format!("[from: {sender}]\n{text}"), now()))
+) -> Mail {
+    Mail::Message(UserMessage::new(format!("[from: {sender}]\n{text}"), now()))
 }
 
 /// smallest free variant per name — `b`, `b-2`, `b-3`, … — so allocation is

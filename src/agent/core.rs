@@ -9,11 +9,14 @@ use anyhow::Result;
 use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
 use crate::agent::event::AgentEvent;
+use crate::agent::event::Mail;
 use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
 use crate::agent::id::AgentId;
+use crate::agent::router::api::TurnOutcome;
+use crate::agent::router::api::WaitId;
 use crate::agent::task::ledger::Task;
 use crate::agent::task::ledger::TaskId;
 use crate::agent::task::ledger::TaskLedger;
@@ -27,6 +30,7 @@ use crate::llm::history::CompactStart;
 use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
+use crate::llm::history::TurnStatus;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::ToolCallItem;
@@ -43,6 +47,11 @@ pub struct AgentCore {
     pub ledger: TaskLedger,
     pub tools: ToolRegistry,
     pub assistants: Arc<AssistantPool>,
+    /// waits delivered while busy, settled at the next idle
+    pub waits: Vec<WaitId>,
+    /// why the last inbound message couldn't start its turn; cleared by the
+    /// next turn that starts
+    pub wake_error: Option<String>,
 }
 
 /// fat effects: all decision-time state is captured at push time, so the
@@ -80,6 +89,11 @@ pub enum Effect {
     /// `Agent`: clone into a new root; a failure comes back to the UI as
     /// `DuplicateFailed`
     Duplicate(AgentId),
+    /// idle with these waits delivered: the router fires them with `outcome`
+    Settled {
+        waits: Vec<WaitId>,
+        outcome: TurnOutcome,
+    },
 }
 
 impl AgentCore {
@@ -102,6 +116,8 @@ impl AgentCore {
             ledger: TaskLedger::default(),
             tools: TOOL_REGISTRY.clone(),
             assistants,
+            waits: Vec::new(),
+            wake_error: None,
         }
     }
 
@@ -113,7 +129,11 @@ impl AgentCore {
     ) -> Result<()> {
         let result = match event {
             AgentEvent::User(command) => self.command(now, command, effects),
-            AgentEvent::Inbound(msg) => self.message(now, msg, effects),
+            AgentEvent::Mail(Mail::Message(msg)) => self.message(now, msg, effects),
+            AgentEvent::Mail(Mail::Wait(id)) => {
+                self.waits.push(id);
+                Ok(())
+            }
             AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
                 Some(&Task::Turn {
                     generation,
@@ -130,7 +150,31 @@ impl AgentCore {
         if result.is_ok() {
             self.sync_status(effects);
         }
+        self.settle(effects);
         result
+    }
+
+    /// answer the delivered waits once idle: the mailbox is FIFO, so every
+    /// message sent before them has been handled
+    fn settle(
+        &mut self,
+        effects: &mut Vec<Effect>,
+    ) {
+        let status = self.derive_status();
+        if self.waits.is_empty() || !status.idle() {
+            return;
+        }
+        let turn_error = match status.turn() {
+            TurnStatus::Failed(msg) => Some(msg.clone()),
+            _ => None,
+        };
+        effects.push(Effect::Settled {
+            waits: std::mem::take(&mut self.waits),
+            outcome: TurnOutcome {
+                output: self.history().state().last_good_output(),
+                error: self.wake_error.clone().or(turn_error),
+            },
+        });
     }
 
     fn command(
@@ -373,8 +417,13 @@ impl AgentCore {
     ) -> Result<()> {
         self.state.pending_messages.push(msg);
         if self.ledger.idle() && !self.history().compacting() {
-            self.flush_pending(effects)?;
-            self.start_turn(now, effects)
+            let woken = self
+                .flush_pending(effects)
+                .and_then(|_| self.start_turn(now, effects));
+            if let Err(e) = &woken {
+                self.wake_error = Some(e.to_string());
+            }
+            woken
         } else {
             // buffered and saved: survives restart
             effects.push(Effect::Save);
@@ -557,6 +606,7 @@ impl AgentCore {
         let generation = self.history().generation();
         let instructions = self.history().instructions().to_string();
         self.handle_history(generation, created, effects)?;
+        self.wake_error = None;
         effects.push(Effect::StartTurn {
             id: self.ledger.register(Task::Turn {
                 generation,
@@ -586,7 +636,7 @@ fn with_partial(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::history::TurnStatus;
+    use crate::agent::router::api::WaitId;
     use crate::llm::history::message::OutputContent;
     use crate::llm::history::message::OutputItem;
     use crate::tools::todo::TodoArguments;
@@ -628,7 +678,7 @@ mod tests {
     }
 
     fn message(text: &str) -> AgentEvent {
-        AgentEvent::Inbound(UserMessage::new(text.into(), 5))
+        AgentEvent::Mail(Mail::Message(UserMessage::new(text.into(), 5)))
     }
 
     /// id of the task the effects started
@@ -1333,6 +1383,125 @@ mod tests {
               assistant: test
         "#);
         assert!(core.state.pending_messages.is_empty());
+    }
+
+    fn wait(id: u64) -> AgentEvent {
+        AgentEvent::Mail(Mail::Wait(WaitId(id)))
+    }
+
+    /// submit a turn that answers `text`, driven to its idle
+    fn answered(
+        core: &mut AgentCore,
+        text: &str,
+    ) {
+        let (_, effects) = drive(core, 1, submit("hi", core.history().generation()));
+        let turn = started_task(&effects);
+        drive(core, 2, AgentEvent::Stream(turn, text_output("out", text)))
+            .0
+            .unwrap();
+        drive(
+            core,
+            3,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
+        )
+        .0
+        .unwrap();
+        drive(core, 4, AgentEvent::Done(turn, Ok(None))).0.unwrap();
+    }
+
+    #[test]
+    fn wait_while_idle_settles_at_once() {
+        let mut core = AgentCore::fake();
+        answered(&mut core, "done");
+        assert_handled!(&mut core, 5, wait(7), @"
+        - Normal: Idle
+        - - Settled:
+              waits:
+                - 7
+              outcome:
+                output: done
+                error: ~
+        ");
+    }
+
+    /// a wait queued behind the turn's message parks until the turn is over
+    #[test]
+    fn wait_while_busy_settles_at_turn_end() {
+        let mut core = AgentCore::fake();
+        let (_, effects) = drive(&mut core, 1, message("[from: kid]\ngo"));
+        let turn = started_task(&effects);
+        assert_handled!(&mut core, 2, wait(1), @"
+        - Normal: InProgress
+        - []
+        ");
+        drive(
+            &mut core,
+            3,
+            AgentEvent::Stream(turn, text_output("out", "went")),
+        )
+        .0
+        .unwrap();
+        drive(
+            &mut core,
+            4,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 4 }),
+        )
+        .0
+        .unwrap();
+        assert_handled!(&mut core, 5, AgentEvent::Done(turn, Ok(None)), @"
+        - Normal: Idle
+        - - Status:
+              Normal: Idle
+          - Settled:
+              waits:
+                - 1
+              outcome:
+                output: went
+                error: ~
+        ");
+    }
+
+    /// a message that can't start its turn leaves no busy period to wait
+    /// for: the wait behind it settles with the wake's error, and the next
+    /// turn that starts clears it
+    #[test]
+    fn failed_wake_error_reaches_the_next_wait() {
+        let mut core = AgentCore::fake();
+        answered(&mut core, "earlier");
+        core.state.assistant_id = "gone".into();
+        assert_rejected!(&mut core, 5, message("[from: kid]\nhi"), @r#"
+        - "unknown assistant \"gone\""
+        - Normal: Idle
+        - - Ui:
+              HistoryUpdate:
+                - 1
+                - UserMessage:
+                    text: "[from: kid]\nhi"
+                    token_count: 5
+                    created_at: 5
+          - Save
+        "#);
+        assert_handled!(&mut core, 6, wait(1), @r#"
+        - Normal: Idle
+        - - Settled:
+              waits:
+                - 1
+              outcome:
+                output: earlier
+                error: "unknown assistant \"gone\""
+        "#);
+
+        core.state.assistant_id = "test".into();
+        answered(&mut core, "later");
+        assert_handled!(&mut core, 9, wait(2), @"
+        - Normal: Idle
+        - - Settled:
+              waits:
+                - 2
+              outcome:
+                output: later
+                error: ~
+        ");
     }
 
     #[test]

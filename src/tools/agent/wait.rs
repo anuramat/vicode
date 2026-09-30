@@ -12,10 +12,10 @@ use crate::tui::widgets::message::toolcall::ToolCallWidget;
 
 declare_tool!(
     name: "wait",
-    description: "Suspend until the target agent next goes idle (or dies), then return how \
-        it fired plus its last output text — the way to collect a spawned agent's result. \
-        Fires immediately if the target is already idle; a freshly-messaged target counts \
-        as woken, so a follow-up wait collects the reply. A death or a failed turn is typed \
+    description: "Suspend until the target agent has handled everything you sent it before \
+        this wait and is idle (or dies), then return how it fired plus its last output text \
+        — the way to collect a spawned agent's result. Fires right away if the target is \
+        already idle; a wait right after a send collects the reply. A death or a failed turn is typed \
         (`status`/`error`, the last good output preserved), never returned as the \
         answer; a wait that would close a wait cycle errors instead of registering.",
     call: WaitCall,
