@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::router::Router;
 use crate::agent::task::sink::OutputSink;
 use crate::config::Config;
 use crate::llm::history::History;
@@ -14,26 +14,26 @@ use crate::sandbox::SandboxRunner;
 pub struct ToolRuntimeContext {
     pub agent_id: AgentId,
     pub project: Project,
-    pub router: AgentRouterHandle,
+    pub router: Router,
     pub output: OutputSink,
     /// parent history for `spawn` calls with inherit=true
-    pub capture: Option<History>,
+    pub inherited_history: Option<History>,
 }
 
 impl ToolRuntimeContext {
     pub fn new(
         agent_id: AgentId,
         project: Project,
-        router: AgentRouterHandle,
+        router: Router,
         output: OutputSink,
-        capture: Option<History>,
+        inherited_history: Option<History>,
     ) -> Self {
         Self {
             agent_id,
             project,
             router,
             output,
-            capture,
+            inherited_history,
         }
     }
 

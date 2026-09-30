@@ -53,7 +53,7 @@ impl<'a> App<'a> {
 
             let right_part = format!(
                 "{} | {} | {}",
-                tokens, tab.state.status, tab.state.assistant
+                tokens, tab.state.status, tab.state.assistant_id
             );
             // TODO +3 move to a const
             if right_part.len() + 3 < remaining_width {

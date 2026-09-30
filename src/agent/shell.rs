@@ -1,4 +1,4 @@
-//! agent wire types and the effects interpreter: every event is translated
+//! the effects interpreter: every event is translated
 //! into a [`CoreEvent`], handed to the pure [`AgentCore`], and the resulting
 //! effects are drained fully and in order — even when the core or an effect
 //! fails, so the ledger and the TUI history mirror never desync.
@@ -11,84 +11,21 @@ use futures::FutureExt;
 use tracing::debug;
 use tracing::instrument;
 
-use crate::agent::ActivityStatus;
 use crate::agent::Agent;
 use crate::agent::core::CoreEvent;
 use crate::agent::core::Effect;
-use crate::agent::id::AgentId;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::StatusReport;
-use crate::agent::task::ledger::TaskId;
 use crate::agent::task::sink::OutputSink;
 use crate::agent::task::sink::TurnHandle;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::HistoryGeneration;
-use crate::llm::history::HistoryUpdate;
 use crate::llm::history::TurnStatus;
-use crate::llm::history::message::ToolCallItem;
-use crate::llm::history::message::UserMessage;
 use crate::utils::now;
-
-#[derive(Debug)]
-pub enum AgentEvent {
-    TaskDone(TaskId, Result<()>),
-    TaskEvent(TaskId, HistoryGeneration, HistoryUpdate),
-    /// reaper: tool future returned its resolved item
-    ToolResolved(TaskId, Box<ToolCallItem>),
-    /// reaper: tool future panicked/cancelled; error = marker + partial output
-    ToolFailed {
-        id: TaskId,
-        call_id: String,
-        error: String,
-    },
-    /// inter-agent message (router `send` / spawn seed): wakes a turn if
-    /// idle, buffers if busy
-    Inbound(UserMessage),
-    External(ExternalEvent),
-}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(serde::Serialize))]
-pub enum ParentEvent {
-    Started(Box<crate::agent::AgentState>),
-    HistoryUpdate(HistoryGeneration, HistoryUpdate),
-    StatusUpdate(ActivityStatus),
-    AssistantSet(String),
-    Error(String),
-    /// live tool-output chunk for rendering; the `Agent` accumulator is
-    /// authoritative, so a dropped chunk costs a render frame only
-    ToolOutput {
-        call_id: String,
-        chunk: String,
-    },
-}
-
-#[derive(Debug)]
-pub enum ExternalEvent {
-    /// Compact the first n messages
-    Compact(usize),
-    Retry,
-    Abort,
-    Undo(usize), // TODO maybe this should send generation or whatever
-    SetAssistant(String),
-    Submit(UserPrompt),
-    DuplicateRequest {
-        copy: AgentId,
-        /// resolved iff the copy registered; dropped-channel semantics make
-        /// the failure signal total — busy rejection, unknown aid, dead
-        /// `Agent`, and panic all close the app's receiver
-        ack: tokio::sync::oneshot::Sender<()>,
-    },
-}
-
-#[derive(Debug)]
-pub struct UserPrompt {
-    pub text: String,
-    /// None = the receiving agent uses its current one
-    pub generation: Option<HistoryGeneration>,
-}
 
 impl Agent {
     #[instrument(skip(self))]
@@ -132,7 +69,7 @@ impl Agent {
             Effect::Emit(event) => {
                 // double-send: liveness to the router, rendering to the app —
                 // so rendering stays independent of the router loop
-                if matches!(event, ParentEvent::StatusUpdate(_)) {
+                if matches!(event, UiEvent::StatusUpdate(_)) {
                     self.report_status(None).await?;
                 }
                 self.emit(event).await?;
@@ -179,14 +116,14 @@ impl Agent {
             Effect::RunTool {
                 id,
                 mut call,
-                capture,
+                inherited_history,
             } => {
                 let ctx = ToolRuntimeContext::new(
                     self.id.clone(),
                     self.project.clone(),
                     self.router.clone(),
                     OutputSink::new(call.call_id.clone(), self.out_tx.clone()),
-                    capture,
+                    inherited_history,
                 );
                 self.executor
                     .spawn_tool(id, call.call_id.clone(), async move {
@@ -208,10 +145,10 @@ impl Agent {
             Effect::SetAssistant(new) => {
                 // state applied iff persisted: the TUI never sees an unsaved assistant
                 let mut state = self.core.state.clone();
-                state.assistant = new.clone();
+                state.assistant_id = new.clone();
                 state.save(&self.project, &self.id).await?;
-                self.core.state.assistant = new.clone();
-                self.emit(ParentEvent::AssistantSet(new)).await?;
+                self.core.state.assistant_id = new.clone();
+                self.emit(UiEvent::AssistantSet(new)).await?;
             }
             Effect::Duplicate(aid) => {
                 self.try_duplicate(aid).await?;
@@ -274,14 +211,14 @@ fn translate(
             CoreEvent::ToolFailed { id, call_id, error }
         }
         AgentEvent::Inbound(msg) => CoreEvent::Message(msg),
-        AgentEvent::External(event) => match event {
-            ExternalEvent::Submit(prompt) => CoreEvent::Submit(prompt),
-            ExternalEvent::Compact(n) => CoreEvent::Compact(n),
-            ExternalEvent::Retry => CoreEvent::Retry,
-            ExternalEvent::Abort => CoreEvent::Abort,
-            ExternalEvent::Undo(n) => CoreEvent::Undo(n),
-            ExternalEvent::SetAssistant(id) => CoreEvent::SetAssistant(id),
-            ExternalEvent::DuplicateRequest { copy, ack } => {
+        AgentEvent::User(event) => match event {
+            UserCommand::Submit(prompt) => CoreEvent::Submit(prompt),
+            UserCommand::Compact(n) => CoreEvent::Compact(n),
+            UserCommand::Retry => CoreEvent::Retry,
+            UserCommand::Abort => CoreEvent::Abort,
+            UserCommand::Undo(n) => CoreEvent::Undo(n),
+            UserCommand::SetAssistant(id) => CoreEvent::SetAssistant(id),
+            UserCommand::DuplicateRequest { copy, ack } => {
                 *dup_ack = Some(ack);
                 CoreEvent::Duplicate(copy)
             }
@@ -296,6 +233,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
+    use crate::agent::event::UserPrompt;
     use crate::tui::app::AppEvent;
 
     const RX_TIMEOUT: Duration = Duration::from_secs(1);
@@ -310,10 +248,10 @@ mod tests {
             .unwrap_or_else(|| panic!("{name} channel closed"))
     }
 
-    fn parent_event(event: AppEvent) -> ParentEvent {
+    fn ui_event(event: AppEvent) -> UiEvent {
         match event {
-            AppEvent::ParentEvent(_, event) => event,
-            other => panic!("expected ParentEvent, got {other:?}"),
+            AppEvent::Agent(_, event) => event,
+            other => panic!("expected an agent event, got {other:?}"),
         }
     }
 
@@ -323,7 +261,7 @@ mod tests {
 
         let stale_generation = agent.core.history().generation() + 1;
         let result = agent
-            .handle(AgentEvent::External(ExternalEvent::Submit(UserPrompt {
+            .handle(AgentEvent::User(UserCommand::Submit(UserPrompt {
                 text: "hi".into(),
                 generation: Some(stale_generation),
             })))
@@ -341,7 +279,7 @@ mod tests {
 
         let (ack, ack_rx) = tokio::sync::oneshot::channel();
         let result = agent
-            .handle(AgentEvent::External(ExternalEvent::DuplicateRequest {
+            .handle(AgentEvent::User(UserCommand::DuplicateRequest {
                 copy: crate::agent::id::AgentId::from("copy".to_string()),
                 ack,
             }))
@@ -356,17 +294,15 @@ mod tests {
         let (mut agent, _api, mut parent_rx) = Agent::fake("set-assistant").await;
 
         agent
-            .handle(AgentEvent::External(ExternalEvent::SetAssistant(
-                "test2".into(),
-            )))
+            .handle(AgentEvent::User(UserCommand::SetAssistant("test2".into())))
             .await
             .unwrap();
 
-        let event = parent_event(recv(&mut parent_rx, "parent event").await);
+        let event = ui_event(recv(&mut parent_rx, "ui event").await);
         assert!(
-            matches!(event, ParentEvent::AssistantSet(ref a) if a == "test2"),
+            matches!(event, UiEvent::AssistantSet(ref a) if a == "test2"),
             "{event:?}"
         );
-        assert_eq!(agent.core.state.assistant, "test2");
+        assert_eq!(agent.core.state.assistant_id, "test2");
     }
 }

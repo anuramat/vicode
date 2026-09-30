@@ -10,7 +10,7 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::oneshot;
 
 use crate::agent::AgentId;
-use crate::agent::handle::AgentEvent;
+use crate::agent::event::AgentEvent;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::api::WaitResult;
@@ -24,7 +24,7 @@ pub mod api;
 mod client;
 mod command;
 pub mod graph;
-mod handle;
+mod ops;
 
 pub use command::RouterCommand;
 
@@ -61,11 +61,13 @@ pub struct Waiter {
     pub done: oneshot::Sender<Result<WaitResult, RouterError>>,
 }
 
-pub struct AgentRouter {
+pub struct RouterState {
     pub project: Project,
+    /// handed to every agent the router spawns
+    pub app_tx: Sender<AppEvent>,
 
     rx: Receiver<RouterCommand>,
-    pub handle: AgentRouterHandle,
+    pub handle: Router,
 
     /// only live agents
     pub graph: HashMap<AgentId, AgentNode>,
@@ -76,19 +78,18 @@ pub struct AgentRouter {
 }
 
 #[derive(Clone, Debug)]
-pub struct AgentRouterHandle {
+pub struct Router {
     tx: Sender<RouterCommand>,
-    app_tx: Sender<AppEvent>,
 }
 
-impl AgentRouter {
-    pub fn spawn(
+impl RouterState {
+    pub fn start(
         app_tx: Sender<AppEvent>,
         project: Project,
         records: BTreeMap<AgentId, GraphRecord>,
         state_ids: BTreeSet<AgentId>,
         mut outcomes: HashMap<AgentId, TurnOutcome>,
-    ) -> AgentRouterHandle {
+    ) -> Router {
         let mut all_ids = state_ids;
         all_ids.extend(records.keys().cloned());
         let graph = records
@@ -111,19 +112,11 @@ impl AgentRouter {
                 Some((aid, node))
             })
             .collect();
-        Self::start(app_tx, project, graph, all_ids)
-    }
-
-    fn start(
-        app_tx: Sender<AppEvent>,
-        project: Project,
-        graph: HashMap<AgentId, AgentNode>,
-        all_ids: BTreeSet<AgentId>,
-    ) -> AgentRouterHandle {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let handle = AgentRouterHandle { tx, app_tx };
+        let handle = Router { tx };
         let router = Self {
             project,
+            app_tx,
             graph,
             all_ids,
             waiters: HashMap::new(),

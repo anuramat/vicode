@@ -1,27 +1,21 @@
 //! the handle's request methods: each mints one command and awaits its reply
 
 use anyhow::Result;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
 
-use super::AgentRouterHandle;
+use super::Router;
 use super::RouterCommand;
 use super::RuntimeHandle;
 use crate::agent::AgentId;
-use crate::agent::handle::ExternalEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::router::api::ListEntry;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::StatusReport;
 use crate::llm::history::History;
-use crate::tui::app::AppEvent;
 
-impl AgentRouterHandle {
-    pub fn app_tx(&self) -> &Sender<AppEvent> {
-        &self.app_tx
-    }
-
+impl Router {
     pub async fn register_root(
         &self,
         aid: AgentId,
@@ -36,7 +30,7 @@ impl AgentRouterHandle {
     pub async fn forward(
         &self,
         aid: AgentId,
-        event: ExternalEvent,
+        event: UserCommand,
     ) -> Result<()> {
         let (done, rx) = oneshot::channel();
         self.tx
@@ -88,14 +82,14 @@ impl AgentRouterHandle {
     pub async fn spawn_agent(
         &self,
         parent: AgentId,
-        capture: Option<History>,
+        inherited_history: Option<History>,
         prompt: String,
     ) -> Result<AgentId> {
         let (done, rx) = oneshot::channel();
         self.tx
             .send(RouterCommand::Spawn {
                 parent,
-                capture,
+                inherited_history,
                 prompt,
                 done,
             })

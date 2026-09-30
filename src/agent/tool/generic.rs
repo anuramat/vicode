@@ -72,7 +72,9 @@ where
     }
 
     fn inherit_history(&self) -> bool {
-        self.arguments.as_ref().is_some_and(Function::inherit_history)
+        self.arguments
+            .as_ref()
+            .is_some_and(Function::inherit_history)
     }
 
     fn compose(

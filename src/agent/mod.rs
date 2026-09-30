@@ -1,11 +1,12 @@
 pub mod core;
-pub mod handle;
+pub mod event;
 pub mod id;
 pub mod init;
 mod loop_tests;
 mod purity_tests;
 pub mod router;
 pub mod run;
+pub mod shell;
 pub mod task;
 pub mod tool;
 pub mod turn;
@@ -20,15 +21,16 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::core::AgentCore;
-use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ParentEvent;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
+use crate::agent::router::Router;
 use crate::agent::task::executor::TaskExecutor;
 use crate::agent::task::sink::OutputChunk;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
+use crate::tui::app::AppEvent;
 
 #[derive(Debug)]
 pub struct Agent {
@@ -37,8 +39,10 @@ pub struct Agent {
 
     /// pure decision logic and agent state
     pub core: AgentCore,
-    /// router handle for reaching the app and other agents
-    pub router: AgentRouterHandle,
+    /// router handle for reaching other agents
+    pub router: Router,
+    /// the app bus: history/status/output updates for rendering
+    pub app_tx: Sender<AppEvent>,
     // agent event loop: inter-agent + task mailbox
     pub tx: Sender<AgentEvent>,
     pub rx: Receiver<AgentEvent>,
@@ -67,8 +71,7 @@ pub struct AgentState {
     /// last emitted status for deduplication of status updates
     #[serde(skip)]
     pub status: ActivityStatus,
-    /// TODO rename to assistant_id?
-    pub assistant: String,
+    pub assistant_id: String,
     pub context: AgentContext,
     /// inbound messages buffered while busy/compacting, delivered at the
     /// next true idle; persisted, so a buffered message survives restart
@@ -121,14 +124,10 @@ pub struct AgentContext {
 impl Agent {
     pub async fn emit(
         &self,
-        event: ParentEvent,
+        event: UiEvent,
     ) -> anyhow::Result<()> {
-        self.router
-            .app_tx()
-            .send(crate::tui::app::AppEvent::ParentEvent(
-                self.id.clone(),
-                event,
-            ))
+        self.app_tx
+            .send(AppEvent::Agent(self.id.clone(), event))
             .await?;
         Ok(())
     }
@@ -162,15 +161,15 @@ mod tests {
                 .await
                 .unwrap();
             let (app_tx, app_rx) = tokio::sync::mpsc::channel(256);
-            let router = router::AgentRouter::spawn(
-                app_tx,
+            let router = router::RouterState::start(
+                app_tx.clone(),
                 project.clone(),
                 Default::default(),
                 Default::default(),
                 Default::default(),
             );
             let state = project.fake_state();
-            let agent = Self::new(project, router, aid, state);
+            let agent = Self::new(project, router, app_tx, aid, state);
             (agent, api, app_rx)
         }
     }

@@ -4,7 +4,7 @@ use tracing::instrument;
 
 use super::App;
 use super::AppEvent;
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::UiEvent;
 use crate::agent::id::AgentId;
 use crate::tui::app::NotificationKind;
 
@@ -26,8 +26,8 @@ impl App<'_> {
                 self.selected_tab_mut()?.paste(&content);
                 self.dirty = true;
             }
-            ParentEvent(agent_id, event) => {
-                self.handle_parent_event(agent_id, event).await?;
+            Agent(agent_id, event) => {
+                self.handle_agent_event(agent_id, event).await?;
                 self.dirty = true;
             }
             // the failed copy's preview tab must not linger
@@ -43,13 +43,13 @@ impl App<'_> {
         Ok(())
     }
 
-    async fn handle_parent_event(
+    async fn handle_agent_event(
         &mut self,
         aid: AgentId,
-        event: ParentEvent,
+        event: UiEvent,
     ) -> Result<()> {
         #[allow(clippy::enum_glob_use)]
-        use ParentEvent::*;
+        use UiEvent::*;
 
         // hidden children have no tab; drop their events silently
         let Ok(tab) = self.tab_mut_by_aid(&aid) else {
@@ -73,7 +73,7 @@ impl App<'_> {
                 }
             }
             AssistantSet(assistant) => {
-                tab.state.assistant = assistant;
+                tab.state.assistant_id = assistant;
                 tab.refresh_assistant_config();
                 self.rebuild_tablist();
             }
@@ -114,7 +114,7 @@ mod tests {
             Tab::new(None, aid.clone(), state, &app.project),
         );
 
-        app.handle_parent_event(aid, ParentEvent::Error("oops".into()))
+        app.handle_agent_event(aid, UiEvent::Error("oops".into()))
             .await
             .unwrap();
 
@@ -133,19 +133,19 @@ mod tests {
         Repository::init(&workdir).unwrap();
         let state = AgentState::fake();
         let tab = Tab::new(
-            Some(crate::agent::router::AgentRouter::test_handle()),
+            Some(crate::agent::router::RouterState::test_handle()),
             aid.clone(),
             state,
             &project,
         );
         app.tabs.insert(aid.clone(), tab);
 
-        app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet("test".into()))
+        app.handle_agent_event(aid.clone(), UiEvent::AssistantSet("test".into()))
             .await
             .unwrap();
 
         let tab = app.tab_mut_by_aid(&aid).unwrap();
-        assert_eq!(tab.state.assistant, "test");
+        assert_eq!(tab.state.assistant_id, "test");
 
         std::fs::remove_dir_all(project.agent(&aid)).ok();
     }
@@ -184,7 +184,7 @@ mod tests {
         std::fs::create_dir_all(&workdir).unwrap();
         Repository::init(&workdir).unwrap();
         let tab = Tab::new(
-            Some(crate::agent::router::AgentRouter::test_handle()),
+            Some(crate::agent::router::RouterState::test_handle()),
             aid.clone(),
             AgentState::fake(),
             &project,
@@ -194,15 +194,15 @@ mod tests {
         while app.tx.try_send(AppEvent::Redraw).is_ok() {}
 
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            app.handle_parent_event(
+            app.handle_agent_event(
                 aid.clone(),
-                ParentEvent::StatusUpdate(crate::agent::ActivityStatus::Normal(
+                UiEvent::StatusUpdate(crate::agent::ActivityStatus::Normal(
                     crate::llm::history::TurnStatus::InProgress,
                 )),
             )
             .await
             .unwrap();
-            app.handle_parent_event(aid.clone(), ParentEvent::AssistantSet("test".into()))
+            app.handle_agent_event(aid.clone(), UiEvent::AssistantSet("test".into()))
                 .await
                 .unwrap();
         })
@@ -223,9 +223,9 @@ mod tests {
         );
 
         for chunk in ["one", " two"] {
-            app.handle_parent_event(
+            app.handle_agent_event(
                 aid.clone(),
-                ParentEvent::ToolOutput {
+                UiEvent::ToolOutput {
                     call_id: "c1".into(),
                     chunk: chunk.into(),
                 },
@@ -247,7 +247,7 @@ mod tests {
         app.tabs.insert(
             aid.clone(),
             Tab::new(
-                Some(crate::agent::router::AgentRouter::test_handle()),
+                Some(crate::agent::router::RouterState::test_handle()),
                 aid.clone(),
                 state.clone(),
                 &project,
@@ -270,7 +270,7 @@ mod tests {
         for event in events {
             let generation = expected.generation();
             expected.handle(generation, event.clone()).unwrap();
-            app.handle_parent_event(aid.clone(), ParentEvent::HistoryUpdate(generation, event))
+            app.handle_agent_event(aid.clone(), UiEvent::HistoryUpdate(generation, event))
                 .await
                 .unwrap();
         }

@@ -5,8 +5,8 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 use git2::Repository;
 
-use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::UserPrompt;
+use crate::agent::event::UserCommand;
+use crate::agent::event::UserPrompt;
 use crate::llm::history::message::Message;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
@@ -40,10 +40,10 @@ impl Tab<'_> {
         let id = self
             .project
             .assistants()
-            .switch_assistant(&self.state.assistant, prev)
+            .switch_assistant(&self.state.assistant_id, prev)
             .with_context(|| "couldn't find the provided assistant id")?;
         router
-            .forward(self.aid.clone(), ExternalEvent::SetAssistant(id))
+            .forward(self.aid.clone(), UserCommand::SetAssistant(id))
             .await?;
         Ok(())
     }
@@ -91,7 +91,7 @@ impl Tab<'_> {
 
         let result = self
             .router()?
-            .forward(self.aid.clone(), ExternalEvent::Submit(prompt))
+            .forward(self.aid.clone(), UserCommand::Submit(prompt))
             .await;
         if result.is_err() {
             self.input.textarea.insert_str(&editor_text);
@@ -102,7 +102,7 @@ impl Tab<'_> {
 
     pub async fn retry(&self) -> Result<()> {
         self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Retry)
+            .forward(self.aid.clone(), UserCommand::Retry)
             .await
     }
 
@@ -118,13 +118,13 @@ impl Tab<'_> {
             self.history().state().len()
         };
         self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Compact(n))
+            .forward(self.aid.clone(), UserCommand::Compact(n))
             .await
     }
 
     pub async fn abort(&self) -> Result<()> {
         self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Abort)
+            .forward(self.aid.clone(), UserCommand::Abort)
             .await
     }
 
@@ -137,7 +137,7 @@ impl Tab<'_> {
             "cannot undo {n} messages, history is shorter"
         );
         self.router()?
-            .forward(self.aid.clone(), ExternalEvent::Undo(n))
+            .forward(self.aid.clone(), UserCommand::Undo(n))
             .await
     }
 
@@ -180,7 +180,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentState;
     use crate::agent::id::AgentId;
-    use crate::agent::router::AgentRouter;
+    use crate::agent::router::RouterState;
     use crate::project::Project;
     use crate::tui::widgets::input::InputOpts;
 
@@ -189,7 +189,7 @@ mod tests {
         let aid = AgentId::from("tab-input".to_string());
         Repository::init(project.agent_workdir(&aid)).unwrap();
         let state = AgentState::fake();
-        let mut tab = Tab::new(Some(AgentRouter::test_handle()), aid, state, &project);
+        let mut tab = Tab::new(Some(RouterState::test_handle()), aid, state, &project);
         tab.input.input = crate::tui::widgets::input::Input::new(InputOpts {
             source: crate::tui::widgets::input::CompletionSource::Freeform(vec![(
                 '@',
@@ -256,13 +256,13 @@ mod tests {
 
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("cycle".to_string());
-        let (router, mut rx) = AgentRouter::test_handle_with_rx();
+        let (router, mut rx) = RouterState::test_handle_with_rx();
         let mut tab = Tab::new(Some(router), aid, AgentState::fake(), &project);
 
         let (result, id) = tokio::join!(tab.cycle_assistant(false), async {
             match rx.recv().await.unwrap() {
                 RouterCommand::Forward {
-                    event: ExternalEvent::SetAssistant(id),
+                    event: UserCommand::SetAssistant(id),
                     done,
                     ..
                 } => {
@@ -297,7 +297,7 @@ mod tests {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("rejected-submit".to_string());
         let (app_tx, _app_rx) = tokio::sync::mpsc::channel(8);
-        let router = AgentRouter::spawn(
+        let router = RouterState::start(
             app_tx,
             project.clone(),
             Default::default(),

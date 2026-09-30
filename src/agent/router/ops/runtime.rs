@@ -6,15 +6,15 @@ use tokio::sync::mpsc::error::TrySendError;
 
 use super::free_variant;
 use crate::agent::AgentId;
-use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ExternalEvent;
-use crate::agent::router::AgentRouter;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UserCommand;
+use crate::agent::router::RouterState;
 use crate::agent::router::RuntimeHandle;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::StatusReport;
 
-impl AgentRouter {
+impl RouterState {
     /// primary registration (`new_tab`/duplicate): root = own id
     pub fn handle_register_root(
         &mut self,
@@ -38,7 +38,7 @@ impl AgentRouter {
     pub fn handle_forward(
         &mut self,
         aid: AgentId,
-        event: ExternalEvent,
+        event: UserCommand,
     ) -> Result<()> {
         let Some(node) = self.graph.get_mut(&aid) else {
             anyhow::bail!("agent {aid} is unreachable");
@@ -49,7 +49,7 @@ impl AgentRouter {
         let Some(tx) = node.user_tx.clone() else {
             anyhow::bail!("agent {aid} runtime is not attached");
         };
-        match tx.try_send(AgentEvent::External(event)) {
+        match tx.try_send(AgentEvent::User(event)) {
             Ok(()) => {
                 node.delivered += 1;
                 if node.status == NodeStatus::Idle {

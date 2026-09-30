@@ -15,9 +15,9 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::UiEvent;
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::router::Router;
 use crate::project::Project;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::cmdline::Cmdline;
@@ -47,7 +47,7 @@ pub enum AppEvent {
     Key(KeyEvent),
     Paste(String),
 
-    ParentEvent(AgentId, ParentEvent),
+    Agent(AgentId, UiEvent),
 
     /// the duplicate watcher saw the ack channel close unresolved: roll back
     /// the copy's preview tab
@@ -68,7 +68,7 @@ pub struct App<'a> {
 
     pub rx: Receiver<AppEvent>,
     pub tx: Sender<AppEvent>,
-    pub router: AgentRouterHandle,
+    pub router: Router,
 
     /// hide tool calls, etc
     pub ctx: RenderContext,
@@ -100,7 +100,7 @@ impl App<'_> {
         project: Project,
         tx: Sender<AppEvent>,
         rx: Receiver<AppEvent>,
-        router: AgentRouterHandle,
+        router: Router,
     ) -> Self {
         let project_name = project.name();
         let ctx = project.config().render;
@@ -152,7 +152,7 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
-    use crate::agent::router::AgentRouter;
+    use crate::agent::router::RouterState;
     use crate::agent::router::graph::GraphRecord;
 
     impl App<'_> {
@@ -168,7 +168,7 @@ mod tests {
                 .map(|a| (a.clone(), Default::default()))
                 .collect();
             let router =
-                AgentRouter::spawn(tx.clone(), project.clone(), records, state_ids, outcomes);
+                RouterState::start(tx.clone(), project.clone(), records, state_ids, outcomes);
             Self::with_router(project, tx, rx, router)
         }
     }

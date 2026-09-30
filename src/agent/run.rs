@@ -4,8 +4,8 @@ use tokio::task::JoinError;
 
 use crate::agent::Agent;
 use crate::agent::core::ABORTED_BY_USER;
-use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ParentEvent;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
 use crate::agent::task::executor::TaskMeta;
 use crate::agent::task::executor::TaskOutput;
 use crate::tui::app::AppEvent;
@@ -16,7 +16,7 @@ impl Agent {
             Ok(()) => Ok(()),
             Err(e) => {
                 tracing::error!("fatal error in agent {}: {:?}", self.id, e);
-                drop(self.emit(ParentEvent::Error(e.to_string())).await);
+                drop(self.emit(UiEvent::Error(e.to_string())).await);
                 Err(e)
             }
         }
@@ -26,7 +26,7 @@ impl Agent {
         self.project
             .mount_agent(&self.core.state.context.commit, &self.id)
             .await?;
-        self.emit(ParentEvent::Started(Box::new(self.core.state.clone())))
+        self.emit(UiEvent::Started(Box::new(self.core.state.clone())))
             .await?;
         // flush messages buffered before a restart and start their
         // turn, so a restored agent doesn't sit on unread mail
@@ -38,14 +38,14 @@ impl Agent {
         while let Some(event) = self.next_event().await {
             // router deliveries are seq-counted; count before handling so
             // every report from here on carries the new watermark
-            let counted = matches!(event, AgentEvent::Inbound(_) | AgentEvent::External(_));
+            let counted = matches!(event, AgentEvent::Inbound(_) | AgentEvent::User(_));
             if counted {
                 self.processed += 1;
             }
             let error = self.handle(event).await.err();
             if let Some(e) = &error {
                 tracing::error!("error in agent {}: {:?}", self.id, e);
-                self.emit(ParentEvent::Error(e.to_string())).await?;
+                self.emit(UiEvent::Error(e.to_string())).await?;
             }
             if counted {
                 // every delivery reports — success or handler error — so a
@@ -89,9 +89,9 @@ impl Agent {
             .entry(call_id.clone())
             .or_default()
             .push_str(&chunk);
-        drop(self.router.app_tx().try_send(AppEvent::ParentEvent(
+        drop(self.app_tx.try_send(AppEvent::Agent(
             self.id.clone(),
-            ParentEvent::ToolOutput { call_id, chunk },
+            UiEvent::ToolOutput { call_id, chunk },
         )));
     }
 

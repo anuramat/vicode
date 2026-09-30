@@ -11,20 +11,20 @@ use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
-use crate::agent::router::AgentRouter;
-use crate::agent::router::AgentRouterHandle;
 use crate::agent::router::CHANNEL_CAPACITY;
+use crate::agent::router::Router;
+use crate::agent::router::RouterState;
 use crate::agent::router::TAB_AGENT_CAP;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::llm::history::History;
 
-impl AgentRouter {
+impl RouterState {
     pub fn handle_spawn(
         &mut self,
         parent: AgentId,
-        capture: Option<History>,
+        inherited_history: Option<History>,
         prompt: String,
         done: oneshot::Sender<Result<AgentId>>,
     ) {
@@ -63,6 +63,7 @@ impl AgentRouter {
 
         let project = self.project.clone();
         let router = self.handle.clone();
+        let app_tx = self.app_tx.clone();
         let child = aid.clone();
         tokio::spawn(async move {
             // A cancelled or panicking setup also rolls back explicitly.
@@ -81,15 +82,18 @@ impl AgentRouter {
                 let base = project
                     .mint_spawn_base(&child, &parent_state.context.base, &commit)
                     .await?;
-                let assistant = project.assistants().subagent(&parent_state.assistant)?.id;
+                let assistant_id = project
+                    .assistants()
+                    .subagent(&parent_state.assistant_id)?
+                    .id;
                 // a fresh child starts like a primary agent, from its own tree
-                let history = match capture {
+                let history = match inherited_history {
                     Some(history) => history,
                     None => History::new(project.instructions(&child).await?),
                 };
                 let state = AgentState {
                     status: Default::default(),
-                    assistant,
+                    assistant_id,
                     context: AgentContext {
                         commit,
                         base,
@@ -105,6 +109,7 @@ impl AgentRouter {
                 let agent = Agent::with_mailbox(
                     project.clone(),
                     router.clone(),
+                    app_tx,
                     child.clone(),
                     state,
                     tx,
@@ -162,7 +167,7 @@ impl AgentRouter {
 /// Rolls back a cancelled or panicking spawn setup instead of leaving a
 /// provisional `Spawning` node.
 struct SpawnGuard {
-    router: AgentRouterHandle,
+    router: Router,
     aid: Option<AgentId>,
 }
 

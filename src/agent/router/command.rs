@@ -3,7 +3,7 @@ use tokio::sync::oneshot;
 
 use super::RuntimeHandle;
 use crate::agent::AgentId;
-use crate::agent::handle::ExternalEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::router::api::ListEntry;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::WaitResult;
@@ -19,7 +19,7 @@ pub enum RouterCommand {
     },
     Forward {
         aid: AgentId,
-        event: ExternalEvent,
+        event: UserCommand,
         done: oneshot::Sender<Result<()>>,
     },
     Allocate {
@@ -40,7 +40,7 @@ pub enum RouterCommand {
     },
     Spawn {
         parent: AgentId,
-        capture: Option<History>,
+        inherited_history: Option<History>,
         prompt: String,
         done: oneshot::Sender<Result<AgentId>>,
     },

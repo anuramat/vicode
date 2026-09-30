@@ -15,13 +15,14 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::core::AgentCore;
-use crate::agent::handle::AgentEvent;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::event::AgentEvent;
+use crate::agent::router::Router;
 use crate::agent::router::RuntimeHandle;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
+use crate::tui::app::AppEvent;
 
 const CHANNEL_CAPACITY: usize = 100;
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
@@ -29,19 +30,21 @@ pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; t
 impl Agent {
     pub fn new(
         project: Project,
-        router: AgentRouterHandle,
+        router: Router,
+        app_tx: Sender<AppEvent>,
         id: AgentId,
         state: AgentState,
     ) -> Self {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        Self::with_mailbox(project, router, id, state, tx, rx)
+        Self::with_mailbox(project, router, app_tx, id, state, tx, rx)
     }
 
     /// attach to a router-minted mailbox; a spawned child's seed prompt is
     /// already parked there before the runtime exists
     pub fn with_mailbox(
         project: Project,
-        router: AgentRouterHandle,
+        router: Router,
+        app_tx: Sender<AppEvent>,
         id: AgentId,
         state: AgentState,
         tx: Sender<AgentEvent>,
@@ -54,6 +57,7 @@ impl Agent {
             project,
             id,
             router,
+            app_tx,
             rx,
             user_tx,
             user_rx,
@@ -105,7 +109,13 @@ impl Agent {
             generation,
             HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(DUPLICATED_NOTE.into())),
         )?;
-        let agent = Self::new(self.project.clone(), self.router.clone(), aid, state);
+        let agent = Self::new(
+            self.project.clone(),
+            self.router.clone(),
+            self.app_tx.clone(),
+            aid,
+            state,
+        );
         agent.launch_root().await
     }
 
@@ -154,7 +164,7 @@ impl RuntimeTask {
 
 async fn supervise(
     aid: AgentId,
-    router: AgentRouterHandle,
+    router: Router,
     future: impl Future<Output = Result<()>>,
     registration: AbortRegistration,
 ) {
@@ -176,13 +186,13 @@ async fn supervise(
 impl AgentState {
     /// init a primary agent from scratch
     pub fn new(
-        assistant: String,
+        assistant_id: String,
         commit: String,
         instructions: String,
     ) -> Self {
         Self {
             status: ActivityStatus::default(),
-            assistant,
+            assistant_id,
             context: AgentContext {
                 base: commit.clone(),
                 commit,
@@ -211,7 +221,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::agent::router::AgentRouter;
+    use crate::agent::router::RouterState;
     use crate::agent::router::api::RouterError;
     use crate::agent::router::api::TurnOutcome;
     use crate::agent::router::api::WaitResult;
@@ -223,7 +233,7 @@ mod tests {
     ) -> Result<WaitResult, RouterError> {
         let project = Project::new_test().unwrap().0;
         let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(
+        let router = RouterState::start(
             app_tx,
             project,
             Default::default(),
@@ -304,8 +314,8 @@ mod tests {
     async fn try_duplicate_registers_copy_with_router() {
         let project = Project::new_test().unwrap().0;
         let (app_tx, _app_rx) = channel(8);
-        let router = AgentRouter::spawn(
-            app_tx,
+        let router = RouterState::start(
+            app_tx.clone(),
             project.clone(),
             Default::default(),
             Default::default(),
@@ -326,13 +336,19 @@ mod tests {
                 "[from: kid]\nstranded".into(),
                 1,
             ));
-        let mut parent = Agent::new(project.clone(), router.clone(), parent_aid.clone(), state);
+        let mut parent = Agent::new(
+            project.clone(),
+            router.clone(),
+            app_tx,
+            parent_aid.clone(),
+            state,
+        );
 
         let copy_aid = router.allocate_agent_id().await.unwrap();
         let (ack, ack_rx) = tokio::sync::oneshot::channel();
         parent
-            .handle(crate::agent::handle::AgentEvent::External(
-                crate::agent::handle::ExternalEvent::DuplicateRequest {
+            .handle(crate::agent::event::AgentEvent::User(
+                crate::agent::event::UserCommand::DuplicateRequest {
                     copy: copy_aid.clone(),
                     ack,
                 },

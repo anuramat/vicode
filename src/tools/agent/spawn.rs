@@ -45,7 +45,7 @@ impl Function<(), SpawnResult> for SpawnArguments {
     ) -> Result<(SpawnResult, ())> {
         let id = ctx
             .router
-            .spawn_agent(ctx.agent_id, ctx.capture, self.prompt.clone())
+            .spawn_agent(ctx.agent_id, ctx.inherited_history, self.prompt.clone())
             .await?;
         Ok((SpawnResult { id }, ()))
     }

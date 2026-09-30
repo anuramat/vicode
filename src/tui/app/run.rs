@@ -21,7 +21,7 @@ use super::App;
 use super::CHANNEL_CAPACITY;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouter;
+use crate::agent::router::RouterState;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::graph::GraphRecord;
 use crate::config::Config;
@@ -55,7 +55,7 @@ impl App<'_> {
         let boot = load_boot_agents(&store, &app_state.visible_order, &records);
         let project = Project::new(config, paths, lock, store.into_handle(), assistants);
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let router = AgentRouter::spawn(
+        let router = RouterState::start(
             tx.clone(),
             project.clone(),
             records,
@@ -220,9 +220,7 @@ fn load_boot_agents(
     let mut children: Vec<AgentId> = records
         .iter()
         .filter(|(_, record)| {
-            !record.archived
-                && record.parent.is_some()
-                && valid_roots.contains(&record.root)
+            !record.archived && record.parent.is_some() && valid_roots.contains(&record.root)
         })
         .map(|(aid, _)| aid.clone())
         .collect();
@@ -391,14 +389,8 @@ mod tests {
         let records = [
             ("good", record("good", None, false)),
             ("bad-root", record("bad-root", None, false)),
-            (
-                "bad-child",
-                record("good", Some("good"), false),
-            ),
-            (
-                "grandchild",
-                record("good", Some("bad-child"), false),
-            ),
+            ("bad-child", record("good", Some("good"), false)),
+            ("grandchild", record("good", Some("bad-child"), false)),
             (
                 "under-bad-root",
                 record("bad-root", Some("bad-root"), false),

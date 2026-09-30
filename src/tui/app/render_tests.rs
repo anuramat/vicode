@@ -4,8 +4,8 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::agent::AgentState;
 use crate::agent::ActivityStatus;
+use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;

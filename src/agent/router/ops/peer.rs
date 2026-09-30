@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use super::inbound;
 use crate::agent::AgentId;
-use crate::agent::router::AgentRouter;
+use crate::agent::router::RouterState;
 use crate::agent::router::Waiter;
 use crate::agent::router::api::ListEntry;
 use crate::agent::router::api::RouterError;
@@ -16,7 +16,7 @@ use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 
-impl AgentRouter {
+impl RouterState {
     pub fn handle_send(
         &mut self,
         caller: AgentId,

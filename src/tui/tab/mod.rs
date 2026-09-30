@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::router::AgentRouterHandle;
+use crate::agent::router::Router;
 use crate::forward;
 use crate::llm::history::History;
 use crate::llm::provider::assistant::ModelConfig;
@@ -45,7 +45,7 @@ pub fn message_views<'s>(
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    pub router: Option<AgentRouterHandle>,
+    pub router: Option<Router>,
     pub aid: AgentId,
     pub state: AgentState,
     /// assistant cached for ui
@@ -66,7 +66,7 @@ impl Tab<'_> {
     }
 
     pub fn new(
-        router: Option<AgentRouterHandle>,
+        router: Option<Router>,
         aid: AgentId,
         state: AgentState,
         project: &Project,
@@ -97,7 +97,7 @@ impl Tab<'_> {
         self.assistant_config = self
             .project
             .assistants()
-            .assistant(&self.state.assistant)
+            .assistant(&self.state.assistant_id)
             .ok()
             .map(|assistant| assistant.config);
     }
@@ -127,7 +127,7 @@ impl Tab<'_> {
         self.scroll.scroll(&views, op);
     }
 
-    pub fn router(&self) -> Result<&AgentRouterHandle> {
+    pub fn router(&self) -> Result<&Router> {
         self.router
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))

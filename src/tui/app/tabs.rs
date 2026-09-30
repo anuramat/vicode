@@ -5,7 +5,7 @@ use tracing::instrument;
 
 use crate::agent::Agent;
 use crate::agent::AgentState;
-use crate::agent::handle::ExternalEvent;
+use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
 use crate::tui::app::App;
 use crate::tui::app::AppEvent;
@@ -39,6 +39,7 @@ impl<'a> App<'a> {
             let agent = Agent::new(
                 self.project.clone(),
                 self.router.clone(),
+                self.tx.clone(),
                 aid.clone(),
                 state,
             );
@@ -85,7 +86,13 @@ impl<'a> App<'a> {
         aid: AgentId,
         state: AgentState,
     ) -> Result<()> {
-        let agent = Agent::new(self.project.clone(), self.router.clone(), aid, state);
+        let agent = Agent::new(
+            self.project.clone(),
+            self.router.clone(),
+            self.tx.clone(),
+            aid,
+            state,
+        );
         agent.launch_root().await
     }
 
@@ -134,7 +141,7 @@ impl<'a> App<'a> {
         router
             .forward(
                 original_aid,
-                ExternalEvent::DuplicateRequest { copy: aid, ack },
+                UserCommand::DuplicateRequest { copy: aid, ack },
             )
             .await?;
         Ok(())

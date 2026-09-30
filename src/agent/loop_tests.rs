@@ -9,10 +9,10 @@ use tokio::time::timeout;
 
 use crate::agent::ActivityStatus;
 use crate::agent::Agent;
-use crate::agent::handle::AgentEvent;
-use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::ParentEvent;
-use crate::agent::handle::UserPrompt;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
+use crate::agent::event::UserCommand;
+use crate::agent::event::UserPrompt;
 use crate::agent::router::RuntimeHandle;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::TurnOutcome;
@@ -164,7 +164,7 @@ fn drain_chunks(
 ) -> Vec<String> {
     let mut chunks = Vec::new();
     while let Ok(event) = app_rx.try_recv() {
-        if let AppEvent::ParentEvent(_, ParentEvent::ToolOutput { call_id: id, chunk }) = event {
+        if let AppEvent::Agent(_, UiEvent::ToolOutput { call_id: id, chunk }) = event {
             assert_eq!(id, call_id);
             chunks.push(chunk);
         }
@@ -184,14 +184,14 @@ fn todo_call(call_id: &str) -> AssistantEvent {
 }
 
 fn submit() -> AgentEvent {
-    AgentEvent::External(ExternalEvent::Submit(UserPrompt {
+    AgentEvent::User(UserCommand::Submit(UserPrompt {
         text: "hi".into(),
         generation: Some(0),
     }))
 }
 
 fn submit_text(text: &str) -> AgentEvent {
-    AgentEvent::External(ExternalEvent::Submit(UserPrompt {
+    AgentEvent::User(UserCommand::Submit(UserPrompt {
         text: text.into(),
         generation: None,
     }))
@@ -385,7 +385,7 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
     .await;
 
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Abort))
+        .handle(AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
 
@@ -536,7 +536,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
                     let _ = agent.handle(event).await.unwrap();
                 }
                 Some(app_event) = app_rx.recv() => {
-                    if let AppEvent::ParentEvent(_, ParentEvent::ToolOutput { chunk, .. }) = app_event {
+                    if let AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) = app_event {
                         chunks.push(chunk);
                     }
                 }
@@ -548,7 +548,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     assert_eq!(chunks, ["par", "tial"]);
 
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Abort))
+        .handle(AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
 
@@ -624,7 +624,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
     .expect("timed out driving turn");
 
     agent
-        .handle(AgentEvent::External(ExternalEvent::Abort))
+        .handle(AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     apply_emitted_updates(&mut mirror, &mut app_rx);
@@ -649,7 +649,7 @@ fn apply_emitted_updates(
     app_rx: &mut tokio::sync::mpsc::Receiver<AppEvent>,
 ) {
     while let Ok(event) = app_rx.try_recv() {
-        if let AppEvent::ParentEvent(_, ParentEvent::HistoryUpdate(g, u)) = event {
+        if let AppEvent::Agent(_, UiEvent::HistoryUpdate(g, u)) = event {
             mirror
                 .handle(g, u)
                 .expect("mirror rejected an emitted update (generation desync)");
@@ -845,7 +845,7 @@ async fn spawn_wait_inspect_archive_lifecycle() {
     .await
     .unwrap();
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Abort))
+        .handle(AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     fake.script_turn(vec![
@@ -899,7 +899,7 @@ async fn spawn_wait_inspect_archive_lifecycle() {
 
     // phase 3 — archive the child; it becomes unreachable
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Abort))
+        .handle(AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     fake.script_turn(vec![
@@ -1091,7 +1091,7 @@ async fn compact_failure_then_retry_compacts_history() {
     ]);
 
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Compact(1)))
+        .handle(AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
     pump_until(&mut agent, |a| {
@@ -1101,7 +1101,7 @@ async fn compact_failure_then_retry_compacts_history() {
     assert!(agent.core.history().compacting());
 
     let _ = agent
-        .handle(AgentEvent::External(ExternalEvent::Retry))
+        .handle(AgentEvent::User(UserCommand::Retry))
         .await
         .unwrap();
     pump_until(&mut agent, |a| {

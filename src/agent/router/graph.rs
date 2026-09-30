@@ -5,7 +5,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::AgentId;
-use crate::agent::handle::AgentEvent;
+use crate::agent::event::AgentEvent;
 use crate::agent::router::api::TurnOutcome;
 use crate::agent::router::api::WaitResult;
 

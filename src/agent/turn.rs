@@ -10,7 +10,7 @@ use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::message::Message;
 
-// TODO should these ResponseFailed events also coincide with ParentEvent::Error? and if so, should we emit ParentEvent::Error right here or in the HistoryEvent handler in the agent event loop?
+// TODO should these ResponseFailed events also coincide with UiEvent::Error? and if so, should we emit UiEvent::Error right here or in the HistoryEvent handler in the agent event loop?
 
 impl Agent {
     /// pump one assistant turn from the provider stream into the task sink

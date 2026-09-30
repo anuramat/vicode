@@ -20,8 +20,8 @@ use super::api::WaitResult;
 use super::graph::NodeStatus;
 use super::*;
 use crate::agent::Agent;
-use crate::agent::handle::ExternalEvent;
-use crate::agent::handle::UserPrompt;
+use crate::agent::event::UserCommand;
+use crate::agent::event::UserPrompt;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
@@ -31,34 +31,24 @@ use crate::llm::provider::api::fake::FakeApi;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-impl AgentRouter {
-    /// Construct a handle backed by dead-letter channels — for tests that
-    /// instantiate Agents without running a real router/app.
-    pub fn test_handle() -> AgentRouterHandle {
-        let (app_tx, app_rx) = channel(CHANNEL_CAPACITY);
-        std::mem::forget(app_rx);
-        Self::test_handle_with_app_tx(app_tx)
-    }
-
-    /// Like `test_handle` but caller controls the app channel so test code can
-    /// observe `ParentEvent`s emitted by the agent.
-    pub fn test_handle_with_app_tx(app_tx: Sender<AppEvent>) -> AgentRouterHandle {
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
+impl RouterState {
+    /// Construct a handle backed by a dead-letter channel — for tests that
+    /// instantiate Agents without running a real router.
+    pub fn test_handle() -> Router {
+        let (router, rx) = Self::test_handle_with_rx();
         std::mem::forget(rx);
-        AgentRouterHandle { tx, app_tx }
+        router
     }
 
     /// Like `test_handle` but caller keeps the command receiver so test code
     /// can observe forwarded events.
-    pub fn test_handle_with_rx() -> (AgentRouterHandle, Receiver<RouterCommand>) {
+    pub fn test_handle_with_rx() -> (Router, Receiver<RouterCommand>) {
         let (tx, rx) = channel(CHANNEL_CAPACITY);
-        let (app_tx, app_rx) = channel(CHANNEL_CAPACITY);
-        std::mem::forget(app_rx);
-        (AgentRouterHandle { tx, app_tx }, rx)
+        (Router { tx }, rx)
     }
 }
 
-impl AgentRouterHandle {
+impl Router {
     /// Abort the agent's live runtime; the node stays reachable and the
     /// persisted state and workdir are untouched.
     pub async fn shutdown(
@@ -88,7 +78,7 @@ impl AgentRouterHandle {
 struct Rig {
     project: Project,
     api: Arc<FakeApi>,
-    router: AgentRouterHandle,
+    router: Router,
     primary: AgentId,
     // keep the dummy primary runtime's channels open
     _rx: Receiver<AgentEvent>,
@@ -167,18 +157,23 @@ fn script_turn(
     ]);
 }
 
+/// an app bus nobody renders: drained so agent emits never block
+fn drained_app_tx() -> Sender<AppEvent> {
+    let (app_tx, mut app_rx) = channel(256);
+    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
+    app_tx
+}
+
 fn spawn_router(
     project: &Project,
     records: BTreeMap<AgentId, graph::GraphRecord>,
-) -> AgentRouterHandle {
-    let (app_tx, mut app_rx) = channel(256);
-    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
+) -> Router {
     let outcomes = records
         .keys()
         .map(|a| (a.clone(), Default::default()))
         .collect();
-    AgentRouter::spawn(
-        app_tx,
+    RouterState::start(
+        drained_app_tx(),
         project.clone(),
         records,
         Default::default(),
@@ -189,7 +184,7 @@ fn spawn_router(
 /// a primary with a workdir + saved state and a dummy (test-held) runtime
 async fn register_primary(
     project: &Project,
-    router: &AgentRouterHandle,
+    router: &Router,
     name: &str,
 ) -> (AgentId, Receiver<AgentEvent>, Receiver<AgentEvent>) {
     let aid = AgentId::from(name.to_string());
@@ -228,13 +223,19 @@ async fn register_primary(
 
 async fn start_saved_agents(
     project: &Project,
-    router: &AgentRouterHandle,
+    router: &Router,
     aids: &[AgentId],
 ) {
     let mut tasks = Vec::new();
     for aid in aids {
         let state = project.store().load_state(aid).await.unwrap();
-        let agent = Agent::new(project.clone(), router.clone(), aid.clone(), state);
+        let agent = Agent::new(
+            project.clone(),
+            router.clone(),
+            drained_app_tx(),
+            aid.clone(),
+            state,
+        );
         let (runtime, task) = agent.prepare();
         router.attach_runtime(aid.clone(), runtime).await.unwrap();
         tasks.push(task);
@@ -255,11 +256,11 @@ async fn start_saved_agents(
 #[test]
 fn free_variant_suffixes_per_name() {
     let mut taken = BTreeSet::new();
-    assert_eq!(handle::free_variant("a-b-c", &taken).to_string(), "a-b-c");
+    assert_eq!(ops::free_variant("a-b-c", &taken).to_string(), "a-b-c");
     taken.insert(AgentId::from("a-b-c".to_string()));
-    assert_eq!(handle::free_variant("a-b-c", &taken).to_string(), "a-b-c-2");
+    assert_eq!(ops::free_variant("a-b-c", &taken).to_string(), "a-b-c-2");
     taken.insert(AgentId::from("a-b-c-2".to_string()));
-    assert_eq!(handle::free_variant("a-b-c", &taken).to_string(), "a-b-c-3");
+    assert_eq!(ops::free_variant("a-b-c", &taken).to_string(), "a-b-c-3");
 }
 
 #[tokio::test]
@@ -342,7 +343,7 @@ async fn send_to_still_spawning_child_parks_in_minted_mailbox() {
         .tx
         .send(RouterCommand::Spawn {
             parent: rig.primary.clone(),
-            capture: None,
+            inherited_history: None,
             prompt: "go".into(),
             done,
         })
@@ -634,10 +635,8 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
     ]
     .into_iter()
     .collect();
-    let (app_tx, mut app_rx) = channel(256);
-    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
-    let router = AgentRouter::spawn(
-        app_tx,
+    let router = RouterState::start(
+        drained_app_tx(),
         project.clone(),
         records,
         Default::default(),
@@ -690,7 +689,7 @@ async fn runtime_death_is_terminal_until_restart() {
     );
     assert!(
         rig.router
-            .forward(child.clone(), ExternalEvent::Abort)
+            .forward(child.clone(), UserCommand::Abort)
             .await
             .is_err()
     );
@@ -881,7 +880,7 @@ async fn wait_cycle_returns_would_deadlock_and_stale_edges_prune() {
     .expect("a never started its hanging turn");
     // abort a's hanging turn: it idles with the typed failure, the cached
     // output intact
-    rig.router.forward(a, ExternalEvent::Abort).await.unwrap();
+    rig.router.forward(a, UserCommand::Abort).await.unwrap();
     assert_eq!(
         timeout(TIMEOUT, reverse).await.unwrap().unwrap(),
         Ok(WaitResult {
@@ -933,16 +932,10 @@ async fn concurrent_double_spawn_pins_both_refs_on_one_oid() {
     rig.script("one", "one");
     rig.script("two", "two");
     let (a, b) = tokio::join!(
-        rig.router.spawn_agent(
-            rig.primary.clone(),
-            None,
-            "go".into()
-        ),
-        rig.router.spawn_agent(
-            rig.primary.clone(),
-            None,
-            "go".into()
-        ),
+        rig.router
+            .spawn_agent(rig.primary.clone(), None, "go".into()),
+        rig.router
+            .spawn_agent(rig.primary.clone(), None, "go".into()),
     );
     let (a, b) = (a.unwrap(), b.unwrap());
 
@@ -964,11 +957,7 @@ async fn failed_spawn_rolls_back_node_row_record_and_workdir() {
 
     let result = rig
         .router
-        .spawn_agent(
-            rig.primary.clone(),
-            None,
-            "go".into(),
-        )
+        .spawn_agent(rig.primary.clone(), None, "go".into())
         .await;
     assert!(result.is_err());
 
@@ -992,7 +981,7 @@ async fn failed_spawn_rolls_back_node_row_record_and_workdir() {
 async fn failed_spawn_after_mint_leaves_no_base_ref() {
     let rig = Rig::new("prime").await;
     let mut state = rig.project.fake_state();
-    state.assistant = "ghost".into();
+    state.assistant_id = "ghost".into();
     rig.project
         .store()
         .save_state(&rig.primary, &state)
@@ -1001,11 +990,7 @@ async fn failed_spawn_after_mint_leaves_no_base_ref() {
 
     let result = rig
         .router
-        .spawn_agent(
-            rig.primary.clone(),
-            None,
-            "go".into(),
-        )
+        .spawn_agent(rig.primary.clone(), None, "go".into())
         .await;
     assert!(result.is_err());
 
@@ -1035,7 +1020,7 @@ async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
         .tx
         .send(RouterCommand::Spawn {
             parent: rig.primary.clone(),
-            capture: None,
+            inherited_history: None,
             prompt: "go".into(),
             done,
         })
@@ -1104,12 +1089,12 @@ async fn runtime_attachment_is_one_shot_and_forward_is_acknowledged() {
 
     // Success is returned only after the event is actually queued.
     router
-        .forward(aid.clone(), ExternalEvent::Abort)
+        .forward(aid.clone(), UserCommand::Abort)
         .await
         .unwrap();
-    assert!(router.forward(aid, ExternalEvent::Abort).await.is_err());
+    assert!(router.forward(aid, UserCommand::Abort).await.is_err());
     let event = timeout(TIMEOUT, user_rx1.recv()).await.unwrap().unwrap();
-    assert!(matches!(event, AgentEvent::External(ExternalEvent::Abort)));
+    assert!(matches!(event, AgentEvent::User(UserCommand::Abort)));
 }
 
 #[tokio::test]
@@ -1123,7 +1108,7 @@ async fn forward_to_closed_runtime_is_rejected_and_marks_dead() {
         router
             .forward(
                 aid.clone(),
-                ExternalEvent::Submit(UserPrompt {
+                UserCommand::Submit(UserPrompt {
                     text: "hello again".into(),
                     generation: None,
                 }),
@@ -1250,7 +1235,7 @@ async fn forwarded_abort_to_dead_primary_is_rejected() {
 
     assert!(
         rig.router
-            .forward(rig.primary.clone(), ExternalEvent::Abort)
+            .forward(rig.primary.clone(), UserCommand::Abort)
             .await
             .is_err()
     );
@@ -1290,14 +1275,14 @@ async fn failed_wake_fires_wait_with_typed_error() {
         .unwrap();
     // state whose assistant id is gone from the pool: `start_turn` will fail
     let mut state = project.fake_state();
-    state.assistant = "gone".into();
+    state.assistant_id = "gone".into();
     project.store().save_state(&prime, &state).await.unwrap();
     start_saved_agents(&project, &router, std::slice::from_ref(&prime)).await;
 
     router
         .forward(
             prime.clone(),
-            ExternalEvent::Submit(UserPrompt {
+            UserCommand::Submit(UserPrompt {
                 text: "hi".into(),
                 generation: None,
             }),
@@ -1380,7 +1365,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
     rig.router
         .forward(
             rig.primary.clone(),
-            ExternalEvent::Submit(UserPrompt {
+            UserCommand::Submit(UserPrompt {
                 text: "user".into(),
                 generation: None,
             }),
@@ -1388,7 +1373,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
         .await
         .unwrap();
     rig.router
-        .forward(rig.primary.clone(), ExternalEvent::Abort)
+        .forward(rig.primary.clone(), UserCommand::Abort)
         .await
         .unwrap();
     let first = timeout(TIMEOUT, rig._user_rx.recv())
@@ -1396,7 +1381,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
         .unwrap()
         .unwrap();
     assert!(
-        matches!(first, AgentEvent::External(ExternalEvent::Submit(_))),
+        matches!(first, AgentEvent::User(UserCommand::Submit(_))),
         "{first:?}"
     );
     let second = timeout(TIMEOUT, rig._user_rx.recv())
@@ -1404,7 +1389,7 @@ async fn send_burst_fills_mailbox_without_starving_user_channel() {
         .unwrap()
         .unwrap();
     assert!(
-        matches!(second, AgentEvent::External(ExternalEvent::Abort)),
+        matches!(second, AgentEvent::User(UserCommand::Abort)),
         "{second:?}"
     );
 

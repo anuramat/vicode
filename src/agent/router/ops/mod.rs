@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 
 use anyhow::Result;
 
-use super::AgentRouter;
 use super::RouterCommand;
+use super::RouterState;
 use crate::agent::AgentId;
-use crate::agent::handle::AgentEvent;
+use crate::agent::event::AgentEvent;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::api::WaitResult;
 use crate::agent::router::graph::AgentNode;
@@ -21,7 +21,7 @@ mod peer;
 mod runtime;
 mod spawn;
 
-impl AgentRouter {
+impl RouterState {
     pub fn dispatch(
         &mut self,
         cmd: RouterCommand,
@@ -43,10 +43,10 @@ impl AgentRouter {
             RouterCommand::RuntimeDown { aid, error } => self.handle_runtime_down(&aid, error),
             RouterCommand::Spawn {
                 parent,
-                capture,
+                inherited_history,
                 prompt,
                 done,
-            } => self.handle_spawn(parent, capture, prompt, done),
+            } => self.handle_spawn(parent, inherited_history, prompt, done),
             RouterCommand::Send {
                 caller,
                 target,
@@ -180,7 +180,7 @@ mod tests {
     use super::*;
     use crate::agent::router::Waiter;
 
-    impl AgentRouter {
+    impl RouterState {
         pub fn handle_shutdown(
             &mut self,
             aid: &AgentId,

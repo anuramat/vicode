@@ -1,5 +1,5 @@
 //! pure agent decision logic: no IO, no clocks, no channels, no tokio. The
-//! `Agent` (`handle.rs`) translates wire events into [`CoreEvent`]s, calls
+//! `Agent` (`shell.rs`) translates wire events into [`CoreEvent`]s, calls
 //! [`AgentCore::handle`], and interprets the produced [`Effect`]s in order.
 
 use std::sync::Arc;
@@ -8,8 +8,8 @@ use anyhow::Result;
 
 use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
-use crate::agent::handle::ParentEvent;
-use crate::agent::handle::UserPrompt;
+use crate::agent::event::UiEvent;
+use crate::agent::event::UserPrompt;
 use crate::agent::id::AgentId;
 use crate::agent::task::ledger::TaskId;
 use crate::agent::task::ledger::TaskLedger;
@@ -72,7 +72,7 @@ pub enum CoreEvent {
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum Effect {
-    Emit(ParentEvent),
+    Emit(UiEvent),
     /// marker; `Agent` serializes the core state as of this position
     Save,
     StartTurn {
@@ -93,7 +93,7 @@ pub enum Effect {
         /// `spawn` with inherited context only: the parent's live history,
         /// snapshotted at dispatch via the `inherit_history` hook
         #[cfg_attr(test, serde(skip))]
-        capture: Option<History>,
+        inherited_history: Option<History>,
     },
     AbortTasks,
     /// `Agent`: save state-with-new; on success apply + emit `AssistantSet`
@@ -219,7 +219,7 @@ impl AgentCore {
             return;
         }
         self.state.status = new_status.clone();
-        effects.push(Effect::Emit(ParentEvent::StatusUpdate(new_status)));
+        effects.push(Effect::Emit(UiEvent::StatusUpdate(new_status)));
     }
 
     pub fn idle(&self) -> Result<()> {
@@ -252,7 +252,7 @@ impl AgentCore {
                 | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
                 | HistoryUpdate::CompactResponse(AssistantEvent::Delta(_))
         );
-        effects.push(Effect::Emit(ParentEvent::HistoryUpdate(generation, event)));
+        effects.push(Effect::Emit(UiEvent::HistoryUpdate(generation, event)));
         if skip_save {
             return Ok(());
         }
@@ -280,14 +280,14 @@ impl AgentCore {
         }
         // the one capture hook: the core is the only holder of the
         // live history, so `spawn` snapshots it here, at dispatch
-        let capture = call
+        let inherited_history = call
             .task
             .inherit_history()
             .then(|| self.history().subagent());
         effects.push(Effect::RunTool {
             id: self.ledger.register(),
             call: call.clone(),
-            capture,
+            inherited_history,
         });
         Ok(())
     }
@@ -310,7 +310,7 @@ impl AgentCore {
     ) -> Result<()> {
         // stale failures still surface: emit before the ledger check
         if let Err(err) = result {
-            effects.push(Effect::Emit(ParentEvent::Error(err)));
+            effects.push(Effect::Emit(UiEvent::Error(err)));
         }
         self.task_finished(now, id, effects)
     }
@@ -518,7 +518,7 @@ impl AgentCore {
     ) -> Result<()> {
         // resolve the fallible lookup before any history/ledger mutation: a
         // stale assistant id must fail the submit, not wedge the agent busy
-        let assistant = self.assistants.assistant(&self.state.assistant)?;
+        let assistant = self.assistants.assistant(&self.state.assistant_id)?;
         let created = turn_type.wrap(AssistantEvent::Created { created_at: now });
         let generation = self.history().generation();
         let instructions = self.history().instructions().to_string();
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn submit_with_unknown_assistant_fails_without_wedging() {
         let mut core = AgentCore::fake();
-        core.state.assistant = "gone".into();
+        core.state.assistant_id = "gone".into();
         let (result, effects) = drive(&mut core, 7, submit("hi", 0));
         similar_asserts::assert_eq!(
             result.unwrap_err().to_string(),
@@ -760,7 +760,7 @@ mod tests {
         drive(&mut core, 8, CoreEvent::SetAssistant("test".into()))
             .0
             .unwrap();
-        core.state.assistant = "test".into();
+        core.state.assistant_id = "test".into();
         drive(&mut core, 9, submit("retry", 1)).0.unwrap();
         similar_asserts::assert_eq!(
             core.derive_status(),
@@ -965,7 +965,7 @@ mod tests {
         - Normal: InProgress
         - []
         ");
-        assert_eq!(core.state.assistant, "test");
+        assert_eq!(core.state.assistant_id, "test");
     }
 
     #[test]
@@ -976,7 +976,7 @@ mod tests {
         - - SetAssistant: test2
         ");
         // core state untouched: `Agent` applies it after the save succeeds
-        assert_eq!(core.state.assistant, "test");
+        assert_eq!(core.state.assistant_id, "test");
     }
 
     #[test]
@@ -1476,7 +1476,9 @@ mod tests {
             effects
                 .into_iter()
                 .find_map(|e| match e {
-                    Effect::RunTool { capture, .. } => Some(capture),
+                    Effect::RunTool {
+                        inherited_history, ..
+                    } => Some(inherited_history),
                     _ => None,
                 })
                 .expect("no RunTool effect")
@@ -1500,15 +1502,15 @@ mod tests {
         };
 
         // inherit=true: the parent's conversation, snapshotted at dispatch
-        let capture = capture_of(&mut core, spawn_item("call-1", true)).unwrap();
+        let captured = capture_of(&mut core, spawn_item("call-1", true)).unwrap();
         assert!(
-            capture
+            captured
                 .state()
                 .messages
                 .iter()
                 .any(|m| matches!(m, Message::User(u) if u.text == "hi"))
         );
-        assert_eq!(capture.generation(), 0);
+        assert_eq!(captured.generation(), 0);
         // inherit=false: nothing to capture, the child starts fresh
         assert!(capture_of(&mut core, spawn_item("call-2", false)).is_none());
         // non-spawn tools carry no capture

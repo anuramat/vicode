@@ -5,11 +5,11 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use crate::agent::AgentId;
-use crate::agent::router::AgentRouter;
+use crate::agent::router::RouterState;
 use crate::agent::router::api::RouterError;
 use crate::agent::router::graph::GraphRecord;
 
-impl AgentRouter {
+impl RouterState {
     pub fn handle_archive(
         &mut self,
         caller: AgentId,
