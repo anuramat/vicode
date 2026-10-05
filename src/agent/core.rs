@@ -44,27 +44,19 @@ pub struct AgentCore {
     pub tools: ToolRegistry,
     pub assistants: Arc<AssistantPool>,
     pub compact: CompactConfig,
-    /// a summary that landed mid-turn, applied at the turn boundary
     pub compaction: Option<Compaction>,
     /// a turn is due: a message arrived, or the last turn asked for a
     /// follow-up; outlives `handle` only while a turn is in flight, or while
     /// held back by the hard limit, waiting for the summary
     pub wants_turn: bool,
-    /// pushed by the step in progress, handed over by `handle` and `resume`
-    /// even when the step fails: changes already made must still reach the
-    /// `Agent`
     effects: Vec<Effect>,
 }
 
-/// fat effects: all decision-time state is captured at push time, so the
-/// `Agent` interprets them blindly and strictly in order
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum Effect {
     Ui(UiEvent),
-    /// the derived status changed: `Agent` reports it to the router and the UI
     Status(ActivityStatus),
-    /// marker; `Agent` serializes the core state as of this position
     Save,
     StartTurn {
         id: TaskId,
@@ -76,7 +68,6 @@ pub enum Effect {
         #[cfg_attr(test, serde(skip))]
         messages: Vec<Message>,
     },
-    /// a tool-less request whose text output is the summary
     Summarize {
         id: TaskId,
         assistant: Assistant,
@@ -87,17 +78,11 @@ pub enum Effect {
     RunTool {
         id: TaskId,
         call: ToolCallItem,
-        /// `spawn` with inherited context only: the parent's live history,
-        /// snapshotted at dispatch via the `inherit_history` hook
         #[cfg_attr(test, serde(skip))]
         inherited_history: Option<History>,
     },
-    /// cancel every task future; the core already resolved them
     AbortTasks,
-    /// `Agent`: save state-with-new; on success apply + emit `AssistantSet`
     SetAssistant(String),
-    /// `Agent`: clone into a new root; a failure comes back to the UI as
-    /// `DuplicateFailed`
     Duplicate(AgentId),
 }
 
