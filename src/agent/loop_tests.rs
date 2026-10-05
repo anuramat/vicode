@@ -31,6 +31,7 @@ use crate::tools::todo::TodoArguments;
 use crate::tools::todo::TodoCall;
 use crate::tui::app::AppEvent;
 use crate::tui::widgets::container::element::Element;
+use crate::utils::now;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -155,7 +156,7 @@ fn stream_call(
 
 /// tool-output chunks forwarded to the app so far, asserting the call tag
 fn drain_chunks(
-    app_rx: &mut tokio::sync::mpsc::Receiver<AppEvent>,
+    app_rx: &mut UnboundedReceiver<AppEvent>,
     call_id: &str,
 ) -> Vec<String> {
     let mut chunks = Vec::new();
@@ -199,7 +200,6 @@ fn slot_output(
     call_id: &str,
 ) -> Option<String> {
     agent
-        .core
         .history()
         .state()
         .iter()
@@ -228,7 +228,7 @@ async fn pump_until(
     timeout(TIMEOUT, async {
         while !pred(agent) {
             let event = agent.next_event(mail).await.unwrap();
-            let _ = agent.handle(event).await.unwrap();
+            let _ = agent.handle(now(), event).await.unwrap();
         }
     })
     .await
@@ -263,13 +263,13 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
         AssistantEvent::Completed { ended_at: 6 },
     ]);
 
-    let _ = agent.handle(submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
+    let _ = agent.handle(now(), submit()).await.unwrap();
+    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
-    assert_eq!(agent.core.state.status, ActivityStatus::default());
+    assert_eq!(agent.state.status, ActivityStatus::default());
     // second request must carry the executed tool call back to the assistant
     assert_eq!(fake.requests().len(), 2);
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -330,10 +330,9 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
     let mut mail = register(&agent);
     fake.script_hanging_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
-    let _ = agent.handle(submit()).await.unwrap();
+    let _ = agent.handle(now(), submit()).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| {
-        a.core
-            .history()
+        a.history()
             .state()
             .last()
             .and_then(|m| m.try_as_assistant_ref())
@@ -342,16 +341,16 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
     .await;
 
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Abort))
+        .handle(now(), AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
 
     assert!(matches!(
-        &agent.core.state.status,
+        &agent.state.status,
         ActivityStatus { turn: TurnStatus::Failed(msg), compacting: false } if msg == "aborted by user"
     ));
-    assert!(agent.core.ledger.idle());
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    assert!(agent.ledger.idle());
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -390,13 +389,13 @@ async fn tool_output_streams_to_app_and_terminal_item_resolves() {
         AssistantEvent::Completed { ended_at: 6 },
     ]);
 
-    let _ = agent.handle(submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
+    let _ = agent.handle(now(), submit()).await.unwrap();
+    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
     // every chunk reached the app in order, tagged by call id
     assert_eq!(drain_chunks(&mut app_rx, "call-1"), ["a", "b"]);
     // history holds the one terminal item — chunks never became messages
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -453,20 +452,20 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
 
-    let _ = agent.handle(submit()).await.unwrap();
+    let _ = agent.handle(now(), submit()).await.unwrap();
     // pump until the turn completed and both chunks reached the app — the
     // tool itself hangs forever
     let mut chunks = Vec::new();
     timeout(TIMEOUT, async {
         while !(chunks.len() == 2
             && matches!(
-                agent.core.history().state().status(),
+                agent.history().state().status(),
                 Some(AssistantStatus::Success)
             ))
         {
             tokio::select! {
                 Some(event) = agent.next_event(&mut mail) => {
-                    let _ = agent.handle(event).await.unwrap();
+                    let _ = agent.handle(now(), event).await.unwrap();
                 }
                 Some(app_event) = app_rx.recv() => {
                     if let AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) = app_event {
@@ -481,15 +480,15 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     assert_eq!(chunks, ["par", "tial"]);
 
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Abort))
+        .handle(now(), AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
 
     // abort returned with the call already finalized: partial output kept,
     // marked aborted, ledger unstuck
-    assert!(agent.core.ledger.idle());
-    assert_eq!(agent.core.state.status, ActivityStatus::default());
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    assert!(agent.ledger.idle());
+    assert_eq!(agent.state.status, ActivityStatus::default());
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
       token_count: 1
@@ -529,31 +528,31 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
 async fn abort_emits_updates_a_mirror_accepts() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-abort-mirror").await;
     let mut mail = register(&agent);
-    let mut mirror = agent.core.history().clone();
+    let mut mirror = agent.history().clone();
     fake.script_turn(vec![
         stream_call("call-1", &["par", "tial"], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
 
-    agent.handle(submit()).await.unwrap();
+    agent.handle(now(), submit()).await.unwrap();
     timeout(TIMEOUT, async {
         loop {
             apply_emitted_updates(&mut mirror, &mut app_rx);
             if matches!(
-                agent.core.history().state().status(),
+                agent.history().state().status(),
                 Some(AssistantStatus::Success)
             ) {
                 break;
             }
             let event = agent.next_event(&mut mail).await.unwrap();
-            agent.handle(event).await.unwrap();
+            agent.handle(now(), event).await.unwrap();
         }
     })
     .await
     .expect("timed out driving turn");
 
     agent
-        .handle(AgentEvent::User(UserCommand::Abort))
+        .handle(now(), AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     apply_emitted_updates(&mut mirror, &mut app_rx);
@@ -562,7 +561,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
     // proof the finalization landed at a generation the mirror already knew
     assert_eq!(
         slot_in_history(&mirror, "call-1"),
-        slot_in_history(agent.core.history(), "call-1"),
+        slot_in_history(agent.history(), "call-1"),
     );
     assert!(
         slot_in_history(&mirror, "call-1")
@@ -575,7 +574,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
 /// emission order; a rejected update is a generation desync
 fn apply_emitted_updates(
     mirror: &mut crate::llm::history::History,
-    app_rx: &mut tokio::sync::mpsc::Receiver<AppEvent>,
+    app_rx: &mut UnboundedReceiver<AppEvent>,
 ) {
     while let Ok(event) = app_rx.try_recv() {
         if let AppEvent::Agent(_, UiEvent::HistoryUpdate(g, u)) = event {
@@ -615,13 +614,12 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
         AssistantEvent::Completed { ended_at: 6 },
     ]);
 
-    let _ = agent.handle(submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
+    let _ = agent.handle(now(), submit()).await.unwrap();
+    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
     // exactly one resolution: the slot failed with the partial output, the
     // ledger unstuck, and the follow-up turn ran on the error
     let last = agent
-        .core
         .history()
         .state()
         .last()
@@ -631,7 +629,6 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
     similar_asserts::assert_eq!(last.text_output(), "recovered");
     assert_eq!(fake.requests().len(), 2);
     let failed_slot = agent
-        .core
         .history()
         .state()
         .iter()
@@ -657,13 +654,12 @@ async fn panicking_turn_finalizes_the_history_turn() {
     let mut mail = register(&agent);
     fake.script_panicking_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
-    agent.handle(submit()).await.unwrap();
+    agent.handle(now(), submit()).await.unwrap();
     // drive to the turn's terminal; the ledger unsticks either way, but the
     // turn's Done must also mark the history turn Error
-    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
+    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
     let assistants: Vec<_> = agent
-        .core
         .history()
         .state()
         .iter()
@@ -688,7 +684,7 @@ async fn panicking_turn_finalizes_the_history_turn() {
 async fn checkout(agent: &Agent) -> std::path::PathBuf {
     agent
         .project
-        .new_agent_workdir(&agent.core.state.context.commit, &agent.id)
+        .new_agent_workdir(&agent.state.context.commit, &agent.id)
         .await
         .unwrap();
     agent.project.agent_workdir(&agent.id)
@@ -773,14 +769,14 @@ async fn spawn_commit_list_archive_lifecycle() {
         delta("kid-out", "the magic word is plum", 2),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(submit()).await.unwrap();
+    let _ = agent.handle(now(), submit()).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| {
         slot_output(a, "call-1").is_some()
     })
     .await;
     let spawned = spawn_result(&agent, "call-1");
     let child = spawned.id;
-    similar_asserts::assert_eq!(spawned.commit, agent.core.state.context.commit);
+    similar_asserts::assert_eq!(spawned.commit, agent.state.context.commit);
 
     agent
         .router
@@ -812,7 +808,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         .to_string();
     similar_asserts::assert_eq!(seen, work);
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Abort))
+        .handle(now(), AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     fake.script_turn(vec![
@@ -827,7 +823,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-2", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(submit_text("collect")).await.unwrap();
+    let _ = agent.handle(now(), submit_text("collect")).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| {
         slot_output(a, "call-3").is_some()
     })
@@ -840,7 +836,7 @@ async fn spawn_commit_list_archive_lifecycle() {
 
     // phase 3 — archive the child; it becomes unreachable
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Abort))
+        .handle(now(), AgentEvent::User(UserCommand::Abort))
         .await
         .unwrap();
     fake.script_turn(vec![
@@ -855,7 +851,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-3", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(submit_text("cleanup")).await.unwrap();
+    let _ = agent.handle(now(), submit_text("cleanup")).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| {
         slot_output(a, "call-4").is_some()
     })
@@ -900,7 +896,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent
-        .handle(submit_text("the marker is PRE-SPAWN"))
+        .handle(now(), submit_text("the marker is PRE-SPAWN"))
         .await
         .unwrap();
     pump_until(&mut agent, &mut mail, |a| {
@@ -959,7 +955,10 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
         delta("kid-out", "done", 2),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(submit_text("PARENT-ONLY")).await.unwrap();
+    let _ = agent
+        .handle(now(), submit_text("PARENT-ONLY"))
+        .await
+        .unwrap();
     pump_until(&mut agent, &mut mail, |a| {
         slot_output(a, "call-1").is_some()
     })
@@ -968,7 +967,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
     similar_asserts::assert_eq!(spawned.commit, marked);
     agent.router.idle_with_output(&spawned.id, "done").await;
 
-    assert!(!agent.core.history().instructions().contains("FRESH-MARKER"));
+    assert!(!agent.history().instructions().contains("FRESH-MARKER"));
     let state = agent.project.store().load_state(&spawned.id).await.unwrap();
     let history = &state.context.history;
     assert!(history.instructions().contains("FRESH-MARKER"));
@@ -983,7 +982,6 @@ async fn compaction_runs_alongside_tool_loop() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-compact").await;
     let mut mail = register(&agent);
     agent
-        .core
         .history_mut()
         .handle(
             0,
@@ -1006,14 +1004,14 @@ async fn compaction_runs_alongside_tool_loop() {
         AssistantEvent::Completed { ended_at: 6 },
     ]);
 
-    let _ = agent.handle(submit()).await.unwrap();
+    let _ = agent.handle(now(), submit()).await.unwrap();
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Compact(1)))
+        .handle(now(), AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    assert!(agent.core.ledger.in_turn() && agent.core.ledger.compacting());
+    assert!(agent.ledger.in_turn() && agent.ledger.compacting());
     pump_until(&mut agent, &mut mail, |a| {
-        a.core.ledger.idle() && !a.core.derive_status().compacting
+        a.ledger.idle() && !a.derive_status().compacting
     })
     .await;
 
@@ -1028,7 +1026,7 @@ async fn compaction_runs_alongside_tool_loop() {
       token_count: 35
       created_at: "[ts]"
     "#);
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: developer
       Compact:
         text: a concise summary
@@ -1088,7 +1086,6 @@ async fn failed_compaction_keeps_history() {
     let mut mail = register(&agent);
     for text in ["first", "second"] {
         agent
-            .core
             .history_mut()
             .handle(
                 0,
@@ -1102,13 +1099,13 @@ async fn failed_compaction_keeps_history() {
     }]);
 
     let _ = agent
-        .handle(AgentEvent::User(UserCommand::Compact(1)))
+        .handle(now(), AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
+    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
-    assert_eq!(agent.core.state.status, ActivityStatus::default());
-    assert_eq!(agent.core.history().state().messages.len(), 2);
+    assert_eq!(agent.state.status, ActivityStatus::default());
+    assert_eq!(agent.history().state().messages.len(), 2);
     let mut errors = Vec::new();
     while let Ok(AppEvent::Agent(_, event)) = parent_rx.try_recv() {
         if let UiEvent::Error(error) = event {

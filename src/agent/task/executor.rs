@@ -7,9 +7,19 @@ use tokio::task::JoinSet;
 use crate::agent::event::TaskResult;
 use crate::agent::task::ledger::TaskId;
 
-#[derive(Debug, Default)]
-pub struct TaskExecutor {
-    tasks: JoinSet<(TaskId, TaskResult)>,
+#[derive(Debug)]
+pub enum TaskExecutor {
+    Live(JoinSet<(TaskId, TaskResult)>),
+    /// records each task as (id, kind) and drops it unrun: the test feeds
+    /// the task's events by hand
+    #[cfg(test)]
+    Held(Vec<(TaskId, &'static str)>),
+}
+
+impl Default for TaskExecutor {
+    fn default() -> Self {
+        Self::Live(JoinSet::new())
+    }
 }
 
 impl TaskExecutor {
@@ -20,27 +30,42 @@ impl TaskExecutor {
         kind: &'static str,
         task: impl Future<Output = TaskResult> + Send + 'static,
     ) {
-        self.tasks.spawn(async move {
-            let result = AssertUnwindSafe(task)
-                .catch_unwind()
-                .await
-                .unwrap_or_else(|panic| {
-                    Err(format!("{kind} panicked: {}", panic_message(&*panic)))
+        match self {
+            Self::Live(tasks) => {
+                tasks.spawn(async move {
+                    let result =
+                        AssertUnwindSafe(task)
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|panic| {
+                                Err(format!("{kind} panicked: {}", panic_message(&*panic)))
+                            });
+                    (id, result)
                 });
-            (id, result)
-        });
+            }
+            #[cfg(test)]
+            Self::Held(held) => held.push((id, kind)),
+        }
     }
 
     pub async fn reap(&mut self) -> Option<(TaskId, TaskResult)> {
-        loop {
-            if let Ok(done) = self.tasks.join_next().await? {
-                return Some(done);
-            }
+        match self {
+            Self::Live(tasks) => loop {
+                if let Ok(done) = tasks.join_next().await? {
+                    return Some(done);
+                }
+            },
+            #[cfg(test)]
+            Self::Held(_) => None,
         }
     }
 
     pub fn abort_all(&mut self) {
-        self.tasks.abort_all();
+        match self {
+            Self::Live(tasks) => tasks.abort_all(),
+            #[cfg(test)]
+            Self::Held(_) => {}
+        }
     }
 }
 

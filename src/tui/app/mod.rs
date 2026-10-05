@@ -10,8 +10,8 @@ use crossterm::event::KeyEvent;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Duration;
 use tokio::time::Instant;
 
@@ -62,8 +62,8 @@ pub struct App<'a> {
     pub project: Project,
     pub should_exit: bool,
 
-    pub rx: Receiver<AppEvent>,
-    pub tx: Sender<AppEvent>,
+    pub rx: UnboundedReceiver<AppEvent>,
+    pub tx: UnboundedSender<AppEvent>,
     pub router: Router,
 
     /// hide tool calls, etc
@@ -87,15 +87,14 @@ pub struct AppState {
     pub visible_order: Vec<AgentId>,
 }
 
-const CHANNEL_CAPACITY: usize = 100;
 // TODO make configurable
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(1);
 
 impl App<'_> {
     fn with_router(
         project: Project,
-        tx: Sender<AppEvent>,
-        rx: Receiver<AppEvent>,
+        tx: UnboundedSender<AppEvent>,
+        rx: UnboundedReceiver<AppEvent>,
         router: Router,
     ) -> Self {
         let project_name = project.name();
@@ -145,7 +144,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
 
-    use tokio::sync::mpsc::channel;
+    use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
     use crate::agent::router::RouterState;
@@ -158,7 +157,7 @@ mod tests {
             records: BTreeMap<AgentId, GraphRecord>,
         ) -> Self {
             // TODO figure out what should stay here, and what belongs to run()/launch()
-            let (tx, rx) = channel(CHANNEL_CAPACITY);
+            let (tx, rx) = unbounded_channel();
             let restored = records.keys().map(|a| (a.clone(), None)).collect();
             let router =
                 RouterState::start(tx.clone(), project.clone(), records, state_ids, restored);

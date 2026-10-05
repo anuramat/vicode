@@ -12,13 +12,12 @@ use crossterm::execute;
 use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
-use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use super::App;
-use super::CHANNEL_CAPACITY;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::agent::router::RouterState;
@@ -53,7 +52,7 @@ impl App<'_> {
         let records = store.load_graph()?;
         let boot = load_boot_agents(&store, &app_state.visible_order, &records);
         let project = Project::new(config, paths, lock, store.into_handle(), assistants);
-        let (tx, rx) = channel(CHANNEL_CAPACITY);
+        let (tx, rx) = unbounded_channel();
         let router = RouterState::start(
             tx.clone(),
             project.clone(),
@@ -178,7 +177,7 @@ impl App<'_> {
                     Event::Paste(content) => tx.send(AppEvent::Paste(content)),
                     _ => continue,
                 };
-                e.await?;
+                e?;
             }
             Ok::<(), anyhow::Error>(())
         });

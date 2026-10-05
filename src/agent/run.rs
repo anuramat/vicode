@@ -5,6 +5,7 @@ use crate::agent::Agent;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::llm::history::message::UserMessage;
+use crate::utils::now;
 
 impl Agent {
     /// the runtime: `mail` is the node's mailbox, handed over by `launch`
@@ -16,7 +17,7 @@ impl Agent {
             Ok(()) => Ok(()),
             Err(e) => {
                 tracing::error!("fatal error in agent {}: {:?}", self.id, e);
-                drop(self.emit(UiEvent::Error(e.to_string())).await);
+                self.emit(UiEvent::Error(e.to_string()));
                 Err(e)
             }
         }
@@ -27,23 +28,22 @@ impl Agent {
         mail: &mut UnboundedReceiver<UserMessage>,
     ) -> Result<()> {
         self.project
-            .mount_agent(&self.core.state.context.commit, &self.id)
+            .mount_agent(&self.state.context.commit, &self.id)
             .await?;
         self.emit(UiEvent::Started {
-            state: Box::new(self.core.state.clone()),
+            state: Box::new(self.state.clone()),
             control: self.user_tx.clone(),
-        })
-        .await?;
+        });
         // flush the saved buffer (a spawn seed, or messages buffered
         // before a restart) and start its turn, so the agent doesn't sit on
         // unread mail
-        self.resume().await?;
+        self.resume(now()).await?;
         // the node leaves `Spawning`: the workdir is mounted, the state live
         self.report_status();
         while let Some(event) = self.next_event(mail).await {
-            if let Err(e) = self.handle(event).await {
+            if let Err(e) = self.handle(now(), event).await {
                 tracing::error!("error in agent {}: {:?}", self.id, e);
-                self.emit(UiEvent::Error(e.to_string())).await?;
+                self.emit(UiEvent::Error(e.to_string()));
             }
         }
         Ok(())

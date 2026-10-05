@@ -179,46 +179,6 @@ mod tests {
         assert_eq!(app.tabs.len(), 1);
     }
 
-    /// the app loop is the sole receiver of its own channel — handlers
-    /// must complete even when that channel is saturated by agent emits
-    #[tokio::test]
-    async fn parent_event_handlers_never_block_on_a_full_app_channel() {
-        let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
-        let aid = AgentId::from(format!("full-chan-{}", uuid::Uuid::new_v4()));
-        let workdir = project.agent_workdir(&aid);
-        std::fs::create_dir_all(&workdir).unwrap();
-        Repository::init(&workdir).unwrap();
-        let tab = Tab::new(
-            Some(tokio::sync::mpsc::unbounded_channel().0),
-            aid.clone(),
-            AgentState::fake(),
-            &project,
-        );
-        app.tabs.insert(aid.clone(), tab);
-        app.rebuild_tablist();
-        while app.tx.try_send(AppEvent::Redraw).is_ok() {}
-
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            app.handle_agent_event(
-                aid.clone(),
-                UiEvent::StatusUpdate(crate::agent::ActivityStatus {
-                    turn: crate::llm::history::TurnStatus::InProgress,
-                    compacting: false,
-                }),
-            )
-            .await
-            .unwrap();
-            app.handle_agent_event(aid.clone(), UiEvent::AssistantSet("test".into()))
-                .await
-                .unwrap();
-        })
-        .await
-        .expect("handler blocked on the full app channel");
-
-        std::fs::remove_dir_all(project.agent(&aid)).ok();
-    }
-
     #[tokio::test]
     async fn tool_output_streams_into_tab_live_buffer() {
         let project = crate::project::Project::new_test().unwrap().0;

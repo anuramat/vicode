@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -8,9 +8,10 @@ use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
-use crate::agent::core::AgentCore;
+use crate::agent::handle::LOST_ON_RESTART;
 use crate::agent::router::Router;
 use crate::agent::task::executor::TaskExecutor;
+use crate::agent::task::ledger::TaskLedger;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
@@ -24,20 +25,26 @@ impl Agent {
     pub fn new(
         project: Project,
         router: Router,
-        app_tx: Sender<AppEvent>,
+        app_tx: UnboundedSender<AppEvent>,
         id: AgentId,
-        state: AgentState,
+        mut state: AgentState,
     ) -> Self {
+        // restore repair: a dangling function_call in history would 400
+        // every later turn
+        state
+            .context
+            .history
+            .fail_unresolved_tool_calls(LOST_ON_RESTART);
         let (user_tx, user_rx) = unbounded_channel();
         let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
         Self {
-            core: AgentCore::new(
-                state,
-                project.assistants().clone(),
-                project.config().compact,
-            ),
             project,
             id,
+            state,
+            ledger: TaskLedger::default(),
+            compaction: None,
+            wants_turn: false,
+            dirty: false,
             router,
             app_tx,
             user_tx,
@@ -49,17 +56,19 @@ impl Agent {
     }
 
     pub async fn save(&self) -> Result<()> {
-        self.core.state.save(&self.project, &self.id).await
+        self.state.save(&self.project, &self.id).await
     }
 
+    /// clone an idle agent into a new root under `aid`
     pub async fn try_duplicate(
         &self,
         aid: AgentId,
     ) -> Result<()> {
+        self.idle()?;
         self.project
-            .duplicate_agent_workdir(&self.id, &aid, &self.core.state.context.commit)
+            .duplicate_agent_workdir(&self.id, &aid, &self.state.context.commit)
             .await?;
-        let mut state = self.core.state.clone();
+        let mut state = self.state.clone();
         state.pending_messages.clear();
         let generation = state.context.history.generation();
         state.context.history.handle(
@@ -122,15 +131,13 @@ impl AgentState {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc::channel;
-
     use super::*;
     use crate::agent::router::RouterState;
 
     #[tokio::test]
     async fn try_duplicate_registers_copy_with_router() {
         let project = Project::new_test().unwrap().0;
-        let (app_tx, mut app_rx) = channel(8);
+        let (app_tx, mut app_rx) = unbounded_channel();
         let router = RouterState::start(
             app_tx.clone(),
             project.clone(),
@@ -162,9 +169,12 @@ mod tests {
 
         let copy_aid = router.allocate_agent_id();
         parent
-            .handle(crate::agent::event::AgentEvent::User(
-                crate::agent::event::UserCommand::Duplicate(copy_aid.clone()),
-            ))
+            .handle(
+                0,
+                crate::agent::event::AgentEvent::User(crate::agent::event::UserCommand::Duplicate(
+                    copy_aid.clone(),
+                )),
+            )
             .await
             .unwrap();
         // the copy registered in-handler: nothing reported a failure

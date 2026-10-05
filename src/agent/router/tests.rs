@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::future::AbortHandle;
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::timeout;
 
 use super::api::RouterError;
@@ -185,20 +185,13 @@ fn script_turn(
     ]);
 }
 
-/// an app bus nobody renders: drained so agent emits never block
-fn drained_app_tx() -> Sender<AppEvent> {
-    let (app_tx, mut app_rx) = channel(256);
-    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
-    app_tx
-}
-
 fn spawn_router(
     project: &Project,
     records: BTreeMap<AgentId, graph::GraphRecord>,
 ) -> Router {
     let restored = records.keys().map(|a| (a.clone(), None)).collect();
     RouterState::start(
-        drained_app_tx(),
+        unbounded_channel().0,
         project.clone(),
         records,
         Default::default(),
@@ -237,7 +230,7 @@ async fn start_saved_agents(
         let agent = Agent::new(
             project.clone(),
             router.clone(),
-            drained_app_tx(),
+            unbounded_channel().0,
             aid.clone(),
             state,
         );
@@ -511,7 +504,7 @@ async fn invalid_child_is_dead_while_valid_descendant_starts() {
     .into_iter()
     .collect();
     let router = RouterState::start(
-        drained_app_tx(),
+        unbounded_channel().0,
         project.clone(),
         records,
         Default::default(),
@@ -851,7 +844,7 @@ async fn supervised(
     cancel: bool,
 ) -> Result<(), RouterError> {
     let project = Project::new_test().unwrap().0;
-    let (app_tx, _app_rx) = channel(8);
+    let (app_tx, _app_rx) = unbounded_channel();
     let router = RouterState::start(
         app_tx,
         project,

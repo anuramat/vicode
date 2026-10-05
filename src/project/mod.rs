@@ -258,6 +258,10 @@ mod tests {
 
         /// fake state anchored to the test repo's HEAD — worktree creation
         /// needs a real commit
+        pub fn config_mut(&mut self) -> &mut Config {
+            &mut self.config
+        }
+
         pub fn fake_state(&self) -> AgentState {
             let mut state = AgentState::fake();
             state.context.commit = self.head_commit();

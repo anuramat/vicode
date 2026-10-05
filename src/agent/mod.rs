@@ -1,12 +1,10 @@
-pub mod core;
 pub mod event;
+pub mod handle;
 pub mod id;
 pub mod init;
 mod loop_tests;
-mod purity_tests;
 pub mod router;
 pub mod run;
-pub mod shell;
 pub mod task;
 pub mod tool;
 pub mod turn;
@@ -20,12 +18,14 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::agent::core::AgentCore;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::router::Router;
 use crate::agent::task::executor::TaskExecutor;
+use crate::agent::task::ledger::TaskLedger;
+use crate::forward;
+use crate::llm::history::Compaction;
 use crate::llm::history::History;
 use crate::llm::history::TurnStatus;
 use crate::llm::provider::assistant::Assistant;
@@ -37,15 +37,25 @@ pub struct Agent {
     pub id: AgentId,
     pub project: Project,
 
-    pub core: AgentCore,
+    pub state: AgentState,
+    pub ledger: TaskLedger,
+    /// a summary that landed mid-turn, applied at the turn boundary
+    pub compaction: Option<Compaction>,
+    /// a turn is due: a message arrived, or the last turn asked for a
+    /// follow-up; outlives `handle` only while a turn is in flight, or while
+    /// held back by the hard limit, waiting for the summary
+    pub wants_turn: bool,
+    /// the step in progress changed the persisted state: saved once at the
+    /// end of the step, even when it fails
+    dirty: bool,
     /// router handle for reaching other agents
     pub router: Router,
     /// history/status/output updates for rendering
-    pub app_tx: Sender<AppEvent>,
+    pub app_tx: UnboundedSender<AppEvent>,
     /// ui actions
     pub user_tx: UnboundedSender<UserCommand>,
     pub user_rx: UnboundedReceiver<UserCommand>,
-    /// runs the core's task effects on tokio tasks
+    /// runs turns, tool calls and summaries on tokio tasks
     pub executor: TaskExecutor,
     /// turn streams and tool calls
     pub task_tx: Sender<AgentEvent>,
@@ -95,14 +105,16 @@ pub struct AgentContext {
 }
 
 impl Agent {
-    pub async fn emit(
+    forward! {
+        history: History = self.state.context.history;
+    }
+
+    /// a closed app bus means the app is shutting down: nothing to report to
+    pub fn emit(
         &self,
         event: UiEvent,
-    ) -> anyhow::Result<()> {
-        self.app_tx
-            .send(AppEvent::Agent(self.id.clone(), event))
-            .await?;
-        Ok(())
+    ) {
+        drop(self.app_tx.send(AppEvent::Agent(self.id.clone(), event)));
     }
 }
 
@@ -125,15 +137,15 @@ mod tests {
 
     impl Agent {
         /// agent on a fresh test project with a real router (so status reports
-        /// land in a live graph), on the pool's scripted api; keep the
-        /// receiver alive so `emit` doesn't fail on a closed app channel
-        pub async fn fake(name: &str) -> (Self, Arc<FakeApi>, Receiver<AppEvent>) {
+        /// land in a live graph), on the pool's scripted api; the receiver
+        /// gets the agent's UI events
+        pub async fn fake(name: &str) -> (Self, Arc<FakeApi>, UnboundedReceiver<AppEvent>) {
             let (project, api) = Project::new_test().unwrap();
             let aid = AgentId::from(format!("{name}-{}", uuid::Uuid::new_v4()));
             tokio::fs::create_dir_all(project.agent(&aid))
                 .await
                 .unwrap();
-            let (app_tx, app_rx) = tokio::sync::mpsc::channel(256);
+            let (app_tx, app_rx) = tokio::sync::mpsc::unbounded_channel();
             let router = router::RouterState::start(
                 app_tx.clone(),
                 project.clone(),

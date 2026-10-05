@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::AgentId;
 use crate::agent::router::graph::AgentNode;
@@ -29,7 +29,7 @@ pub const TAB_AGENT_CAP: usize = 32;
 pub struct RouterState {
     pub project: Project,
     /// handed to every agent the router spawns
-    pub app_tx: Sender<AppEvent>,
+    pub app_tx: UnboundedSender<AppEvent>,
 
     /// only live agents
     pub graph: HashMap<AgentId, AgentNode>,
@@ -44,7 +44,7 @@ impl RouterState {
     /// `restored`: the boot-loaded agents to put in the graph — `None` to
     /// be launched, `Some(error)` if unloadable (a terminal `Dead` node)
     pub fn start(
-        app_tx: Sender<AppEvent>,
+        app_tx: UnboundedSender<AppEvent>,
         project: Project,
         records: BTreeMap<AgentId, GraphRecord>,
         state_ids: BTreeSet<AgentId>,

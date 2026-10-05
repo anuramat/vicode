@@ -7,7 +7,7 @@ use crate::llm::history::HistoryGeneration;
 #[cfg_attr(test, derive(serde::Serialize))]
 pub struct TaskId(u64);
 
-/// what the core knows about an in-flight task
+/// what the agent knows about an in-flight task
 #[derive(Debug)]
 pub enum Task {
     Turn {
