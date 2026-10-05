@@ -55,6 +55,9 @@ enum StoreRequest {
     LoadGraph {
         done: oneshot::Sender<Result<BTreeMap<AgentId, GraphRecord>>>,
     },
+    StateIds {
+        done: oneshot::Sender<Result<BTreeSet<AgentId>>>,
+    },
 }
 
 enum WriteOp {
@@ -186,6 +189,7 @@ impl StoreHandle {
                         drop(done.send(store.load_state(&aid)));
                     }
                     StoreRequest::LoadGraph { done } => drop(done.send(store.load_graph())),
+                    StoreRequest::StateIds { done } => drop(done.send(store.state_ids())),
                 }
             }
         });
@@ -272,6 +276,15 @@ impl StoreHandle {
         let (done, rx) = oneshot::channel();
         self.tx
             .send(StoreRequest::LoadGraph { done })
+            .ok()
+            .context("state store thread died")?;
+        rx.await?
+    }
+
+    pub async fn state_ids(&self) -> Result<BTreeSet<AgentId>> {
+        let (done, rx) = oneshot::channel();
+        self.tx
+            .send(StoreRequest::StateIds { done })
             .ok()
             .context("state store thread died")?;
         rx.await?

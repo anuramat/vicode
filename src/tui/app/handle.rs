@@ -102,11 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn visible_parent_error_creates_notification() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap().0,
-            Default::default(),
-            Default::default(),
-        );
+        let mut app = App::new(crate::project::Project::new_test().unwrap().0);
         let aid = AgentId::from("a".to_string());
         let state = AgentState::fake();
         app.tabs.insert(
@@ -126,7 +122,7 @@ mod tests {
     #[tokio::test]
     async fn assistant_set_updates_tab_state() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let aid = AgentId::from(format!("assistant-set-{}", uuid::Uuid::new_v4()));
         let workdir = project.agent_workdir(&aid);
         std::fs::create_dir_all(&workdir).unwrap();
@@ -153,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_failed_rolls_back_preview_tab() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let original = AgentId::from("orig".to_string());
         let copy = AgentId::from("copy".to_string());
         let state = AgentState::fake();
@@ -182,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn tool_output_streams_into_tab_live_buffer() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let aid = AgentId::from("streamer".to_string());
         app.tabs.insert(
             aid.clone(),
@@ -208,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn tab_history_replays_authoritative_history_updates_exactly() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let aid = AgentId::from("deterministic-tab".to_string());
         let state = AgentState::fake();
         app.tabs.insert(

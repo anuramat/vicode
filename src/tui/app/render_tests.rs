@@ -34,11 +34,7 @@ fn app_with_tab(
     history: History,
     status: ActivityStatus,
 ) -> App<'static> {
-    let mut app = App::new(
-        Project::new_test().unwrap().0,
-        Default::default(),
-        Default::default(),
-    );
+    let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
     let mut state = AgentState::fake();
     state.status = status;
@@ -69,11 +65,7 @@ fn history(updates: impl IntoIterator<Item = HistoryUpdate>) -> History {
 
 #[tokio::test]
 async fn renders_logo_screen_without_tabs() {
-    let mut app = App::new(
-        Project::new_test().unwrap().0,
-        Default::default(),
-        Default::default(),
-    );
+    let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
 
     insta::assert_snapshot!(render(&mut app, 80, 24), @r#"

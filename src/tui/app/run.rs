@@ -1,6 +1,3 @@
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::future::pending;
 use std::sync::Arc;
 
@@ -18,10 +15,11 @@ use tokio::time::sleep_until;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use super::App;
+use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
-use crate::agent::router::RouterState;
-use crate::agent::router::graph::GraphRecord;
+use crate::agent::router::Router;
+use crate::agent::router::boot::Boot;
 use crate::config::Config;
 use crate::llm::provider::assistant::AssistantPool;
 use crate::project::Paths;
@@ -45,25 +43,21 @@ impl App<'_> {
 
         let assistants = Arc::new(AssistantPool::from_config(&config).await?);
 
-        // read everything we need at startup, then hand the db to the writer task
+        // read the tab order, then hand the db to the writer task
         let store = Store::open(paths.state_db())?;
-        let app_state = store.load_app()?;
-        let state_ids = store.state_ids()?;
-        let records = store.load_graph()?;
-        let boot = load_boot_agents(&store, &app_state.visible_order, &records);
+        let visible_order = store.load_app()?.visible_order;
         let project = Project::new(config, paths, lock, store.into_handle(), assistants);
         let (tx, rx) = unbounded_channel();
-        let router = RouterState::start(
-            tx.clone(),
-            project.clone(),
-            records,
-            state_ids,
-            boot.restored,
-        );
+        let Boot {
+            router,
+            mut tabs,
+            agents,
+            failures,
+        } = Router::boot(tx.clone(), project.clone()).await?;
+        order_tabs(&mut tabs, &visible_order);
         let mut app = Self::with_router(project, tx, rx, router);
-        if !boot.failures.is_empty() {
-            let list = boot
-                .failures
+        if !failures.is_empty() {
+            let list = failures
                 .iter()
                 .map(|(aid, error)| format!("{aid}: {error}"))
                 .collect::<Vec<_>>()
@@ -74,7 +68,7 @@ impl App<'_> {
             );
         }
         let term = app.setup_terminal()?;
-        app.run(term, boot.tabs, boot.agents).await?;
+        app.run(term, tabs, agents).await?;
         Ok(())
     }
 
@@ -102,7 +96,7 @@ impl App<'_> {
         mut self,
         mut term: Terminal<B>,
         tabs: Vec<(AgentId, AgentState)>,
-        agents: Vec<(AgentId, AgentState)>,
+        agents: Vec<Agent>,
     ) -> Result<()>
     where
         B: Backend,
@@ -184,106 +178,20 @@ impl App<'_> {
     }
 }
 
-struct BootAgents {
-    tabs: Vec<(AgentId, AgentState)>,
-    agents: Vec<(AgentId, AgentState)>,
-    /// the router's boot graph: `Some(error)` = an unloadable child
-    restored: HashMap<AgentId, Option<String>>,
-    failures: Vec<(AgentId, String)>,
-}
-
-/// Load boot state while the database is still synchronous: roots first, then
-/// children under valid roots — state under an invalid root is never read
-/// (their root's failure notification covers them). Invalid roots omit their
-/// whole tab; invalid children remain reachable as terminal `Dead` nodes,
-/// without preventing valid descendants from starting.
-fn load_boot_agents(
-    store: &Store,
+/// tabs in `visible_order`; a live root missing from it (a crash between
+/// the graph write and `save_app`) goes at the end, in boot order. The boot
+/// graph is authoritative: an entry with no tab (a crash can leave an
+/// archived primary stale in it) is ignored.
+fn order_tabs(
+    tabs: &mut [(AgentId, AgentState)],
     visible_order: &[AgentId],
-    records: &BTreeMap<AgentId, GraphRecord>,
-) -> BootAgents {
-    let load = |aid: &AgentId| {
-        let state = store.load_state(aid).map_err(|error| {
-            tracing::error!("failed to restore agent {aid}: {error:?}");
-            format!("{error:#}")
-        });
-        (aid.clone(), state)
-    };
-    let roots = boot_order(visible_order, records);
-    let mut loaded: HashMap<AgentId, Result<AgentState, String>> = roots.iter().map(load).collect();
-    let valid_roots: HashSet<AgentId> = roots
-        .iter()
-        .filter(|aid| loaded[*aid].is_ok())
-        .cloned()
-        .collect();
-    let mut children: Vec<AgentId> = records
-        .iter()
-        .filter(|(_, record)| {
-            !record.archived && record.parent.is_some() && valid_roots.contains(&record.root)
-        })
-        .map(|(aid, _)| aid.clone())
-        .collect();
-    children.sort();
-    loaded.extend(children.iter().map(load));
-
-    let mut restored = HashMap::new();
-    let mut failures = Vec::new();
-    for aid in roots.iter().chain(children.iter()) {
-        match &loaded[aid] {
-            Ok(_) => {
-                restored.insert(aid.clone(), None);
-            }
-            Err(error) => {
-                failures.push((aid.clone(), error.clone()));
-                // Invalid roots and their tabs are omitted entirely.
-                if records[aid].parent.is_some() {
-                    restored.insert(aid.clone(), Some(error.clone()));
-                }
-            }
-        }
-    }
-    let mut take = |aid: &AgentId| {
-        loaded
-            .remove(aid)
-            .and_then(Result::ok)
-            .map(|state| (aid.clone(), state))
-    };
-    let tabs: Vec<(AgentId, AgentState)> = roots.iter().filter_map(&mut take).collect();
-    let mut agents = tabs.clone();
-    agents.extend(children.iter().filter_map(take));
-    BootAgents {
-        tabs,
-        agents,
-        restored,
-        failures,
-    }
-}
-
-/// the tabs to restore, in order: the graph table's archived flag is
-/// authoritative over `visible_order` (a crash can leave an archived primary
-/// stale in it), and a live primary missing from `visible_order` (a
-/// crash between the graph write and `save_app`) is appended at the end.
-fn boot_order(
-    visible_order: &[AgentId],
-    records: &BTreeMap<AgentId, GraphRecord>,
-) -> Vec<AgentId> {
-    let restorable = |aid: &AgentId| {
-        records
-            .get(aid)
-            .is_some_and(|r| !r.archived && r.parent.is_none())
-    };
-    let mut order: Vec<AgentId> = visible_order
-        .iter()
-        .filter(|a| restorable(a))
-        .cloned()
-        .collect();
-    let stragglers: Vec<AgentId> = records
-        .keys()
-        .filter(|a| restorable(a) && !order.contains(a))
-        .cloned()
-        .collect();
-    order.extend(stragglers);
-    order
+) {
+    tabs.sort_by_key(|(aid, _)| {
+        visible_order
+            .iter()
+            .position(|a| a == aid)
+            .unwrap_or(usize::MAX)
+    });
 }
 
 pub fn init_tracing(project: &Paths) -> Result<WorkerGuard> {
@@ -305,116 +213,23 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-    use crate::agent::router::graph::GraphRecord;
 
     #[test]
-    fn boot_order_skips_archived_and_appends_stragglers() {
+    fn order_tabs_follows_visible_order_and_appends_stragglers() {
         let aid = |s: &str| AgentId::from(s.to_string());
-        let record = |root: &str, parent: Option<&str>, archived| GraphRecord {
-            root: aid(root),
-            parent: parent.map(aid),
-            archived,
-        };
-        let records = [
-            ("alive", record("alive", None, false)),
-            ("stale", record("stale", None, true)),
-            ("straggler", record("straggler", None, false)),
-            ("rowless", record("rowless", None, false)),
-            ("sub", record("alive", Some("alive"), false)),
-        ]
-        .into_iter()
-        .map(|(k, v)| (aid(k), v))
-        .collect();
-        // `stale` archived but left in visible_order by a crash; `straggler`
-        // and stateless alive roots are missing from it; `recordless` predates
-        // the graph table
-        let visible = vec![aid("stale"), aid("alive"), aid("recordless")];
+        let mut tabs: Vec<_> = ["alive", "missing", "straggler"]
+            .into_iter()
+            .map(|a| (aid(a), AgentState::fake()))
+            .collect();
+        // `stale` archived but left in visible_order by a crash; `missing`
+        // isn't in it
+        let visible = vec![aid("stale"), aid("straggler"), aid("alive")];
+
+        order_tabs(&mut tabs, &visible);
 
         assert_eq!(
-            boot_order(&visible, &records),
-            vec![aid("alive"), aid("rowless"), aid("straggler")]
+            tabs.into_iter().map(|(a, _)| a).collect::<Vec<_>>(),
+            vec![aid("straggler"), aid("alive"), aid("missing")]
         );
-    }
-
-    /// Partial boot: an invalid root is omitted, an invalid child is retained
-    /// as Dead, and its valid descendant still starts. All state records stay
-    /// on disk.
-    #[test]
-    fn partial_restore_isolated_per_agent() {
-        let aid = |s: &str| AgentId::from(s.to_string());
-        let dir = std::env::temp_dir().join(format!("vicode-boot-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let paths = Paths {
-            id: Paths::derive_id(&dir),
-            root: dir.clone(),
-            data: dir.clone(),
-        };
-        let path = paths.state_db();
-        {
-            let table = redb::TableDefinition::<&str, &[u8]>::new("agent_state");
-            let db = redb::Database::create(&path).unwrap();
-            let write = db.begin_write().unwrap();
-            {
-                let mut t = write.open_table(table).unwrap();
-                let good = serde_json::to_vec(&AgentState::fake()).unwrap();
-                for id in ["good", "grandchild", "under-bad-root", "archived"] {
-                    t.insert(id, good.as_slice()).unwrap();
-                }
-                for id in ["bad-root", "bad-child"] {
-                    t.insert(id, b"not json".as_slice()).unwrap();
-                }
-            }
-            write.commit().unwrap();
-        }
-
-        let store = Store::open(&path).unwrap();
-        let record = |root: &str, parent: Option<&str>, archived| GraphRecord {
-            root: aid(root),
-            parent: parent.map(aid),
-            archived,
-        };
-        let records = [
-            ("good", record("good", None, false)),
-            ("bad-root", record("bad-root", None, false)),
-            ("bad-child", record("good", Some("good"), false)),
-            ("grandchild", record("good", Some("bad-child"), false)),
-            (
-                "under-bad-root",
-                record("bad-root", Some("bad-root"), false),
-            ),
-            ("archived", record("archived", None, true)),
-        ]
-        .into_iter()
-        .map(|(id, record)| (aid(id), record))
-        .collect();
-        let boot = load_boot_agents(
-            &store,
-            &[aid("bad-root"), aid("good"), aid("archived")],
-            &records,
-        );
-
-        assert_eq!(
-            boot.tabs.iter().map(|(a, _)| a.clone()).collect::<Vec<_>>(),
-            vec![aid("good")]
-        );
-        assert_eq!(
-            boot.agents
-                .iter()
-                .map(|(a, _)| a.clone())
-                .collect::<Vec<_>>(),
-            vec![aid("good"), aid("grandchild")]
-        );
-        assert_eq!(
-            boot.failures
-                .iter()
-                .map(|(a, _)| a.clone())
-                .collect::<Vec<_>>(),
-            vec![aid("bad-root"), aid("bad-child")]
-        );
-        assert!(boot.restored[&aid("bad-child")].is_some());
-        assert!(!boot.restored.contains_key(&aid("bad-root")));
-        assert!(!boot.restored.contains_key(&aid("under-bad-root")));
-        assert!(store.state_ids().unwrap().contains(&aid("bad-child")));
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

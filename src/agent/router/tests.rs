@@ -17,7 +17,6 @@ use super::api::RouterError;
 use super::graph::NodeStatus;
 use super::graph::Runtime;
 use super::*;
-use crate::agent::Agent;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
@@ -128,7 +127,7 @@ struct Rig {
 impl Rig {
     async fn new(name: &str) -> Self {
         let (project, api) = Project::new_test().unwrap();
-        let router = spawn_router(&project, Default::default());
+        let router = Router::new(unbounded_channel().0, project.clone());
         let (primary, primary_mail) = register_primary(&project, &router, name).await;
         let commit = project.head_commit();
         Self {
@@ -185,20 +184,6 @@ fn script_turn(
     ]);
 }
 
-fn spawn_router(
-    project: &Project,
-    records: BTreeMap<AgentId, graph::GraphRecord>,
-) -> Router {
-    let restored = records.keys().map(|a| (a.clone(), None)).collect();
-    RouterState::start(
-        unbounded_channel().0,
-        project.clone(),
-        records,
-        Default::default(),
-        restored,
-    )
-}
-
 /// a primary with a workdir + saved state and a dummy (test-held) runtime,
 /// reported idle
 async fn register_primary(
@@ -220,33 +205,34 @@ async fn register_primary(
     (aid, mail)
 }
 
-async fn start_saved_agents(
-    project: &Project,
-    router: &Router,
-    aids: &[AgentId],
-) {
-    for aid in aids {
-        let state = project.store().load_state(aid).await.unwrap();
-        let agent = Agent::new(
-            project.clone(),
-            router.clone(),
-            unbounded_channel().0,
-            aid.clone(),
-            state,
-        );
-        router.launch(agent).unwrap();
+/// boot from the store as the app does, and start every restored agent
+async fn reboot(project: &Project) -> Router {
+    start(
+        Router::boot(unbounded_channel().0, project.clone())
+            .await
+            .unwrap(),
+    )
+    .await
+}
+
+/// launch every restored agent; up once the runtimes report their startup
+/// status
+async fn start(boot: boot::Boot) -> Router {
+    let aids: Vec<AgentId> = boot.agents.iter().map(|a| a.id.clone()).collect();
+    for agent in boot.agents {
+        boot.router.launch(agent).unwrap();
     }
-    // up once the runtime reports its startup status
     timeout(TIMEOUT, async {
         while aids
             .iter()
-            .any(|aid| router.status(aid) == Some(NodeStatus::Spawning))
+            .any(|aid| boot.router.status(aid) == Some(NodeStatus::Spawning))
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("saved agents never started");
+    .expect("restored agents never started");
+    boot.router
 }
 
 #[test]
@@ -438,9 +424,7 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
         .unwrap();
     rig.script("resumed", "resumed");
 
-    let records = rig.project.store().load_graph().await.unwrap();
-    let router2 = spawn_router(&rig.project, records);
-    start_saved_agents(&rig.project, &router2, &[rig.primary.clone(), kept.clone()]).await;
+    let router2 = reboot(&rig.project).await;
 
     router2.idle_with_output(&kept, "resumed").await;
     assert_eq!(router2.status(&kept), Some(NodeStatus::Idle));
@@ -452,71 +436,89 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     assert!(rig.project.agent_workdir(&archived).exists());
 }
 
+/// partial boot: archived records and an invalid root's whole tab stay out
+/// (state under it is never read), an invalid child is a reachable `Dead`
+/// node, and its valid descendant still starts
 #[tokio::test]
-async fn invalid_child_is_dead_while_valid_descendant_starts() {
+async fn boot_isolates_invalid_agents() {
     let (project, _api) = Project::new_test().unwrap();
-    let prime = AgentId::from("prime".to_string());
-    let bad = AgentId::from("bad".to_string());
-    let descendant = AgentId::from("descendant".to_string());
+    let aid = |s: &str| AgentId::from(s.to_string());
+    let record = |root: &str, parent: Option<&str>, archived| graph::GraphRecord {
+        root: aid(root),
+        parent: parent.map(aid),
+        archived,
+    };
     let records = [
+        ("good", record("good", None, false)),
+        ("bad-root", record("bad-root", None, false)),
+        ("bad-child", record("good", Some("good"), false)),
+        ("grandchild", record("good", Some("bad-child"), false)),
         (
-            prime.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: None,
-                archived: false,
-            },
+            "under-bad-root",
+            record("bad-root", Some("bad-root"), false),
         ),
-        (
-            bad.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: Some(prime.clone()),
-                archived: false,
-            },
-        ),
-        (
-            descendant.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: Some(bad.clone()),
-                archived: false,
-            },
-        ),
+        ("archived", record("archived", None, true)),
     ]
-    .into_iter()
-    .collect();
-    for aid in [&prime, &descendant] {
-        tokio::fs::create_dir_all(project.agent_workdir(aid))
+    .map(|(id, record)| (aid(id), record));
+    project.store().save_graph_batch(&records).await.unwrap();
+    // `bad-*` have no state to load
+    for id in ["good", "grandchild", "under-bad-root", "archived"] {
+        tokio::fs::create_dir_all(project.agent_workdir(&aid(id)))
             .await
             .unwrap();
         project
             .store()
-            .save_state(aid, &project.fake_state())
+            .save_state(&aid(id), &project.fake_state())
             .await
             .unwrap();
     }
-    let restored = [
-        (prime.clone(), None),
-        (bad.clone(), Some("corrupt child row".to_string())),
-        (descendant.clone(), None),
-    ]
-    .into_iter()
-    .collect();
-    let router = RouterState::start(
-        unbounded_channel().0,
-        project.clone(),
-        records,
-        Default::default(),
-        restored,
-    );
-    start_saved_agents(&project, &router, &[prime.clone(), descendant.clone()]).await;
 
+    let boot = Router::boot(unbounded_channel().0, project.clone())
+        .await
+        .unwrap();
+    let graph: BTreeMap<AgentId, NodeStatus> = boot
+        .router
+        .lock()
+        .graph
+        .iter()
+        .map(|(id, node)| (id.clone(), node.status()))
+        .collect();
+    insta::assert_yaml_snapshot!(serde_json::json!({
+        "tabs": boot.tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        "agents": boot.agents.iter().map(|a| &a.id).collect::<Vec<_>>(),
+        "failures": boot.failures,
+        "graph": graph,
+        "all_ids": boot.router.lock().all_ids,
+    }), @"
+    agents:
+      - good
+      - grandchild
+    all_ids:
+      - archived
+      - bad-child
+      - bad-root
+      - good
+      - grandchild
+      - under-bad-root
+    failures:
+      - - bad-root
+        - agent bad-root not found
+      - - bad-child
+        - agent bad-child not found
+    graph:
+      bad-child: Dead
+      good: Spawning
+      grandchild: Spawning
+    tabs:
+      - good
+    ");
+
+    let router = start(boot).await;
+    assert_eq!(router.status(&aid("grandchild")), Some(NodeStatus::Idle));
     assert_eq!(
-        router.send_message(&prime, &bad, "hi"),
-        Err(RouterError::Dead("corrupt child row".into()))
+        router.send_message(&aid("good"), &aid("bad-child"), "hi"),
+        Err(RouterError::Dead("agent bad-child not found".into()))
     );
-    assert_eq!(router.status(&descendant), Some(NodeStatus::Idle));
 }
 
 #[tokio::test]
@@ -540,13 +542,7 @@ async fn runtime_death_is_terminal_until_restart() {
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(!records[&child].archived);
 
-    let router2 = spawn_router(&rig.project, records);
-    start_saved_agents(
-        &rig.project,
-        &router2,
-        &[rig.primary.clone(), child.clone()],
-    )
-    .await;
+    let router2 = reboot(&rig.project).await;
     assert_eq!(router2.status(&child), Some(NodeStatus::Idle));
 }
 
@@ -554,8 +550,8 @@ async fn runtime_death_is_terminal_until_restart() {
 async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
     let (project, api) = Project::new_test().unwrap();
     let prime = AgentId::from("prime".to_string());
-    // Boot with the tab already at the cap. Durable members hold slots even
-    // before their runtimes attach.
+    // Boot with the tab already at the cap. Durable members hold slots
+    // whatever their runtime: these have no state, so they boot `Dead`.
     let member = |i: usize| {
         (
             AgentId::from(format!("m{i}")),
@@ -575,8 +571,8 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         },
     ))
     .chain((1..TAB_AGENT_CAP).map(member))
-    .collect();
-    let router = spawn_router(&project, records);
+    .collect::<Vec<_>>();
+    project.store().save_graph_batch(&records).await.unwrap();
     tokio::fs::create_dir_all(project.agent_workdir(&prime))
         .await
         .unwrap();
@@ -585,7 +581,7 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         .save_state(&prime, &project.fake_state())
         .await
         .unwrap();
-    start_saved_agents(&project, &router, std::slice::from_ref(&prime)).await;
+    let router = reboot(&project).await;
 
     let err = router
         .spawn_agent(&prime, &project.head_commit(), None, "go")
@@ -753,7 +749,7 @@ async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
 #[tokio::test]
 async fn launch_is_one_shot() {
     let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
+    let router = Router::new(unbounded_channel().0, project.clone());
     let aid = AgentId::from("dup".to_string());
     let _mail = router.attach_manual(&aid);
 
@@ -766,7 +762,7 @@ async fn launch_is_one_shot() {
 #[tokio::test]
 async fn send_to_closed_mailbox_is_rejected_without_recording_a_death() {
     let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
+    let router = Router::new(unbounded_channel().0, project.clone());
     let (aid, mail) = register_primary(&project, &router, "prime").await;
     drop(mail); // the runtime is gone, its supervisor hasn't reported yet
 
@@ -784,7 +780,7 @@ async fn send_to_closed_mailbox_is_rejected_without_recording_a_death() {
 #[tokio::test]
 async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
     let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
+    let router = Router::new(unbounded_channel().0, project.clone());
     let (aid, _mail) = register_primary(&project, &router, "prime").await;
 
     router.runtime_down(&aid, "first failure".into());
@@ -845,13 +841,7 @@ async fn supervised(
 ) -> Result<(), RouterError> {
     let project = Project::new_test().unwrap().0;
     let (app_tx, _app_rx) = unbounded_channel();
-    let router = RouterState::start(
-        app_tx,
-        project,
-        Default::default(),
-        Default::default(),
-        Default::default(),
-    );
+    let router = Router::new(app_tx, project);
     let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
     router.register_root(&aid).unwrap();
     let (abort, registration) = AbortHandle::new_pair();

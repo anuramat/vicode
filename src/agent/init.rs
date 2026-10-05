@@ -132,19 +132,12 @@ impl AgentState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::router::RouterState;
 
     #[tokio::test]
     async fn try_duplicate_registers_copy_with_router() {
         let project = Project::new_test().unwrap().0;
         let (app_tx, mut app_rx) = unbounded_channel();
-        let router = RouterState::start(
-            app_tx.clone(),
-            project.clone(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        );
+        let router = Router::new(app_tx.clone(), project.clone());
 
         let parent_aid = AgentId::from(format!("dup-parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);

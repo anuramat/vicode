@@ -22,7 +22,7 @@ impl<'a> App<'a> {
     pub fn load_tabs(
         &mut self,
         tab_agents: Vec<(AgentId, AgentState)>,
-        agents: Vec<(AgentId, AgentState)>,
+        agents: Vec<Agent>,
     ) -> Result<()> {
         let mut tabs = IndexMap::new();
         for (aid, state) in &tab_agents {
@@ -35,14 +35,7 @@ impl<'a> App<'a> {
         self.rebuild_tablist();
 
         // every node's mailbox exists already: launch order doesn't matter
-        for (aid, state) in agents {
-            let agent = Agent::new(
-                self.project.clone(),
-                self.router.clone(),
-                self.tx.clone(),
-                aid,
-                state,
-            );
+        for agent in agents {
             self.router.launch(agent)?;
         }
         Ok(())
@@ -237,11 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_tab_creates_agent_and_tab() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap().0,
-            Default::default(),
-            Default::default(),
-        );
+        let mut app = App::new(crate::project::Project::new_test().unwrap().0);
 
         app.new_tab().await.unwrap();
 
@@ -260,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn archive_tab_stops_agent_but_keeps_workdir() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let aid = AgentId::from(format!("archive-me-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(project.agent_workdir(&aid)).unwrap();
         let tab = Tab::new(
@@ -288,7 +277,7 @@ mod tests {
     #[tokio::test]
     async fn undeliverable_duplicate_adds_no_preview() {
         let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone(), Default::default(), Default::default());
+        let mut app = App::new(project.clone());
         let original = AgentId::from("original".to_string());
         app.tabs.insert(
             original.clone(),
@@ -311,11 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn tab_selection_can_be_cleared_and_restored() {
-        let mut app = App::new(
-            crate::project::Project::new_test().unwrap().0,
-            Default::default(),
-            Default::default(),
-        );
+        let mut app = App::new(crate::project::Project::new_test().unwrap().0);
         let project = app.project.clone();
         let state = AgentState::fake();
         app.tabs = ["a", "b"]

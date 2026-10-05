@@ -141,26 +141,15 @@ impl App<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-    use std::collections::BTreeSet;
-
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
-    use crate::agent::router::RouterState;
-    use crate::agent::router::graph::GraphRecord;
 
     impl App<'_> {
-        pub fn new(
-            project: Project,
-            state_ids: BTreeSet<AgentId>,
-            records: BTreeMap<AgentId, GraphRecord>,
-        ) -> Self {
-            // TODO figure out what should stay here, and what belongs to run()/launch()
+        /// on an empty router
+        pub fn new(project: Project) -> Self {
             let (tx, rx) = unbounded_channel();
-            let restored = records.keys().map(|a| (a.clone(), None)).collect();
-            let router =
-                RouterState::start(tx.clone(), project.clone(), records, state_ids, restored);
+            let router = Router::new(tx.clone(), project.clone());
             Self::with_router(project, tx, rx, router)
         }
     }

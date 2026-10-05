@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,12 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::AgentId;
 use crate::agent::router::graph::AgentNode;
-use crate::agent::router::graph::GraphRecord;
-use crate::agent::router::graph::Runtime;
 use crate::project::Project;
 use crate::tui::app::AppEvent;
 
 pub mod api;
+pub mod boot;
 pub mod graph;
 mod ops;
 
@@ -40,42 +38,20 @@ pub struct RouterState {
 #[derive(Clone, Debug)]
 pub struct Router(Arc<Mutex<RouterState>>);
 
-impl RouterState {
-    /// `restored`: the boot-loaded agents to put in the graph — `None` to
-    /// be launched, `Some(error)` if unloadable (a terminal `Dead` node)
-    pub fn start(
+impl Router {
+    /// an empty graph; [`Router::boot`] restores the saved one
+    pub fn new(
         app_tx: UnboundedSender<AppEvent>,
         project: Project,
-        records: BTreeMap<AgentId, GraphRecord>,
-        state_ids: BTreeSet<AgentId>,
-        mut restored: HashMap<AgentId, Option<String>>,
-    ) -> Router {
-        let mut all_ids = state_ids;
-        all_ids.extend(records.keys().cloned());
-        let graph = records
-            .into_iter()
-            .filter_map(|(aid, record)| {
-                if record.archived {
-                    return None;
-                }
-                let error = restored.remove(&aid)?;
-                let mut node = AgentNode::new(record.root, record.parent);
-                if let Some(error) = error {
-                    node.runtime = Runtime::Dead(error);
-                }
-                Some((aid, node))
-            })
-            .collect();
-        Router(Arc::new(Mutex::new(Self {
+    ) -> Self {
+        Self(Arc::new(Mutex::new(RouterState {
             project,
             app_tx,
-            graph,
-            all_ids,
+            graph: HashMap::new(),
+            all_ids: BTreeSet::new(),
         })))
     }
-}
 
-impl Router {
     fn lock(&self) -> MutexGuard<'_, RouterState> {
         self.0.lock().expect("router lock poisoned")
     }
