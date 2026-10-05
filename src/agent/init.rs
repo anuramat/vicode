@@ -31,7 +31,11 @@ impl Agent {
         let (user_tx, user_rx) = unbounded_channel();
         let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
         Self {
-            core: AgentCore::new(state, project.assistants().clone()),
+            core: AgentCore::new(
+                state,
+                project.assistants().clone(),
+                project.config().compact,
+            ),
             project,
             id,
             router,

@@ -6,6 +6,7 @@ use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
+use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 
@@ -22,8 +23,16 @@ pub enum AgentEvent {
     Done(TaskId, TaskResult),
 }
 
-/// a turn resolves to `None`, a tool to its item; `Err` = turn error or panic
-pub type TaskResult = Result<Option<Box<ToolCallItem>>, String>;
+/// `Err` = task error or panic
+pub type TaskResult = Result<TaskOutput, String>;
+
+#[derive(Debug)]
+pub enum TaskOutput {
+    /// a turn's stream already landed in history
+    Turn,
+    Tool(Box<ToolCallItem>),
+    Summary(CompactMessage),
+}
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -49,7 +58,7 @@ pub enum UiEvent {
 
 #[derive(Debug)]
 pub enum UserCommand {
-    /// compact the first n messages
+    /// summarize the first n messages in the background
     Compact(usize),
     Retry,
     Abort,

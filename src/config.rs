@@ -52,9 +52,11 @@ pub struct LayoutConfig {
     pub message_width: u16,
 }
 
-#[derive(Deserialize, Debug, Clone, SmartDefault, Serialize, JsonSchema)]
+#[derive(Deserialize, Debug, Clone, Copy, SmartDefault, Serialize, JsonSchema)]
+#[serde(default)]
 pub struct CompactConfig {
-    /// context window percentage, at which we compact the context, threshold < 100
+    /// context window percentage, at which we start compacting the context in the background,
+    /// while the turns go on
     #[default = 80]
     pub threshold: usize,
     /// context window percentage to compact to
@@ -62,6 +64,10 @@ pub struct CompactConfig {
     /// note that compacted messages take tokens, so this doesn't guarantee that we will be below target in the end
     #[default = 20]
     pub target: usize,
+    /// context window percentage, past which turns wait for an in-flight compaction instead of
+    /// risking a context overflow; `hard_limit <= threshold` makes compaction blocking
+    #[default = 95]
+    pub hard_limit: usize,
 }
 
 pub fn expand_vec<I>(values: I) -> Vec<String>

@@ -63,36 +63,25 @@ pub struct AgentState {
     pub pending_messages: Vec<crate::llm::history::message::UserMessage>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Display)]
 #[cfg_attr(test, derive(serde::Serialize))]
-pub enum ActivityStatus {
-    Normal(TurnStatus),
-    #[display("compacting: {_0}")]
-    Compact(TurnStatus),
-}
-
-impl Default for ActivityStatus {
-    fn default() -> Self {
-        Self::Normal(TurnStatus::Idle)
-    }
+#[display("{turn}{}", if *compacting { ", compacting" } else { "" })]
+pub struct ActivityStatus {
+    pub turn: TurnStatus,
+    /// a summary is in flight, or waiting for the turn to end
+    pub compacting: bool,
 }
 
 impl ActivityStatus {
-    pub fn turn(&self) -> &TurnStatus {
-        match self {
-            Self::Normal(t) | Self::Compact(t) => t,
-        }
-    }
-
     pub fn idle(&self) -> bool {
-        !matches!(self.turn(), TurnStatus::InProgress)
+        !matches!(self.turn, TurnStatus::InProgress) && !self.compacting
     }
 
     pub fn label(&self) -> &'static str {
-        match self.turn() {
-            TurnStatus::InProgress => "+",
-            TurnStatus::Idle => " ",
+        match self.turn {
             TurnStatus::Failed(_) => "!",
+            _ if !self.idle() => "+",
+            _ => " ",
         }
     }
 }
@@ -161,7 +150,10 @@ mod tests {
     #[test]
     fn status_is_not_persisted() {
         let mut state = AgentState::fake();
-        state.status = ActivityStatus::Normal(TurnStatus::Failed("oops".into()));
+        state.status = ActivityStatus {
+            turn: TurnStatus::Failed("oops".into()),
+            compacting: true,
+        };
 
         let serialized = serde_json::to_value(&state).unwrap();
         assert!(serialized.get("status").is_none());

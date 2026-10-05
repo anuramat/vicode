@@ -55,6 +55,7 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::event::TaskOutput;
     use crate::agent::task::ledger::Task;
     use crate::agent::task::ledger::TaskLedger;
 
@@ -64,8 +65,8 @@ mod tests {
         let mut executor = TaskExecutor::default();
 
         let ok = ledger.register(Task::turn());
-        executor.spawn(ok, "turn", async { Ok(None) });
-        assert!(matches!(executor.reap().await, Some((id, Ok(None))) if id == ok));
+        executor.spawn(ok, "turn", async { Ok(TaskOutput::Turn) });
+        assert!(matches!(executor.reap().await, Some((id, Ok(TaskOutput::Turn))) if id == ok));
 
         let boom = ledger.register(Task::turn());
         executor.spawn(boom, "tool", async { panic!("boom") });

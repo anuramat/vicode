@@ -1,4 +1,4 @@
-use crate::llm::history::compact::CompactStart;
+use crate::llm::history::compact::Compaction;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
@@ -21,9 +21,8 @@ pub enum AssistantEvent {
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum HistoryUpdate {
-    CompactStart(CompactStart),
-    CompactAbort,
-    CompactResponse(AssistantEvent),
+    /// replace the oldest messages with their summary
+    Compact(Compaction),
     GenerationIncremented,
     TurnResponse(AssistantEvent),
     UserMessage(UserMessage),

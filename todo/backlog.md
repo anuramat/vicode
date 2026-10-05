@@ -34,7 +34,6 @@
 - when bash tool is aborted, it should send partial results to the assistant
 - let user execute bash commands in current tab with `!...`
   - append a developer message equivalent to bash tool output, with equivalent rendering
-- autocompact on threshold
 - alternative argument schemas for user compact command
 - retries after abort/failure should append devmsg eg "assistants turn was interrupted by the user/unexpected error"
 - skills

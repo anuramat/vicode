@@ -10,6 +10,7 @@ use tracing::instrument;
 use crate::agent::Agent;
 use crate::agent::core::Effect;
 use crate::agent::event::AgentEvent;
+use crate::agent::event::TaskOutput;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::router::graph::NodeStatus;
@@ -99,7 +100,20 @@ impl Agent {
                 self.executor.spawn(id, "turn", async move {
                     Self::turn(sink, &assistant, tools, instructions, messages)
                         .await
-                        .map(|()| None)
+                        .map(|()| TaskOutput::Turn)
+                        .map_err(|e| e.to_string())
+                });
+            }
+            Effect::Summarize {
+                id,
+                assistant,
+                instructions,
+                messages,
+            } => {
+                self.executor.spawn(id, "summary", async move {
+                    Self::summarize(&assistant, instructions, messages)
+                        .await
+                        .map(TaskOutput::Summary)
                         .map_err(|e| e.to_string())
                 });
             }
@@ -118,7 +132,7 @@ impl Agent {
                 self.executor.spawn(id, "tool", async move {
                     call.task.run(ctx).await;
                     call.touch_ready_at_now();
-                    Ok(Some(Box::new(call)))
+                    Ok(TaskOutput::Tool(Box::new(call)))
                 });
             }
             Effect::AbortTasks => self.executor.abort_all(),

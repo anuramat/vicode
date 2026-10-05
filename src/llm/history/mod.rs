@@ -12,12 +12,10 @@ mod timing;
 mod tokens;
 
 use anyhow::Result;
-use anyhow::bail;
 use archive::ArchivedHistory;
 use archive::ArchivedHistoryReason;
-pub use compact::Activity;
-pub use compact::CompactStart;
-use compact::CompactState;
+pub use compact::Compaction;
+pub use compact::Summary;
 pub use event::AssistantEvent;
 pub use event::HistoryGeneration;
 pub use event::HistoryUpdate;
@@ -39,7 +37,7 @@ pub struct History {
     instructions: Instructions,
     #[serde(skip)]
     generation: HistoryGeneration,
-    activity: Activity,
+    state: HistoryState,
     #[serde(default)]
     archive: Vec<ArchivedHistory>,
 }
@@ -49,25 +47,17 @@ impl History {
         Self {
             instructions: Instructions::new(instructions),
             generation: 0,
-            activity: Activity::default(),
+            state: HistoryState::default(),
             archive: Vec::new(),
         }
     }
 
     pub fn state(&self) -> &HistoryState {
-        match &self.activity {
-            Activity::Normal { state } | Activity::Compacting { state, .. } => state,
-        }
+        &self.state
     }
 
     fn state_mut(&mut self) -> &mut HistoryState {
-        match &mut self.activity {
-            Activity::Normal { state } | Activity::Compacting { state, .. } => state,
-        }
-    }
-
-    pub fn activity(&self) -> &Activity {
-        &self.activity
+        &mut self.state
     }
 
     pub fn instructions(&self) -> &str {
@@ -123,18 +113,15 @@ impl History {
             self.generation,
         );
         match event {
-            HistoryUpdate::CompactAbort => {
-                self.abort_compact()?;
-            }
             HistoryUpdate::ToolCallFailed { call_id, error } => {
                 self.state_mut().fail_tool_calls(Some(&call_id), &error);
             }
             HistoryUpdate::GenerationIncremented => self.increment(),
             HistoryUpdate::DeveloperMessage(msg) => {
-                self.normal_mut()?.push(Message::Developer(msg));
+                self.state.push(Message::Developer(msg));
             }
             HistoryUpdate::UserMessage(msg) => {
-                self.normal_mut()?.push(Message::User(msg));
+                self.state.push(Message::User(msg));
             }
             HistoryUpdate::Pop(n) => {
                 // TODO this condition should be computed smarter I think;
@@ -146,7 +133,7 @@ impl History {
                     .last()
                     .is_none_or(|v| !matches!(v.reason, ArchivedHistoryReason::Undo));
 
-                let state = self.normal_mut()?;
+                let state = &mut self.state;
                 let len = state.messages.len();
 
                 let keep = len.saturating_sub(n);
@@ -170,32 +157,11 @@ impl History {
                 }
             }
             HistoryUpdate::TurnResponse(event) => {
-                self.normal_mut()?.handle_response(event)?;
+                self.state.handle_response(event)?;
             }
-            HistoryUpdate::CompactStart(start) => self.init_compact(start)?,
-            HistoryUpdate::CompactResponse(event) => {
-                let completed = matches!(event, AssistantEvent::Completed { .. });
-                self.compact_mut()?.handle_response(event)?;
-                if completed && self.apply_compact().is_err() {
-                    self.abort_compact()?;
-                }
-            }
+            HistoryUpdate::Compact(compaction) => self.compact(compaction)?,
         }
         Ok(())
-    }
-
-    fn normal_mut(&mut self) -> Result<&mut HistoryState> {
-        match &mut self.activity {
-            Activity::Normal { state } => Ok(state),
-            Activity::Compacting { .. } => bail!("requires Normal state"),
-        }
-    }
-
-    fn compact_mut(&mut self) -> Result<&mut CompactState> {
-        match &mut self.activity {
-            Activity::Compacting { compact, .. } => Ok(compact),
-            Activity::Normal { .. } => bail!("requires Compacting state"),
-        }
     }
 }
 

@@ -9,6 +9,7 @@ use anyhow::Result;
 use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
 use crate::agent::event::AgentEvent;
+use crate::agent::event::TaskOutput;
 use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
@@ -17,13 +18,12 @@ use crate::agent::id::AgentId;
 use crate::agent::task::ledger::Task;
 use crate::agent::task::ledger::TaskId;
 use crate::agent::task::ledger::TaskLedger;
-use crate::agent::task::ledger::TurnType;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::agent::tool::registry::ToolRegistry;
+use crate::config::CompactConfig;
 use crate::forward;
-use crate::llm::history::Activity;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::CompactStart;
+use crate::llm::history::Compaction;
 use crate::llm::history::History;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
@@ -43,6 +43,13 @@ pub struct AgentCore {
     pub ledger: TaskLedger,
     pub tools: ToolRegistry,
     pub assistants: Arc<AssistantPool>,
+    pub compact: CompactConfig,
+    /// a summary that landed mid-turn, applied at the turn boundary
+    pub compaction: Option<Compaction>,
+    /// a turn is due: a message arrived, or the last turn asked for a
+    /// follow-up; outlives `handle` only while a turn is in flight, or while
+    /// held back by the hard limit, waiting for the summary
+    pub wants_turn: bool,
 }
 
 /// fat effects: all decision-time state is captured at push time, so the
@@ -63,6 +70,14 @@ pub enum Effect {
         #[cfg_attr(test, serde(skip))]
         instructions: String,
         #[cfg_attr(test, serde(skip))]
+        messages: Vec<Message>,
+    },
+    /// a tool-less request whose text output is the summary
+    Summarize {
+        id: TaskId,
+        assistant: Assistant,
+        #[cfg_attr(test, serde(skip))]
+        instructions: String,
         messages: Vec<Message>,
     },
     RunTool {
@@ -90,6 +105,7 @@ impl AgentCore {
     pub fn new(
         mut state: AgentState,
         assistants: Arc<AssistantPool>,
+        compact: CompactConfig,
     ) -> Self {
         // restore repair: a dangling function_call in history would 400
         // every later turn
@@ -102,6 +118,9 @@ impl AgentCore {
             ledger: TaskLedger::default(),
             tools: TOOL_REGISTRY.clone(),
             assistants,
+            compact,
+            compaction: None,
+            wants_turn: false,
         }
     }
 
@@ -113,12 +132,11 @@ impl AgentCore {
     ) -> Result<()> {
         let result = match event {
             AgentEvent::User(command) => self.command(now, command, effects),
-            AgentEvent::Message(msg) => self.message(now, msg, effects),
+            AgentEvent::Message(msg) => self.deliver(now, msg, effects),
             AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
-                Some(&Task::Turn {
-                    generation,
-                    turn_type,
-                }) => self.handle_history(generation, turn_type.wrap(event), effects),
+                Some(&Task::Turn { generation }) => {
+                    self.handle_history(generation, HistoryUpdate::TurnResponse(event), effects)
+                }
                 _ => Ok(()),
             },
             AgentEvent::Output(tid, chunk) => {
@@ -141,19 +159,12 @@ impl AgentCore {
     ) -> Result<()> {
         match command {
             UserCommand::Submit(prompt) => self.submit(now, prompt, effects),
-            UserCommand::Compact(n) => {
-                self.idle()?;
-                self.init_compact(now, n, effects)?;
-                self.compact_turn(now, effects)
-            }
+            UserCommand::Compact(n) => self.compact(now, n, effects),
             UserCommand::Retry => {
                 self.idle()?;
                 self.increment_generation(effects)?;
-                if self.history().compacting() {
-                    self.compact_turn(now, effects)
-                } else {
-                    self.start_turn(now, effects)
-                }
+                self.wants_turn = true;
+                self.advance(now, effects)
             }
             UserCommand::Abort => self.abort(now, effects),
             UserCommand::Undo(n) => {
@@ -182,12 +193,10 @@ impl AgentCore {
     }
 
     pub fn derive_status(&self) -> ActivityStatus {
-        let busy = !self.ledger.idle();
-        match self.history().activity() {
-            Activity::Normal { state } => ActivityStatus::Normal(state.turn_status(busy)),
-            Activity::Compacting { compact, .. } => {
-                ActivityStatus::Compact(compact.state.turn_status(busy))
-            }
+        let busy = self.ledger.in_turn() || self.wants_turn;
+        ActivityStatus {
+            turn: self.history().state().turn_status(busy),
+            compacting: self.compacting(),
         }
     }
 
@@ -208,6 +217,10 @@ impl AgentCore {
         Ok(())
     }
 
+    fn compacting(&self) -> bool {
+        self.ledger.compacting() || self.compaction.is_some()
+    }
+
     fn handle_history(
         &mut self,
         generation: HistoryGeneration,
@@ -221,8 +234,7 @@ impl AgentCore {
             HistoryUpdate::TurnResponse(AssistantEvent::Item(item)) => {
                 self.run_tool_call(item, effects)?;
             }
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. })
-            | HistoryUpdate::CompactResponse(AssistantEvent::Failed { message, .. }) => {
+            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. }) => {
                 tracing::error!("response error: {message}");
             }
             _ => {}
@@ -231,7 +243,6 @@ impl AgentCore {
             event,
             HistoryUpdate::GenerationIncremented
                 | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
-                | HistoryUpdate::CompactResponse(AssistantEvent::Delta(_))
         );
         effects.push(Effect::Ui(UiEvent::HistoryUpdate(generation, event)));
         if skip_save {
@@ -322,23 +333,17 @@ impl AgentCore {
             (Task::Turn { .. }, Ok(_)) => {}
             // an erroring or panicking turn terminates its response, so the
             // next flush can't stack a turn on an orphaned InProgress one
-            (
-                Task::Turn {
-                    generation,
-                    turn_type,
-                },
-                Err(message),
-            ) => {
+            (Task::Turn { generation }, Err(message)) => {
                 effects.push(Effect::Ui(UiEvent::Error(message.clone())));
                 let failed = AssistantEvent::Failed {
                     message,
                     ended_at: now,
                 };
-                self.handle_history(generation, turn_type.wrap(failed), effects)?;
+                self.handle_history(generation, HistoryUpdate::TurnResponse(failed), effects)?;
             }
             // a streaming tool's authoritative text is the partial; its
             // return carries only metadata
-            (Task::Tool { partial, .. }, Ok(Some(mut item))) => {
+            (Task::Tool { partial, .. }, Ok(TaskOutput::Tool(mut item))) => {
                 item.task.compose(partial);
                 let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
                 self.handle_history(g, HistoryUpdate::TurnResponse(item), effects)?;
@@ -350,36 +355,70 @@ impl AgentCore {
                 let error = with_partial(marker, &partial);
                 self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error }, effects)?;
             }
+            (Task::Compact { n_drop }, Ok(TaskOutput::Summary(summary))) => {
+                self.compaction = Some(Compaction { n_drop, summary });
+                return self.advance(now, effects);
+            }
+            // the agent stops on a failed summary: retrying on our own could
+            // loop on a persistent error
+            (Task::Compact { .. }, result) => {
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| "compaction returned no summary".into());
+                effects.push(Effect::Ui(UiEvent::Error(error)));
+                self.wants_turn = false;
+                return Ok(());
+            }
         }
-        if !self.ledger.idle() {
-            return Ok(());
+        if !self.ledger.in_turn() {
+            self.wants_turn |= self.history().state().needs_another_turn();
         }
-        // flush at the true idle; a flushed message wakes on its own
-        let flushed = self.flush_pending(effects)?;
-        if (flushed || self.history().state().needs_another_turn()) && !self.history().compacting()
-        {
-            self.start_turn(now, effects)
-        } else {
-            Ok(())
-        }
+        self.advance(now, effects)
     }
 
-    /// the single inbound delivery path
-    fn message(
+    /// the turn boundary, a no-op while a turn is in flight: apply the
+    /// ready summary, then start the due turn -- unless that would go past
+    /// the hard limit while a summary is still coming
+    fn advance(
+        &mut self,
+        now: u64,
+        effects: &mut Vec<Effect>,
+    ) -> Result<()> {
+        if self.ledger.in_turn() {
+            return Ok(());
+        }
+        if let Some(compaction) = self.compaction.take() {
+            let g = self.history().generation();
+            self.handle_history(g, HistoryUpdate::Compact(compaction), effects)?;
+        }
+        if !self.wants_turn {
+            return Ok(());
+        }
+        self.flush_pending(effects)?;
+        self.autocompact(now, effects)?;
+        self.wants_turn = self.compacting() && self.past(self.compact.hard_limit);
+        if self.wants_turn {
+            return Ok(());
+        }
+        self.start_turn(now, effects)
+    }
+
+    /// the single inbound delivery path: buffered, then flushed at the
+    /// turn boundary
+    fn deliver(
         &mut self,
         now: u64,
         msg: UserMessage,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
         self.state.pending_messages.push(msg);
-        if self.ledger.idle() && !self.history().compacting() {
-            self.flush_pending(effects)?;
-            self.start_turn(now, effects)
-        } else {
+        self.wants_turn = true;
+        self.advance(now, effects)?;
+        if !self.state.pending_messages.is_empty() {
             // buffered and saved: survives restart
             effects.push(Effect::Save);
-            Ok(())
         }
+        Ok(())
     }
 
     /// startup wake: an idle agent flushes its saved buffer — a spawn
@@ -390,32 +429,22 @@ impl AgentCore {
         now: u64,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        if !self.ledger.idle() || self.history().compacting() {
-            return Ok(());
-        }
-        if self.flush_pending(effects)? {
-            self.start_turn(now, effects)?;
-            self.sync_status(effects);
-        }
+        self.wants_turn = !self.state.pending_messages.is_empty();
+        self.advance(now, effects)?;
+        self.sync_status(effects);
         Ok(())
     }
 
-    /// deliver buffered inbound messages at the current generation; never
-    /// mid-compact (a compacting history rejects user messages)
+    /// deliver buffered inbound messages at the current generation
     fn flush_pending(
         &mut self,
         effects: &mut Vec<Effect>,
-    ) -> Result<bool> {
-        if self.history().compacting() {
-            return Ok(false);
-        }
-        let pending = std::mem::take(&mut self.state.pending_messages);
-        let flushed = !pending.is_empty();
-        for msg in pending {
+    ) -> Result<()> {
+        for msg in std::mem::take(&mut self.state.pending_messages) {
             let generation = self.history().generation();
             self.handle_history(generation, HistoryUpdate::UserMessage(msg), effects)?;
         }
-        Ok(flushed)
+        Ok(())
     }
 
     fn submit(
@@ -424,63 +453,48 @@ impl AgentCore {
         UserPrompt { text, generation }: UserPrompt,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        // busy/compacting: queue instead of reject — pending messages carry
-        // no generation and flush into a fresh turn at the next true idle, so
-        // typed input is never destroyed and doubles as steering
-        if !self.ledger.idle() || self.history().compacting() {
-            self.state
-                .pending_messages
-                .push(UserMessage::new(text, now));
-            effects.push(Effect::Save);
-            return Ok(());
+        // busy: queue instead of reject — pending messages carry no
+        // generation and flush into a fresh turn at the next turn boundary,
+        // so typed input is never destroyed and doubles as steering
+        if !self.ledger.in_turn() && !self.wants_turn {
+            let current = self.history().generation();
+            // a stale submit is rejected *before* the flush: pending
+            // messages carry no generation and must never be dropped as stale
+            anyhow::ensure!(
+                generation.is_none_or(|g| g == current),
+                "history generation mismatch: expected {current}",
+            );
+            self.increment_generation(effects)?;
         }
-        let generation = generation.unwrap_or_else(|| self.history().generation());
-        // a stale submit is rejected *before* the flush: pending messages
-        // carry no generation and must never be dropped as stale
-        anyhow::ensure!(
-            generation == self.history().generation(),
-            "history generation mismatch: expected {}",
-            self.history().generation(),
-        );
         // drains a buffer stranded by abort — abort itself never flushes:
         // a naive flush would auto-start a turn on user abort
-        self.flush_pending(effects)?;
-        self.handle_history(
-            generation,
-            HistoryUpdate::UserMessage(UserMessage::new(text, now)),
-            effects,
-        )?;
-        self.increment_generation(effects)?;
-        self.start_turn(now, effects)
+        self.deliver(now, UserMessage::new(text, now), effects)
     }
 
     /// resolve everything in flight right here — the failed turn, and each
     /// tool call with what it streamed so far — then cancel the futures,
-    /// whose late events the cleared ledger ignores
+    /// whose late events the cleared ledger ignores; a summary is dropped
+    /// with them
     fn abort(
         &mut self,
         now: u64,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
         let tasks = self.ledger.clear();
+        self.compaction = None;
+        self.wants_turn = false;
         let g = self.increment_generation(effects)?;
-        let event = if self.history().compacting() {
-            Some(HistoryUpdate::CompactAbort)
-        } else if self
+        if self
             .history()
             .state()
             .status()
             .is_some_and(|s| s.failable())
         {
-            Some(HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+            let failed = AssistantEvent::Failed {
                 message: ABORTED_BY_USER.into(),
                 ended_at: now,
-            }))
-        } else {
-            None
-        };
-        if let Some(event) = event {
-            self.handle_history(g, event, effects)?;
+            };
+            self.handle_history(g, HistoryUpdate::TurnResponse(failed), effects)?;
         }
         for task in tasks {
             if let Task::Tool { call_id, partial } = task {
@@ -492,37 +506,67 @@ impl AgentCore {
         Ok(())
     }
 
-    fn init_compact(
+    fn window(&self) -> Option<usize> {
+        self.assistants
+            .assistant(&self.state.assistant_id)
+            .ok()?
+            .config
+            .window
+    }
+
+    /// the history takes up at least `percent` of the context window
+    fn past(
+        &self,
+        percent: usize,
+    ) -> bool {
+        self.window()
+            .is_some_and(|window| self.history().token_count() * 100 >= window * percent)
+    }
+
+    /// past the threshold, summarize just enough of the oldest messages to
+    /// get down to the target
+    fn autocompact(
+        &mut self,
+        now: u64,
+        effects: &mut Vec<Effect>,
+    ) -> Result<()> {
+        let Some(window) = self.window() else {
+            return Ok(());
+        };
+        if self.compacting() || !self.past(self.compact.threshold) {
+            return Ok(());
+        }
+        match self
+            .history()
+            .window_percentage_to_n_msg(window, self.compact.target)
+        {
+            0 => Ok(()),
+            n_drop => self.compact(now, n_drop, effects),
+        }
+    }
+
+    /// summarize the first `n_drop` messages alongside the turns; the
+    /// summary replaces them at the turn boundary
+    fn compact(
         &mut self,
         now: u64,
         n_drop: usize,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        if n_drop == 0 {
-            return Ok(());
-        }
-        let g = self.history().generation();
-        self.handle_history(
-            g,
-            HistoryUpdate::CompactStart(CompactStart::new(n_drop, now)),
-            effects,
-        )
-    }
-
-    fn compact_turn(
-        &mut self,
-        now: u64,
-        effects: &mut Vec<Effect>,
-    ) -> Result<()> {
-        // resolve the input before CompactResponse(Created) lands
-        let messages = self.history().compact_turn_input()?;
-        self.spawn_turn(
-            now,
-            ToolRegistry::empty(),
-            messages,
-            TurnType::Compact,
-            effects,
-        )
+        anyhow::ensure!(!self.compacting(), "already compacting");
+        // a turn in flight still writes to the last message: leave it out
+        let len = self.history().state().len();
+        let stable = if self.ledger.in_turn() { len - 1 } else { len };
+        let n_drop = n_drop.min(stable);
+        anyhow::ensure!(n_drop > 0, "nothing to compact");
+        let assistant = self.assistants.assistant(&self.state.assistant_id)?;
+        effects.push(Effect::Summarize {
+            id: self.ledger.register(Task::Compact { n_drop }),
+            assistant,
+            instructions: self.history().instructions().to_string(),
+            messages: self.history().compact_input(n_drop, now),
+        });
+        Ok(())
     }
 
     fn start_turn(
@@ -530,39 +574,19 @@ impl AgentCore {
         now: u64,
         effects: &mut Vec<Effect>,
     ) -> Result<()> {
-        // clone before the Created event appends the queued assistant message
-        let messages = self.history().state().messages.clone();
-        self.spawn_turn(
-            now,
-            self.tools.clone(),
-            messages,
-            TurnType::Default,
-            effects,
-        )
-    }
-
-    fn spawn_turn(
-        &mut self,
-        now: u64,
-        tools: ToolRegistry,
-        messages: Vec<Message>,
-        turn_type: TurnType,
-        effects: &mut Vec<Effect>,
-    ) -> Result<()> {
         // resolve the fallible lookup before any history/ledger mutation: a
         // stale assistant id must fail the submit, not wedge the agent busy
         let assistant = self.assistants.assistant(&self.state.assistant_id)?;
-        let created = turn_type.wrap(AssistantEvent::Created { created_at: now });
+        // clone before the Created event appends the queued assistant message
+        let messages = self.history().state().messages.clone();
         let generation = self.history().generation();
         let instructions = self.history().instructions().to_string();
-        self.handle_history(generation, created, effects)?;
+        let created = AssistantEvent::Created { created_at: now };
+        self.handle_history(generation, HistoryUpdate::TurnResponse(created), effects)?;
         effects.push(Effect::StartTurn {
-            id: self.ledger.register(Task::Turn {
-                generation,
-                turn_type,
-            }),
+            id: self.ledger.register(Task::Turn { generation }),
             assistant,
-            tools,
+            tools: self.tools.clone(),
             instructions,
             messages,
         });
@@ -584,8 +608,11 @@ fn with_partial(
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
     use crate::llm::history::TurnStatus;
+    use crate::llm::history::message::CompactMessage;
     use crate::llm::history::message::OutputContent;
     use crate::llm::history::message::OutputItem;
     use crate::tools::todo::TodoArguments;
@@ -597,7 +624,7 @@ mod tests {
         pub fn fake() -> Self {
             let pool = Arc::new(AssistantPool::fake().0);
             let state = AgentState::new("test".into(), String::new(), String::new());
-            Self::new(state, pool)
+            Self::new(state, pool, CompactConfig::default())
         }
     }
 
@@ -674,6 +701,64 @@ mod tests {
         })))
     }
 
+    fn user_message(text: &str) -> HistoryUpdate {
+        HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0))
+    }
+
+    /// core with the given user messages already in history
+    fn core_with(texts: &[&str]) -> AgentCore {
+        let mut core = AgentCore::fake();
+        for text in texts {
+            core.history_mut().handle(0, user_message(text)).unwrap();
+        }
+        core
+    }
+
+    /// id of the summary task the effects started
+    fn summary_task(effects: &[Effect]) -> TaskId {
+        effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Summarize { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("no summary task")
+    }
+
+    fn starts_turn(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::StartTurn { .. }))
+    }
+
+    fn summary(text: &str) -> TaskResult {
+        Ok(TaskOutput::Summary(CompactMessage {
+            text: text.into(),
+            token_count: 0,
+            created_at: 1,
+            started_at: 2,
+            ended_at: 3,
+        }))
+    }
+
+    /// `words` tokens of filler
+    fn filler(words: usize) -> String {
+        " word".repeat(words)
+    }
+
+    /// two 30k fillers and a short tail: past 50% of the fake window, and
+    /// dropping the first filler alone gets under 35%
+    fn core_near_full(hard_limit: usize) -> AgentCore {
+        let (big1, big2) = (filler(30_000), filler(30_000));
+        let mut core = core_with(&[&big1, &big2, "tail"]);
+        core.compact = CompactConfig {
+            threshold: 50,
+            target: 35,
+            hard_limit,
+        };
+        core
+    }
+
     macro_rules! assert_handled {
         ($core:expr, $now:expr, $event:expr, @$snapshot:literal) => {{
             let (result, effects) = drive($core, $now, $event);
@@ -696,19 +781,20 @@ mod tests {
     fn submit_starts_turn() {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 7, submit("hi", 0), @"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
+                - GenerationIncremented
+          - Ui:
+              HistoryUpdate:
+                - 1
                 - UserMessage:
                     text: hi
                     token_count: 1
                     created_at: 7
           - Save
-          - Ui:
-              HistoryUpdate:
-                - 0
-                - GenerationIncremented
           - Ui:
               HistoryUpdate:
                 - 1
@@ -719,7 +805,8 @@ mod tests {
               id: 0
               assistant: test
           - Status:
-              Normal: InProgress
+              turn: InProgress
+              compacting: false
         ");
     }
 
@@ -728,7 +815,8 @@ mod tests {
         let mut core = AgentCore::fake();
         assert_rejected!(&mut core, 7, submit("hi", 1), @r#"
         - "history generation mismatch: expected 0"
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - []
         "#);
     }
@@ -738,10 +826,12 @@ mod tests {
         let mut core = AgentCore::fake();
         core.ledger.register(Task::turn());
         assert_handled!(&mut core, 7, submit("hi", 0), @"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Save
           - Status:
-              Normal: InProgress
+              turn: InProgress
+              compacting: false
         ");
         assert_eq!(core.state.pending_messages.len(), 1);
     }
@@ -764,7 +854,7 @@ mod tests {
         )
         .0
         .unwrap();
-        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)));
+        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)));
         result.unwrap();
         assert!(serde_json::to_string(&effects).unwrap().contains("steer"));
         assert!(
@@ -802,7 +892,10 @@ mod tests {
         drive(&mut core, 9, submit("retry", 1)).0.unwrap();
         similar_asserts::assert_eq!(
             core.derive_status(),
-            ActivityStatus::Normal(TurnStatus::InProgress)
+            ActivityStatus {
+                turn: TurnStatus::InProgress,
+                compacting: false,
+            }
         );
     }
 
@@ -811,8 +904,9 @@ mod tests {
         let mut core = AgentCore::fake();
         drive(&mut core, 7, submit("hi", 0)).0.unwrap();
         assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
-        - Normal:
+        - turn:
             Failed: aborted by user
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 1
@@ -827,8 +921,9 @@ mod tests {
           - Save
           - AbortTasks
           - Status:
-              Normal:
+              turn:
                 Failed: aborted by user
+              compacting: false
         ");
         assert!(matches!(
             core.history().state().last(),
@@ -840,122 +935,12 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_compact_failure_restarts_compaction() {
-        let mut core = AgentCore::fake();
-        let history = core.history_mut();
-        history
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("x".repeat(2000), 0)),
-            )
-            .unwrap();
-        history
-            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1, 0)))
-            .unwrap();
-        history
-            .handle(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Created { created_at: 0 }),
-            )
-            .unwrap();
-        history
-            .handle(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed {
-                    message: "oops".into(),
-                    ended_at: 1,
-                }),
-            )
-            .unwrap();
-
-        assert_handled!(&mut core, 7, user(UserCommand::Retry), @"
-        - Compact: InProgress
-        - - Ui:
-              HistoryUpdate:
-                - 0
-                - GenerationIncremented
-          - Ui:
-              HistoryUpdate:
-                - 1
-                - CompactResponse:
-                    Created:
-                      created_at: 7
-          - Save
-          - StartTurn:
-              id: 0
-              assistant: test
-          - Status:
-              Compact: InProgress
-        ");
-        assert!(core.history().compacting());
-    }
-
-    #[test]
-    fn compact_zero_messages_is_rejected() {
-        let mut core = AgentCore::fake();
-        core.history_mut()
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("short".into(), 0)),
-            )
-            .unwrap();
-        assert_rejected!(&mut core, 7, user(UserCommand::Compact(0)), @"
-        - no compact available
-        - Normal: Idle
-        - []
-        ");
-        assert!(core.ledger.idle());
-        assert!(!core.history().compacting());
-    }
-
-    #[test]
-    fn compact_failure_does_not_start_normal_turn() {
-        let mut core = AgentCore::fake();
-        let history = core.history_mut();
-        history
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
-            )
-            .unwrap();
-        history
-            .handle(0, HistoryUpdate::CompactStart(CompactStart::new(1, 0)))
-            .unwrap();
-        history
-            .handle(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Created { created_at: 0 }),
-            )
-            .unwrap();
-        history
-            .handle(
-                0,
-                HistoryUpdate::CompactResponse(AssistantEvent::Failed {
-                    message: "oops".into(),
-                    ended_at: 1,
-                }),
-            )
-            .unwrap();
-        let tid = core.ledger.register(Task::Turn {
-            generation: 0,
-            turn_type: TurnType::Compact,
-        });
-
-        assert_handled!(&mut core, 7, AgentEvent::Done(tid, Ok(None)), @"
-        - Compact:
-            Failed: oops
-        - - Status:
-              Compact:
-                Failed: oops
-        ");
-        assert!(core.ledger.idle());
-        assert!(core.history().compacting());
-    }
-
-    #[test]
     fn task_failure_emits_error_and_keeps_failed_status() {
         let mut core = AgentCore::fake();
-        core.state.status = ActivityStatus::Normal(TurnStatus::InProgress);
+        core.state.status = ActivityStatus {
+            turn: TurnStatus::InProgress,
+            compacting: false,
+        };
         let history = core.history_mut();
         history
             .handle(
@@ -981,8 +966,9 @@ mod tests {
         let tid = core.ledger.register(Task::turn());
 
         assert_handled!(&mut core, 7, AgentEvent::Done(tid, Err("oops".into())), @"
-        - Normal:
+        - turn:
             Failed: oops
+          compacting: false
         - - Ui:
               Error: oops
           - Ui:
@@ -994,8 +980,9 @@ mod tests {
                       ended_at: 7
           - Save
           - Status:
-              Normal:
+              turn:
                 Failed: oops
+              compacting: false
         ");
     }
 
@@ -1005,7 +992,8 @@ mod tests {
         core.ledger.register(Task::turn());
         assert_rejected!(&mut core, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - agent is busy
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - []
         ");
         assert_eq!(core.state.assistant_id, "test");
@@ -1015,7 +1003,8 @@ mod tests {
     fn set_assistant_resolves_to_single_effect() {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 7, user(UserCommand::SetAssistant("test2".into())), @"
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - - SetAssistant: test2
         ");
         // core state untouched: `Agent` applies it after the save succeeds
@@ -1027,47 +1016,18 @@ mod tests {
         let mut core = AgentCore::fake();
         assert_rejected!(&mut core, 7, user(UserCommand::SetAssistant("nope".into())), @r#"
         - "unknown assistant \"nope\""
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - []
         "#);
-    }
-
-    #[test]
-    fn abort_while_compacting_aborts_compact() {
-        let mut core = AgentCore::fake();
-        core.history_mut()
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
-            )
-            .unwrap();
-        drive(&mut core, 5, user(UserCommand::Compact(1)))
-            .0
-            .unwrap();
-
-        assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
-        - Normal: Idle
-        - - Ui:
-              HistoryUpdate:
-                - 0
-                - GenerationIncremented
-          - Ui:
-              HistoryUpdate:
-                - 1
-                - CompactAbort
-          - Save
-          - AbortTasks
-          - Status:
-              Normal: Idle
-        ");
-        assert!(!core.history().compacting());
     }
 
     #[test]
     fn abort_while_idle_emits_no_history_event() {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 9, user(UserCommand::Abort), @"
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
@@ -1084,8 +1044,9 @@ mod tests {
         drive(&mut core, 2, user(UserCommand::Abort)).0.unwrap();
 
         assert_handled!(&mut core, 3, AgentEvent::Done(tid, Err("stream closed".into())), @"
-        - Normal:
+        - turn:
             Failed: aborted by user
+          compacting: false
         - - Ui:
               Error: stream closed
         ");
@@ -1099,8 +1060,9 @@ mod tests {
         drive(&mut core, 2, user(UserCommand::Abort)).0.unwrap();
 
         assert_handled!(&mut core, 3, AgentEvent::Stream(tid, text_output("out", "late")), @"
-        - Normal:
+        - turn:
             Failed: aborted by user
+          compacting: false
         - []
         ");
     }
@@ -1159,16 +1121,17 @@ mod tests {
         .0
         .unwrap();
         // the turn task finishing leaves the tool task pending: no new turn yet
-        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)));
+        let (result, effects) = drive(&mut core, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)));
         result.unwrap();
         assert!(effects.is_empty());
 
         // the reaper's terminal resolves the slot and starts the follow-up
         assert_handled!(
             &mut core, 6,
-            AgentEvent::Done(tool, Ok(Some(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
+            AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
             @r#"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 1
@@ -1215,7 +1178,7 @@ mod tests {
         )
         .0
         .unwrap();
-        drive(&mut core, 4, AgentEvent::Done(turn, Ok(None)))
+        drive(&mut core, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)))
             .0
             .unwrap();
 
@@ -1228,7 +1191,8 @@ mod tests {
             &mut core, 5,
             AgentEvent::Done(tool, Err("tool panicked: boom".into())),
             @r#"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 1
@@ -1266,7 +1230,8 @@ mod tests {
     fn message_while_idle_appends_and_wakes() {
         let mut core = AgentCore::fake();
         assert_handled!(&mut core, 7, message("[from: kid]\nhi"), @r#"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
@@ -1285,7 +1250,8 @@ mod tests {
               id: 0
               assistant: test
           - Status:
-              Normal: InProgress
+              turn: InProgress
+              compacting: false
         "#);
         assert!(core.state.pending_messages.is_empty());
     }
@@ -1298,7 +1264,8 @@ mod tests {
 
         // turn still streaming: buffered, save only
         assert_handled!(&mut core, 2, message("[from: kid]\nearly bird"), @"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Save
         ");
         assert_eq!(core.state.pending_messages.len(), 1);
@@ -1311,8 +1278,9 @@ mod tests {
         .0
         .unwrap();
         // idle: the buffer flushes and wakes the agent
-        assert_handled!(&mut core, 4, AgentEvent::Done(turn, Ok(None)), @r#"
-        - Normal: InProgress
+        assert_handled!(&mut core, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @r#"
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 1
@@ -1342,7 +1310,8 @@ mod tests {
         core.state.assistant_id = "gone".into();
         assert_rejected!(&mut core, 5, message("[from: kid]\nhi"), @r#"
         - "unknown assistant \"gone\""
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
@@ -1352,49 +1321,6 @@ mod tests {
                     created_at: 5
           - Save
         "#);
-    }
-
-    #[test]
-    fn message_while_compacting_stays_buffered() {
-        let mut core = AgentCore::fake();
-        core.history_mut()
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
-            )
-            .unwrap();
-        let (_, effects) = drive(&mut core, 5, user(UserCommand::Compact(1)));
-        let compact = started_task(&effects);
-
-        assert_handled!(&mut core, 6, message("[from: kid]\nmid compact"), @"
-        - Compact: InProgress
-        - - Save
-        ");
-        assert_eq!(core.state.pending_messages.len(), 1);
-
-        // a failed compact leaves the history compacting: the buffer holds
-        drive(
-            &mut core,
-            7,
-            AgentEvent::Stream(
-                compact,
-                AssistantEvent::Failed {
-                    message: "oops".into(),
-                    ended_at: 7,
-                },
-            ),
-        )
-        .0
-        .unwrap();
-        let (result, effects) = drive(&mut core, 8, AgentEvent::Done(compact, Ok(None)));
-        result.unwrap();
-        assert!(
-            !serde_json::to_string(&effects)
-                .unwrap()
-                .contains("mid compact")
-        );
-        assert_eq!(core.state.pending_messages.len(), 1);
-        assert!(core.history().compacting());
     }
 
     #[test]
@@ -1454,7 +1380,7 @@ mod tests {
         // simulated restart: rebuild the core from the persisted state
         let json = serde_json::to_value(&core.state).unwrap();
         let restored: AgentState = serde_json::from_value(json).unwrap();
-        let mut restored = AgentCore::new(restored, core.assistants.clone());
+        let mut restored = AgentCore::new(restored, core.assistants.clone(), core.compact);
         assert_eq!(restored.state.pending_messages.len(), 1);
 
         // resume (the startup wake) delivers the buffered message and starts
@@ -1485,7 +1411,7 @@ mod tests {
 
         let json = serde_json::to_value(&core.state).unwrap();
         let restored: AgentState = serde_json::from_value(json).unwrap();
-        let mut restored = AgentCore::new(restored, core.assistants.clone());
+        let mut restored = AgentCore::new(restored, core.assistants.clone(), core.compact);
         assert_eq!(restored.state.pending_messages.len(), 1);
 
         // restored generation resets to 0: it is #[serde(skip)]
@@ -1577,10 +1503,12 @@ mod tests {
         .0
         .unwrap();
 
-        assert_handled!(&mut core, 4, AgentEvent::Done(tid, Ok(None)), @"
-        - Normal: Idle
+        assert_handled!(&mut core, 4, AgentEvent::Done(tid, Ok(TaskOutput::Turn)), @"
+        - turn: Idle
+          compacting: false
         - - Status:
-              Normal: Idle
+              turn: Idle
+              compacting: false
         ");
     }
 
@@ -1604,8 +1532,9 @@ mod tests {
         .unwrap();
 
         assert_handled!(&mut core, 3, AgentEvent::Done(tid, Err("boom".into())), @"
-        - Normal:
+        - turn:
             Failed: boom
+          compacting: false
         - - Ui:
               Error: boom
           - Ui:
@@ -1617,8 +1546,9 @@ mod tests {
                       ended_at: 3
           - Save
           - Status:
-              Normal:
+              turn:
                 Failed: boom
+              compacting: false
         ");
     }
 
@@ -1632,7 +1562,8 @@ mod tests {
             &mut core, 2,
             AgentEvent::Stream(tid, todo_call(Some(Ok(TodoResult {})))),
             @r#"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 1
@@ -1684,7 +1615,8 @@ mod tests {
             .unwrap();
 
         assert_handled!(&mut core, 7, user(UserCommand::Retry), @"
-        - Normal: InProgress
+        - turn: InProgress
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
@@ -1700,7 +1632,8 @@ mod tests {
               id: 0
               assistant: test
           - Status:
-              Normal: InProgress
+              turn: InProgress
+              compacting: false
         ");
     }
 
@@ -1718,7 +1651,8 @@ mod tests {
         }
 
         assert_handled!(&mut core, 7, user(UserCommand::Undo(1)), @"
-        - Normal: Idle
+        - turn: Idle
+          compacting: false
         - - Ui:
               HistoryUpdate:
                 - 0
@@ -1730,5 +1664,339 @@ mod tests {
           - Save
         ");
         assert_eq!(core.history().state().messages.len(), 1);
+    }
+
+    #[test]
+    fn compact_runs_alongside_turn_and_applies_at_turn_end() {
+        let mut core = core_with(&["first"]);
+        let (_, effects) = drive(&mut core, 1, submit("hi", 0));
+        let turn = started_task(&effects);
+
+        // the in-flight assistant message is left out of the summary
+        let (result, effects) = drive(&mut core, 2, user(UserCommand::Compact(99)));
+        result.unwrap();
+        let compact = summary_task(&effects);
+        insta::assert_yaml_snapshot!((core.derive_status(), effects), @r#"
+        - turn: InProgress
+          compacting: true
+        - - Summarize:
+              id: 1
+              assistant: test
+              messages:
+                - role: user
+                  text: first
+                  token_count: 1
+                  created_at: 0
+                - role: user
+                  text: hi
+                  token_count: 1
+                  created_at: 1
+                - role: user
+                  text: "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only."
+                  token_count: 35
+                  created_at: 2
+          - Status:
+              turn: InProgress
+              compacting: true
+        "#);
+
+        // the summary lands mid-turn: held until the turn ends
+        assert_handled!(&mut core, 3, AgentEvent::Done(compact, summary("gist")), @"
+        - turn: InProgress
+          compacting: true
+        - []
+        ");
+        drive(
+            &mut core,
+            4,
+            AgentEvent::Stream(turn, text_output("out", "done")),
+        )
+        .0
+        .unwrap();
+        drive(
+            &mut core,
+            5,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 5 }),
+        )
+        .0
+        .unwrap();
+        assert_handled!(&mut core, 6, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @"
+        - turn: Idle
+          compacting: false
+        - - Ui:
+              HistoryUpdate:
+                - 1
+                - Compact:
+                    n_drop: 2
+                    summary:
+                      text: gist
+                      token_count: 0
+                      created_at: 1
+                      started_at: 2
+                      ended_at: 3
+          - Save
+          - Status:
+              turn: Idle
+              compacting: false
+        ");
+        insta::assert_yaml_snapshot!(core.history().state().messages, @"
+        - role: developer
+          Compact:
+            text: gist
+            token_count: 1
+            created_at: 1
+            started_at: 2
+            ended_at: 3
+        - role: assistant
+          status: Success
+          content:
+            - - out
+              - Output:
+                  id: out
+                  content:
+                    - Text: done
+                  token_count: 1
+                  started_at: 1
+                  ended_at: ~
+          token_count: 1
+          created_at: 1
+          started_at: ~
+          ended_at: 5
+          ready_at: ~
+        ");
+    }
+
+    #[test]
+    fn compact_while_idle_applies_on_arrival() {
+        let mut core = core_with(&["first", "second"]);
+        let (_, effects) = drive(&mut core, 1, user(UserCommand::Compact(1)));
+        let compact = summary_task(&effects);
+
+        assert_handled!(&mut core, 2, AgentEvent::Done(compact, summary("gist")), @"
+        - turn: Idle
+          compacting: false
+        - - Ui:
+              HistoryUpdate:
+                - 0
+                - Compact:
+                    n_drop: 1
+                    summary:
+                      text: gist
+                      token_count: 0
+                      created_at: 1
+                      started_at: 2
+                      ended_at: 3
+          - Save
+          - Status:
+              turn: Idle
+              compacting: false
+        ");
+        assert_eq!(core.history().state().messages.len(), 2);
+    }
+
+    #[test]
+    fn submit_while_compacting_starts_turn_right_away() {
+        let mut core = core_with(&["first"]);
+        drive(&mut core, 1, user(UserCommand::Compact(1)))
+            .0
+            .unwrap();
+
+        let (result, effects) = drive(&mut core, 2, submit("hi", 0));
+        result.unwrap();
+        assert!(starts_turn(&effects));
+        assert!(core.ledger.in_turn() && core.ledger.compacting());
+    }
+
+    #[test]
+    fn commands_rejected_while_compacting() {
+        let mut core = core_with(&["first", "second"]);
+        drive(&mut core, 1, user(UserCommand::Compact(1)))
+            .0
+            .unwrap();
+
+        assert_rejected!(&mut core, 2, user(UserCommand::Compact(1)), @"
+        - already compacting
+        - turn: Idle
+          compacting: true
+        - []
+        ");
+        assert_rejected!(&mut core, 3, user(UserCommand::Undo(1)), @"
+        - agent is busy
+        - turn: Idle
+          compacting: true
+        - []
+        ");
+    }
+
+    #[test]
+    fn compact_zero_messages_is_rejected() {
+        let mut core = core_with(&["short"]);
+        assert_rejected!(&mut core, 7, user(UserCommand::Compact(0)), @"
+        - nothing to compact
+        - turn: Idle
+          compacting: false
+        - []
+        ");
+        assert!(core.ledger.idle());
+    }
+
+    #[test]
+    fn abort_drops_compaction() {
+        let mut core = core_with(&["first"]);
+        drive(&mut core, 1, submit("hi", 0)).0.unwrap();
+        let (_, effects) = drive(&mut core, 2, user(UserCommand::Compact(1)));
+        let compact = summary_task(&effects);
+
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
+        assert!(!core.derive_status().compacting);
+
+        // the late summary is stale
+        assert_handled!(&mut core, 4, AgentEvent::Done(compact, summary("gist")), @"
+        - turn:
+            Failed: aborted by user
+          compacting: false
+        - []
+        ");
+        assert!(core.compaction.is_none());
+    }
+
+    /// abort strands the buffer on purpose: a summary landing later must
+    /// not flush it into a turn the user didn't ask for
+    #[test]
+    fn summary_after_abort_keeps_stranded_buffer() {
+        let mut core = core_with(&["first"]);
+        drive(&mut core, 1, submit("hi", 0)).0.unwrap();
+        drive(&mut core, 2, message("[from: kid]\nstranded"))
+            .0
+            .unwrap();
+        drive(&mut core, 3, user(UserCommand::Abort)).0.unwrap();
+        let (_, effects) = drive(&mut core, 4, user(UserCommand::Compact(1)));
+        let compact = summary_task(&effects);
+
+        let (result, effects) = drive(&mut core, 5, AgentEvent::Done(compact, summary("gist")));
+        result.unwrap();
+
+        assert!(!starts_turn(&effects));
+        assert_eq!(core.state.pending_messages.len(), 1);
+        assert!(core.ledger.idle());
+    }
+
+    #[test]
+    fn autocompact_past_threshold_runs_alongside_the_turn() {
+        let mut core = core_near_full(100);
+
+        let (result, effects) = drive(&mut core, 1, submit("hi", 0));
+        result.unwrap();
+
+        let compact = summary_task(&effects);
+        assert!(matches!(
+            core.ledger.get(compact),
+            Some(Task::Compact { n_drop: 1 })
+        ));
+        assert!(starts_turn(&effects));
+    }
+
+    #[test]
+    fn autocompact_below_threshold_does_nothing() {
+        let mut core = core_near_full(100);
+        core.compact.threshold = 90;
+
+        let (result, effects) = drive(&mut core, 1, submit("hi", 0));
+        result.unwrap();
+
+        assert!(!core.ledger.compacting());
+        assert!(starts_turn(&effects));
+    }
+
+    #[test]
+    fn hard_limit_holds_turn_until_summary_lands() {
+        let mut core = core_near_full(50);
+
+        let (result, effects) = drive(&mut core, 1, submit("hi", 0));
+        result.unwrap();
+        let compact = summary_task(&effects);
+        assert!(!starts_turn(&effects));
+        // the prompt is in history, its turn is held
+        assert!(matches!(
+            core.history().state().last(),
+            Some(Message::User(UserMessage { text, .. })) if text == "hi"
+        ));
+        insta::assert_yaml_snapshot!(core.derive_status(), @"
+        turn: InProgress
+        compacting: true
+        ");
+
+        // held = busy: a second prompt lands without starting a turn either
+        let (result, effects) = drive(&mut core, 2, submit("more", 999));
+        result.unwrap();
+        assert!(!starts_turn(&effects));
+
+        let (result, effects) = drive(&mut core, 3, AgentEvent::Done(compact, summary("gist")));
+        result.unwrap();
+        assert!(starts_turn(&effects));
+        assert!(!core.derive_status().compacting);
+        insta::assert_yaml_snapshot!(
+            core.history().state().messages,
+            {
+                "[0].Compact.token_count" => "[tokens]",
+                "[1].text" => "[filler]",
+            },
+            @r#"
+        - role: developer
+          Compact:
+            text: gist
+            token_count: "[tokens]"
+            created_at: 1
+            started_at: 2
+            ended_at: 3
+        - role: user
+          text: "[filler]"
+          token_count: 30000
+          created_at: 0
+        - role: user
+          text: tail
+          token_count: 1
+          created_at: 0
+        - role: user
+          text: hi
+          token_count: 1
+          created_at: 1
+        - role: user
+          text: more
+          token_count: 1
+          created_at: 2
+        - role: assistant
+          status: Queued
+          content: []
+          token_count: 0
+          created_at: 3
+          started_at: ~
+          ended_at: ~
+          ready_at: ~
+        "#
+        );
+    }
+
+    #[test]
+    fn failed_summary_stops_held_turn() {
+        let mut core = core_near_full(50);
+        let (_, effects) = drive(&mut core, 1, submit("hi", 0));
+        let compact = summary_task(&effects);
+
+        assert_handled!(&mut core, 2, AgentEvent::Done(compact, Err("rate limited".into())), @"
+        - turn: Idle
+          compacting: false
+        - - Ui:
+              Error: rate limited
+          - Status:
+              turn: Idle
+              compacting: false
+        ");
+
+        // retry asks for a fresh summary, and holds the turn again
+        let (result, effects) = drive(&mut core, 3, user(UserCommand::Retry));
+        result.unwrap();
+        summary_task(&effects);
+        assert!(!starts_turn(&effects));
     }
 }

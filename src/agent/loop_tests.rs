@@ -266,10 +266,7 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
     let _ = agent.handle(submit()).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
 
-    assert!(matches!(
-        agent.core.state.status,
-        ActivityStatus::Normal(TurnStatus::Idle)
-    ));
+    assert_eq!(agent.core.state.status, ActivityStatus::default());
     // second request must carry the executed tool call back to the assistant
     assert_eq!(fake.requests().len(), 2);
     assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
@@ -351,7 +348,7 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
 
     assert!(matches!(
         &agent.core.state.status,
-        ActivityStatus::Normal(TurnStatus::Failed(msg)) if msg == "aborted by user"
+        ActivityStatus { turn: TurnStatus::Failed(msg), compacting: false } if msg == "aborted by user"
     ));
     assert!(agent.core.ledger.idle());
     assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
@@ -491,10 +488,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     // abort returned with the call already finalized: partial output kept,
     // marked aborted, ledger unstuck
     assert!(agent.core.ledger.idle());
-    assert!(matches!(
-        agent.core.state.status,
-        ActivityStatus::Normal(TurnStatus::Idle)
-    ));
+    assert_eq!(agent.core.state.status, ActivityStatus::default());
     assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
     - role: user
       text: hi
@@ -985,8 +979,112 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
 }
 
 #[tokio::test]
-async fn compact_failure_then_retry_compacts_history() {
+async fn compaction_runs_alongside_tool_loop() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-compact").await;
+    let mut mail = register(&agent);
+    agent
+        .core
+        .history_mut()
+        .handle(
+            0,
+            HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
+        )
+        .unwrap();
+    // one provider slot: requests run in the order they were made
+    fake.script_turn(vec![
+        todo_call("call-1"),
+        AssistantEvent::Completed { ended_at: 3 },
+    ]);
+    fake.script_turn(vec![
+        output("sum-1", 1),
+        delta("sum-1", "a concise summary", 2),
+        AssistantEvent::Completed { ended_at: 3 },
+    ]);
+    fake.script_turn(vec![
+        output("out-2", 4),
+        delta("out-2", "done", 5),
+        AssistantEvent::Completed { ended_at: 6 },
+    ]);
+
+    let _ = agent.handle(submit()).await.unwrap();
+    let _ = agent
+        .handle(AgentEvent::User(UserCommand::Compact(1)))
+        .await
+        .unwrap();
+    assert!(agent.core.ledger.in_turn() && agent.core.ledger.compacting());
+    pump_until(&mut agent, &mut mail, |a| {
+        a.core.ledger.idle() && !a.core.derive_status().compacting
+    })
+    .await;
+
+    assert_eq!(fake.requests().len(), 3);
+    assert_messages_snapshot!(&fake.requests()[1], @r#"
+    - role: user
+      text: first
+      token_count: 1
+      created_at: "[ts]"
+    - role: user
+      text: "Summarize this conversation for future continuation. Keep concrete user requirements, decisions, constraints, file paths, and unresolved work. Be concise and factual. Output plain text only."
+      token_count: 35
+      created_at: "[ts]"
+    "#);
+    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
+    - role: developer
+      Compact:
+        text: a concise summary
+        token_count: 3
+        created_at: "[ts]"
+        started_at: "[ts]"
+        ended_at: "[ts]"
+    - role: user
+      text: hi
+      token_count: 1
+      created_at: "[ts]"
+    - role: assistant
+      status: Success
+      content:
+        - - call-1
+          - ToolCall:
+              id: call-1
+              call_id: call-1
+              name: todo
+              arguments:
+                current: ""
+                entries: []
+              meta: ~
+              output:
+                Ok: {}
+              token_count: 17
+              started_at: "[ts]"
+              ended_at: "[ts]"
+              ready_at: "[ts]"
+      token_count: 17
+      created_at: "[ts]"
+      started_at: "[ts]"
+      ended_at: "[ts]"
+      ready_at: "[ts]"
+    - role: assistant
+      status: Success
+      content:
+        - - out-2
+          - Output:
+              id: out-2
+              content:
+                - Text: done
+              token_count: 1
+              started_at: "[ts]"
+              ended_at: "[ts]"
+      token_count: 1
+      created_at: "[ts]"
+      started_at: "[ts]"
+      ended_at: "[ts]"
+      ready_at: "[ts]"
+    "#);
+}
+
+#[tokio::test]
+async fn failed_compaction_keeps_history() {
+    let (mut agent, fake, mut parent_rx) = Agent::fake("loop-compact-fail").await;
     let mut mail = register(&agent);
     for text in ["first", "second"] {
         agent
@@ -1002,47 +1100,20 @@ async fn compact_failure_then_retry_compacts_history() {
         message: "rate limited".into(),
         ended_at: 9,
     }]);
-    fake.script_turn(vec![
-        output("sum-1", 1),
-        delta("sum-1", "a concise summary", 2),
-        AssistantEvent::Completed { ended_at: 3 },
-    ]);
 
     let _ = agent
         .handle(AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        matches!(&a.core.state.status, ActivityStatus::Compact(TurnStatus::Failed(msg)) if msg == "rate limited")
-    })
-    .await;
-    assert!(agent.core.history().compacting());
+    pump_until(&mut agent, &mut mail, |a| a.core.ledger.idle()).await;
 
-    let _ = agent
-        .handle(AgentEvent::User(UserCommand::Retry))
-        .await
-        .unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        a.core.ledger.idle() && !a.core.history().compacting()
-    })
-    .await;
-
-    assert!(matches!(
-        agent.core.state.status,
-        ActivityStatus::Normal(TurnStatus::Idle)
-    ));
-    assert_messages_snapshot!(&agent.core.history().state().messages, @r#"
-    - role: developer
-      Compact:
-        text: a concise summary
-        needs_another_turn: false
-        token_count: 3
-        created_at: "[ts]"
-        started_at: "[ts]"
-        ended_at: "[ts]"
-    - role: user
-      text: second
-      token_count: 1
-      created_at: "[ts]"
-    "#);
+    assert_eq!(agent.core.state.status, ActivityStatus::default());
+    assert_eq!(agent.core.history().state().messages.len(), 2);
+    let mut errors = Vec::new();
+    while let Ok(AppEvent::Agent(_, event)) = parent_rx.try_recv() {
+        if let UiEvent::Error(error) = event {
+            errors.push(error);
+        }
+    }
+    assert_eq!(errors, vec!["rate limited".to_string()]);
 }

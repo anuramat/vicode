@@ -26,7 +26,6 @@ pub enum DeveloperMessage {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct CompactMessage {
     pub text: String,
-    pub needs_another_turn: bool,
 
     pub token_count: usize,
 

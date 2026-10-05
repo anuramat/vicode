@@ -24,6 +24,10 @@ impl Tab<'_> {
         } else {
             None
         };
+        // a compaction rewrites the front of the history too
+        if matches!(event, HistoryUpdate::Compact(_)) {
+            self.scroll.set_len(0);
+        }
         self.history_mut().handle(generation, event)?;
         if let Some(input) = input {
             self.input.prepend_text(input);

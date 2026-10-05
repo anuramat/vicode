@@ -1,45 +1,28 @@
 use std::collections::BTreeMap;
 
-use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
-use crate::llm::history::HistoryUpdate;
 
 /// loop-local task identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub struct TaskId(u64);
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(serde::Serialize))]
-pub enum TurnType {
-    Default,
-    Compact,
-}
-
-impl TurnType {
-    pub fn wrap(
-        self,
-        event: AssistantEvent,
-    ) -> HistoryUpdate {
-        match self {
-            Self::Default => HistoryUpdate::TurnResponse(event),
-            Self::Compact => HistoryUpdate::CompactResponse(event),
-        }
-    }
-}
-
 /// what the core knows about an in-flight task
 #[derive(Debug)]
 pub enum Task {
     Turn {
         generation: HistoryGeneration,
-        turn_type: TurnType,
     },
     Tool {
         call_id: String,
         /// streamed output so far: the authoritative text of a streaming
         /// tool, and what an abort or a panic keeps
         partial: String,
+    },
+    /// a summary of the first `n_drop` messages, generated alongside the
+    /// turns
+    Compact {
+        n_drop: usize,
     },
 }
 
@@ -86,7 +69,19 @@ impl TaskLedger {
         self.tasks.is_empty()
     }
 
-    /// forget every task, in registration order
+    /// a turn or one of its tools is in flight: the last message may still change
+    pub fn in_turn(&self) -> bool {
+        self.tasks
+            .values()
+            .any(|task| !matches!(task, Task::Compact { .. }))
+    }
+
+    pub fn compacting(&self) -> bool {
+        self.tasks
+            .values()
+            .any(|task| matches!(task, Task::Compact { .. }))
+    }
+
     pub fn clear(&mut self) -> Vec<Task> {
         std::mem::take(&mut self.tasks).into_values().collect()
     }
@@ -99,10 +94,7 @@ mod tests {
     impl Task {
         /// a default turn at generation 0
         pub fn turn() -> Self {
-            Self::Turn {
-                generation: 0,
-                turn_type: TurnType::Default,
-            }
+            Self::Turn { generation: 0 }
         }
     }
 
@@ -123,6 +115,21 @@ mod tests {
 
         assert!(ledger.finish(b).is_some());
         assert!(ledger.idle());
+    }
+
+    #[test]
+    fn compaction_is_neither_turn_work_nor_idle() {
+        let mut ledger = TaskLedger::default();
+        let compact = ledger.register(Task::Compact { n_drop: 1 });
+        assert!(!ledger.idle() && !ledger.in_turn() && ledger.compacting());
+
+        let turn = ledger.register(Task::turn());
+        assert!(ledger.in_turn() && ledger.compacting());
+
+        ledger.finish(compact);
+        assert!(ledger.in_turn() && !ledger.compacting());
+        ledger.finish(turn);
+        assert!(ledger.idle() && !ledger.in_turn());
     }
 
     #[test]

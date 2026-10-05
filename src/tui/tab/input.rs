@@ -251,7 +251,15 @@ mod tests {
             Ok(UserCommand::SetAssistant(id)) if id == "test2"
         ));
 
-        tab.state.status = ActivityStatus::Normal(TurnStatus::InProgress);
+        tab.state.status.turn = TurnStatus::InProgress;
+        tab.cycle_assistant(false).unwrap();
+        assert!(user_rx.try_recv().is_err());
+
+        // a compaction in flight keeps the agent busy too
+        tab.state.status = ActivityStatus {
+            turn: TurnStatus::Idle,
+            compacting: true,
+        };
         tab.cycle_assistant(false).unwrap();
         assert!(user_rx.try_recv().is_err());
     }

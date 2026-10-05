@@ -8,13 +8,13 @@ use serde::Serialize;
 
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantStatus;
-use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::Message;
 use crate::llm::history::tokens::TokenCount;
 
-#[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Display)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum TurnStatus {
+    #[default]
     #[display("idle")]
     Idle,
     #[display("in progress")]
@@ -77,25 +77,8 @@ impl HistoryState {
                         .iter()
                         .any(|(_, content)| matches!(content, AssistantItem::ToolCall(_)))
             }
-            Message::Developer(msg) => match msg {
-                DeveloperMessage::Compact(compact) => compact.needs_another_turn,
-                DeveloperMessage::Misc(_) => false,
-            },
-            Message::User(_) => false,
+            Message::Developer(_) | Message::User(_) => false,
         })
-    }
-
-    pub fn text_outputs_after(
-        &self,
-        n: usize,
-    ) -> String {
-        self.iter()
-            .skip(n)
-            .filter_map(|message| match message {
-                Message::Assistant(msg) => Some(msg.text_output()),
-                _ => None,
-            })
-            .collect()
     }
 
     /// give matching tool call(s) an error output

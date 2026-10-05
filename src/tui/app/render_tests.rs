@@ -121,7 +121,7 @@ async fn renders_conversation_tab() {
             ))),
             HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
         ]),
-        ActivityStatus::Normal(TurnStatus::Idle),
+        ActivityStatus::default(),
     );
     app.focus = super::AppFocus::Body;
 
@@ -160,7 +160,10 @@ async fn renders_failed_tab_with_tablist_overlay() {
                 ended_at: 2,
             }),
         ]),
-        ActivityStatus::Normal(TurnStatus::Failed("aborted by user".into())),
+        ActivityStatus {
+            turn: TurnStatus::Failed("aborted by user".into()),
+            compacting: false,
+        },
     );
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"

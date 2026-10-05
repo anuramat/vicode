@@ -202,9 +202,10 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             app.handle_agent_event(
                 aid.clone(),
-                UiEvent::StatusUpdate(crate::agent::ActivityStatus::Normal(
-                    crate::llm::history::TurnStatus::InProgress,
-                )),
+                UiEvent::StatusUpdate(crate::agent::ActivityStatus {
+                    turn: crate::llm::history::TurnStatus::InProgress,
+                    compacting: false,
+                }),
             )
             .await
             .unwrap();

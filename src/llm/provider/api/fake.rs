@@ -28,6 +28,9 @@ use crate::llm::provider::RateLimits;
 use crate::llm::provider::assistant::Assistant;
 use crate::utils::now;
 
+/// the fake assistant's context window
+pub const FAKE_WINDOW: usize = 100_000;
+
 /// scripted in-memory `Api`: every `stream` call replays the next scripted turn
 #[derive(Debug, Default)]
 pub struct FakeApi {
@@ -147,7 +150,7 @@ impl Assistant {
             config: ModelConfig {
                 model: "fake-model".into(),
                 effort: None,
-                window: None,
+                window: Some(FAKE_WINDOW),
             },
         };
         (assistant, api)
