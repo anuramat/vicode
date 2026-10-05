@@ -42,17 +42,15 @@ impl Agent {
         &mut self,
         event: AgentEvent,
     ) -> Result<()> {
-        let mut effects = Vec::new();
-        let result = self.core.handle(now(), event, &mut effects);
+        let (result, effects) = self.core.handle(now(), event);
         result.and(self.interpret_all(effects).await)
     }
 
     /// startup wake: run the core's resume (flush the saved buffer, start
     /// its turn) and drain the effects
     pub async fn resume(&mut self) -> Result<()> {
-        let mut effects = Vec::new();
-        self.core.resume(now(), &mut effects)?;
-        self.interpret_all(effects).await
+        let (result, effects) = self.core.resume(now());
+        result.and(self.interpret_all(effects).await)
     }
 
     /// interpret every effect, even past a failure; the first error wins
