@@ -213,7 +213,9 @@ fn slot_output(
 /// register the test-driven agent with its (real) router, so mail sent to
 /// it lands in the channel the test pumps
 fn register(agent: &Agent) {
-    agent.router.attach_manual(&agent.id, agent.task_tx.clone());
+    agent
+        .router
+        .attach_manual(&agent.id, agent.events_tx.clone());
     agent.report_status();
 }
 
@@ -517,6 +519,8 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
 /// order it accepts — the tool finalization lands at the new generation, so
 /// the mirror must learn of the bump first. A mirror seeded from the pre-abort
 /// history and fed every emitted update rejects a premature generation.
+/// The abort comes once the agent handled both chunks, as it would after
+/// them in its channel.
 #[tokio::test]
 async fn abort_emits_updates_a_mirror_accepts() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-abort-mirror").await;
@@ -528,13 +532,16 @@ async fn abort_emits_updates_a_mirror_accepts() {
     ]);
 
     agent.handle(now(), submit()).await.unwrap();
+    let mut chunks = Vec::new();
     timeout(TIMEOUT, async {
         loop {
-            apply_emitted_updates(&mut mirror, &mut app_rx);
-            if matches!(
-                agent.history().state().status(),
-                Some(AssistantStatus::Success)
-            ) {
+            chunks.extend(apply_emitted_updates(&mut mirror, &mut app_rx));
+            if chunks.len() == 2
+                && matches!(
+                    agent.history().state().status(),
+                    Some(AssistantStatus::Success)
+                )
+            {
                 break;
             }
             let event = agent.next_event().await.unwrap();
@@ -564,18 +571,23 @@ async fn abort_emits_updates_a_mirror_accepts() {
 }
 
 /// apply every buffered `HistoryUpdate` the agent emitted into the mirror, in
-/// emission order; a rejected update is a generation desync
+/// emission order; a rejected update is a generation desync. Returns the
+/// tool output chunks it passed
 fn apply_emitted_updates(
     mirror: &mut crate::llm::history::History,
     app_rx: &mut UnboundedReceiver<AppEvent>,
-) {
+) -> Vec<String> {
+    let mut chunks = Vec::new();
     while let Ok(event) = app_rx.try_recv() {
-        if let AppEvent::Agent(_, UiEvent::HistoryUpdate(g, u)) = event {
-            mirror
+        match event {
+            AppEvent::Agent(_, UiEvent::HistoryUpdate(g, u)) => mirror
                 .handle(g, u)
-                .expect("mirror rejected an emitted update (generation desync)");
+                .expect("mirror rejected an emitted update (generation desync)"),
+            AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) => chunks.push(chunk),
+            _ => {}
         }
     }
+    chunks
 }
 
 fn slot_in_history(

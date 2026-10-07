@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::instrument;
 
 use crate::agent::AgentState;
+use crate::agent::event::AgentEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
 use crate::agent::router::Launch;
@@ -76,7 +77,7 @@ impl<'a> App<'a> {
         &mut self,
         aid: &AgentId,
         state: AgentState,
-        control: UnboundedSender<UserCommand>,
+        control: UnboundedSender<AgentEvent>,
     ) -> Result<()> {
         let tab = self.tab_mut_by_aid(aid)?;
         tab.state = state;

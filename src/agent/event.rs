@@ -11,6 +11,7 @@ use crate::llm::history::message::ToolCallItem;
 
 #[derive(Debug)]
 pub enum AgentEvent {
+    /// from the agent's tab
     User(UserCommand),
     /// inter-agent message, sent by the router into the agent's channel
     Message(PeerMessage),
@@ -39,7 +40,7 @@ pub enum UiEvent {
     Started {
         state: Box<crate::agent::AgentState>,
         #[cfg_attr(test, serde(skip))]
-        control: UnboundedSender<UserCommand>,
+        control: UnboundedSender<AgentEvent>,
     },
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
     AssistantSet(String),

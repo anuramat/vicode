@@ -162,7 +162,7 @@ impl Launch {
         parent: Option<AgentId>,
     ) -> (AgentNode, Self) {
         let (abort, registration) = AbortHandle::new_pair();
-        let node = AgentNode::live(root, parent, agent.task_tx.clone(), abort);
+        let node = AgentNode::live(root, parent, agent.events_tx.clone(), abort);
         (
             node,
             Self {

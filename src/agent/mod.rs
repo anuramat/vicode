@@ -18,7 +18,6 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
-use crate::agent::event::UserCommand;
 use crate::agent::router::Router;
 use crate::agent::task::Tasks;
 use crate::forward;
@@ -49,12 +48,10 @@ pub struct Agent {
     pub router: Router,
     /// ui updates
     pub app_tx: UnboundedSender<AppEvent>,
-    // ui actions
-    pub user_tx: UnboundedSender<UserCommand>,
-    pub user_rx: UnboundedReceiver<UserCommand>,
-    // turn streams and tool calls
-    pub task_tx: UnboundedSender<AgentEvent>,
-    pub task_rx: UnboundedReceiver<AgentEvent>,
+    /// every input, in arrival order: user commands, inter-agent mail,
+    /// turn streams and tool output
+    pub events_tx: UnboundedSender<AgentEvent>,
+    pub events_rx: UnboundedReceiver<AgentEvent>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

@@ -24,7 +24,7 @@ impl Agent {
             .await?;
         self.emit(UiEvent::Started {
             state: Box::new(self.state.clone()),
-            control: self.user_tx.clone(),
+            control: self.events_tx.clone(),
         });
         // flush the saved buffer (a spawn seed, or messages buffered
         // before a restart) and start its turn, so the agent doesn't sit on
@@ -39,15 +39,13 @@ impl Agent {
         Ok(())
     }
 
-    /// the multi-way event source: user control first, then the event
-    /// channel — the tasks' streams and output, and inter-agent mail (FIFO
-    /// per task, so a task's events precede its terminal: the reaper is
-    /// polled only once the channel is drained)
+    /// the event source: the event channel, then the reaper (FIFO per
+    /// task, so a task's events precede its terminal: the reaper is polled
+    /// only once the channel is drained)
     pub async fn next_event(&mut self) -> Option<AgentEvent> {
         tokio::select! {
             biased;
-            Some(command) = self.user_rx.recv() => Some(AgentEvent::User(command)),
-            Some(event) = self.task_rx.recv() => Some(event),
+            Some(event) = self.events_rx.recv() => Some(event),
             Some((id, result)) = self.tasks.reap() => Some(AgentEvent::Done(id, result)),
             else => None,
         }

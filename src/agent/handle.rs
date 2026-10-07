@@ -202,7 +202,7 @@ impl Agent {
                 self.id.clone(),
                 self.project.clone(),
                 self.router.clone(),
-                TaskSink::new(id, self.task_tx.clone()),
+                TaskSink::new(id, self.events_tx.clone()),
                 inherited_history,
             );
             async move {
@@ -368,22 +368,13 @@ impl Agent {
     }
 
     /// cancel everything in flight, then resolve it right here -- the failed
-    /// turn, and each tool call with what it streamed so far; the cancelled
-    /// futures' late events are stale, and a summary is dropped with them
+    /// turn, and each tool call with what it streamed so far: everything
+    /// sent before the abort was handled before it; the cancelled futures'
+    /// late events are stale, and a summary is dropped with them
     fn abort(
         &mut self,
         now: u64,
     ) -> Result<()> {
-        // an abort keeps everything its tools streamed before it: apply the
-        // queued output first, and buffer queued mail without waking (queued
-        // turn events die with the turn anyway)
-        for _ in 0..self.task_rx.len() {
-            match self.task_rx.try_recv() {
-                Ok(AgentEvent::Output(tid, chunk)) => self.output(tid, chunk),
-                Ok(AgentEvent::Message(msg)) => self.state.pending_messages.push(msg.into()),
-                _ => {}
-            }
-        }
         let tasks = self.tasks.abort_all();
         self.compaction = None;
         self.needs_turn = false;
@@ -494,7 +485,7 @@ impl Agent {
         let created = AssistantEvent::Created { created_at: now };
         self.handle_history(generation, HistoryUpdate::TurnResponse(created))?;
         self.tasks.spawn(Task::Turn { generation }, |id| {
-            let sink = TaskSink::new(id, self.task_tx.clone());
+            let sink = TaskSink::new(id, self.events_tx.clone());
             async move {
                 Self::turn(
                     sink,
@@ -862,6 +853,51 @@ mod tests {
         ));
     }
 
+    /// one channel: output sent before an abort is handled before it, so the
+    /// aborted call keeps it; output sent after it is stale
+    #[tokio::test]
+    async fn abort_keeps_output_sent_before_it() {
+        let mut h = Harness::with(&[]).await;
+        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let tool = h
+            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .await
+            .1
+            .task();
+        for event in [
+            AgentEvent::Output(tool, "early".into()),
+            user(UserCommand::Abort),
+            AgentEvent::Output(tool, "late".into()),
+        ] {
+            h.events_tx.send(event).unwrap();
+        }
+        while let Ok(event) = h.events_rx.try_recv() {
+            h.agent.handle(3, event).await.unwrap();
+        }
+        insta::assert_yaml_snapshot!(h.drain(), @r#"
+        busy: false
+        ui:
+          - ToolOutput:
+              call_id: call-1
+              chunk: early
+          - HistoryUpdate:
+              - 1
+              - GenerationIncremented
+          - HistoryUpdate:
+              - 2
+              - TurnResponse:
+                  Failed:
+                    message: aborted by user
+                    ended_at: 3
+          - HistoryUpdate:
+              - 2
+              - ToolCallFailed:
+                  call_id: call-1
+                  error: "aborted by user; partial output:\nearly"
+        tasks: []
+        "#);
+    }
+
     #[tokio::test]
     async fn task_failure_emits_error_and_fails_turn() {
         let mut h = Harness::with(&[]).await;
@@ -1087,7 +1123,7 @@ mod tests {
     #[tokio::test]
     async fn failed_followup_still_reports_idle() {
         let mut h = Harness::with(&[]).await;
-        h.router.attach_manual(&h.id, h.task_tx.clone());
+        h.router.attach_manual(&h.id, h.events_tx.clone());
         let status = |h: &Harness| h.router.list(&h.id, false).unwrap()[0].status;
         let turn = h.step(1, submit("hi", 0)).await.1.task();
         let tool = h

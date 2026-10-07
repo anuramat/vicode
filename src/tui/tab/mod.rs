@@ -8,6 +8,7 @@ use anyhow::Result;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::AgentState;
+use crate::agent::event::AgentEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
 use crate::forward;
@@ -45,8 +46,8 @@ pub fn message_views<'s>(
 
 #[derive(Debug)]
 pub struct Tab<'a> {
-    /// the agent's control lane, from its `Started`; `None` = not attached
-    pub control: Option<UnboundedSender<UserCommand>>,
+    /// the agent's event channel, from its `Started`; `None` = not attached
+    pub control: Option<UnboundedSender<AgentEvent>>,
     pub aid: AgentId,
     pub state: AgentState,
     /// assistant cached for ui
@@ -67,7 +68,7 @@ impl Tab<'_> {
     }
 
     pub fn new(
-        control: Option<UnboundedSender<UserCommand>>,
+        control: Option<UnboundedSender<AgentEvent>>,
         aid: AgentId,
         state: AgentState,
         project: &Project,
@@ -116,7 +117,7 @@ impl Tab<'_> {
         self.scroll.scroll(&views, op);
     }
 
-    /// straight to the agent; a closed lane means its runtime is gone
+    /// straight to the agent; a closed channel means its runtime is gone
     pub fn send(
         &self,
         command: UserCommand,
@@ -126,7 +127,7 @@ impl Tab<'_> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("agent isn't attached (yet?)"))?;
         control
-            .send(command)
+            .send(AgentEvent::User(command))
             .map_err(|_| anyhow::anyhow!("agent {} is dead", self.aid))
     }
 }

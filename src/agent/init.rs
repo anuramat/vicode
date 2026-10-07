@@ -22,8 +22,7 @@ impl Agent {
     ) -> Self {
         // restore repair: a dangling function_call in history would 400 every later turn
         state.history.fail_unresolved_tool_calls(LOST_ON_RESTART);
-        let (user_tx, user_rx) = unbounded_channel();
-        let (task_tx, task_rx) = unbounded_channel();
+        let (events_tx, events_rx) = unbounded_channel();
         Self {
             project: router.project.clone(),
             id,
@@ -34,10 +33,8 @@ impl Agent {
             dirty: false,
             app_tx: router.app_tx.clone(),
             router,
-            user_tx,
-            user_rx,
-            task_tx,
-            task_rx,
+            events_tx,
+            events_rx,
         }
     }
 

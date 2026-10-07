@@ -160,6 +160,7 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentState;
+    use crate::agent::event::AgentEvent;
     use crate::agent::id::AgentId;
     use crate::project::Project;
     use crate::tui::widgets::input::InputOpts;
@@ -237,13 +238,13 @@ mod tests {
     async fn cycle_assistant_sends_switch() {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("cycle".to_string());
-        let (control, mut user_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (control, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
         let tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
 
         tab.cycle_assistant(false).unwrap();
         assert!(matches!(
-            user_rx.try_recv(),
-            Ok(UserCommand::SetAssistant(id)) if id == "test2"
+            events_rx.try_recv(),
+            Ok(AgentEvent::User(UserCommand::SetAssistant(id))) if id == "test2"
         ));
     }
 
@@ -263,7 +264,7 @@ mod tests {
     async fn rejected_submit_restores_input() {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("rejected-submit".to_string());
-        // the agent is gone: its control lane is closed
+        // the agent is gone: its event channel is closed
         let control = tokio::sync::mpsc::unbounded_channel().0;
         let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
         tab.input.textarea.insert_str("  do work  ");
