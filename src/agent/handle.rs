@@ -302,7 +302,7 @@ impl Agent {
             }
         }
         if !self.ledger.in_turn() {
-            self.wants_turn |= self.history().state().needs_another_turn();
+            self.wants_turn |= self.history().state().ends_with_tool_calls();
         }
         self.advance(now)
     }

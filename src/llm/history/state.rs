@@ -68,7 +68,7 @@ impl HistoryState {
         self.recount_shallow();
     }
 
-    pub fn needs_another_turn(&self) -> bool {
+    pub fn ends_with_tool_calls(&self) -> bool {
         self.last().is_some_and(|message| match message {
             Message::Assistant(msg) => {
                 matches!(msg.status, AssistantStatus::Success)
