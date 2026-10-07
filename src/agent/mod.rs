@@ -20,8 +20,7 @@ use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::router::Router;
-use crate::agent::task::executor::TaskExecutor;
-use crate::agent::task::ledger::TaskLedger;
+use crate::agent::task::Tasks;
 use crate::forward;
 use crate::llm::history::Compaction;
 use crate::llm::history::History;
@@ -43,8 +42,7 @@ pub struct Agent {
     dirty: bool,
 
     pub needs_turn: bool,
-    pub executor: TaskExecutor,
-    pub ledger: TaskLedger,
+    pub tasks: Tasks,
     pub compaction: Option<Compaction>,
 
     /// other agents

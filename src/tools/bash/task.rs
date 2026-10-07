@@ -73,8 +73,8 @@ mod tests {
 
     use super::*;
     use crate::agent::event::AgentEvent;
-    use crate::agent::task::ledger::Task;
-    use crate::agent::task::ledger::TaskLedger;
+    use crate::agent::task::Task;
+    use crate::agent::task::Tasks;
 
     #[tokio::test]
     async fn exec_streams_chunks_and_returns_status_only() {
@@ -84,7 +84,7 @@ mod tests {
             cwd: std::env::temp_dir(),
         };
         let (tx, mut rx) = unbounded_channel();
-        let tid = TaskLedger::default().register(Task::turn());
+        let tid = Tasks::default().register(Task::turn());
         let sink = TaskSink::new(tid, tx);
 
         let mut result = exec_streaming(

@@ -1,7 +1,7 @@
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::id::AgentId;
-use crate::agent::task::ledger::TaskId;
+use crate::agent::task::TaskId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;

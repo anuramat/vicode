@@ -20,7 +20,7 @@ use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::Runtime;
-use crate::agent::task::executor::panic_message;
+use crate::agent::task::panic_message;
 
 impl Router {
     pub fn allocate_agent_id(&self) -> AgentId {

@@ -48,7 +48,7 @@ impl Agent {
             biased;
             Some(command) = self.user_rx.recv() => Some(AgentEvent::User(command)),
             Some(event) = self.task_rx.recv() => Some(event),
-            Some((id, result)) = self.executor.reap() => Some(AgentEvent::Done(id, result)),
+            Some((id, result)) = self.tasks.reap() => Some(AgentEvent::Done(id, result)),
             else => None,
         }
     }

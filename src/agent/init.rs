@@ -6,8 +6,7 @@ use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::handle::LOST_ON_RESTART;
 use crate::agent::router::Router;
-use crate::agent::task::executor::TaskExecutor;
-use crate::agent::task::ledger::TaskLedger;
+use crate::agent::task::Tasks;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
@@ -29,7 +28,7 @@ impl Agent {
             project: router.project.clone(),
             id,
             state,
-            ledger: TaskLedger::default(),
+            tasks: Tasks::default(),
             compaction: None,
             needs_turn: false,
             dirty: false,
@@ -37,7 +36,6 @@ impl Agent {
             router,
             user_tx,
             user_rx,
-            executor: TaskExecutor::default(),
             task_tx,
             task_rx,
         }

@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::event::AgentEvent;
-use crate::agent::task::ledger::TaskId;
+use crate::agent::task::TaskId;
 use crate::llm::history::AssistantEvent;
 
 /// a task's line back to its agent: the turn's stream events, or a tool's

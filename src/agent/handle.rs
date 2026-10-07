@@ -14,8 +14,8 @@ use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
-use crate::agent::task::ledger::Task;
-use crate::agent::task::ledger::TaskId;
+use crate::agent::task::Task;
+use crate::agent::task::TaskId;
 use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::registry::TOOL_REGISTRY;
@@ -41,7 +41,7 @@ impl Agent {
         let result = match event {
             AgentEvent::User(command) => self.command(now, command).await,
             AgentEvent::Message(msg) => self.deliver(now, msg.into()),
-            AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
+            AgentEvent::Stream(tid, event) => match self.tasks.get(tid) {
                 Some(&Task::Turn { generation }) => self.stream(generation, event),
                 _ => Ok(()),
             },
@@ -124,7 +124,7 @@ impl Agent {
     /// a task is in flight; this covers held work too: a turn held for a
     /// summary waits on the summary task, a parked summary on the turn
     pub fn busy(&self) -> bool {
-        !self.ledger.idle()
+        !self.tasks.idle()
     }
 
     /// informational: the router's `list`
@@ -138,7 +138,7 @@ impl Agent {
     }
 
     fn compacting(&self) -> bool {
-        self.ledger.compacting() || self.compaction.is_some()
+        self.tasks.compacting() || self.compaction.is_some()
     }
 
     fn handle_history(
@@ -193,21 +193,23 @@ impl Agent {
             .task
             .inherit_history()
             .then(|| self.history().subagent());
-        let id = self.ledger.register(Task::Tool {
+        let task = Task::Tool {
             call_id: call.call_id.clone(),
             partial: String::new(),
-        });
-        let ctx = ToolRuntimeContext::new(
-            self.id.clone(),
-            self.project.clone(),
-            self.router.clone(),
-            TaskSink::new(id, self.task_tx.clone()),
-            inherited_history,
-        );
-        self.executor.spawn(id, "tool", async move {
-            call.task.run(ctx).await;
-            call.touch_ready_at_now();
-            Ok(TaskOutput::Tool(Box::new(call)))
+        };
+        self.tasks.spawn(task, |id| {
+            let ctx = ToolRuntimeContext::new(
+                self.id.clone(),
+                self.project.clone(),
+                self.router.clone(),
+                TaskSink::new(id, self.task_tx.clone()),
+                inherited_history,
+            );
+            async move {
+                call.task.run(ctx).await;
+                call.touch_ready_at_now();
+                Ok(TaskOutput::Tool(Box::new(call)))
+            }
         });
     }
 
@@ -217,7 +219,7 @@ impl Agent {
         tid: TaskId,
         chunk: String,
     ) {
-        if let Some(Task::Tool { call_id, partial }) = self.ledger.get_mut(tid) {
+        if let Some(Task::Tool { call_id, partial }) = self.tasks.get_mut(tid) {
             partial.push_str(&chunk);
             let call_id = call_id.clone();
             self.emit(UiEvent::ToolOutput { call_id, chunk });
@@ -238,7 +240,7 @@ impl Agent {
         tid: TaskId,
         result: TaskResult,
     ) -> Result<()> {
-        let Some(task) = self.ledger.finish(tid) else {
+        let Some(task) = self.tasks.finish(tid) else {
             // stale (aborted) failures still surface
             if let Err(err) = result {
                 self.emit(UiEvent::Error(err));
@@ -287,7 +289,7 @@ impl Agent {
                 return Ok(());
             }
         }
-        if !self.ledger.in_turn() {
+        if !self.tasks.in_turn() {
             self.needs_turn |= self.history().state().ends_with_tool_calls();
         }
         self.advance(now)
@@ -300,7 +302,7 @@ impl Agent {
         &mut self,
         now: u64,
     ) -> Result<()> {
-        if self.ledger.in_turn() {
+        if self.tasks.in_turn() {
             return Ok(());
         }
         if let Some(compaction) = self.compaction.take() {
@@ -350,7 +352,7 @@ impl Agent {
         // busy: queue instead of reject — pending messages carry no
         // generation and flush into a fresh turn at the next turn boundary,
         // so typed input is never destroyed and doubles as steering
-        if !self.ledger.in_turn() && !self.needs_turn {
+        if !self.tasks.in_turn() && !self.needs_turn {
             let current = self.history().generation();
             // a stale submit is rejected *before* the flush: pending
             // messages carry no generation and must never be dropped as stale
@@ -365,10 +367,9 @@ impl Agent {
         self.deliver(now, UserMessage::new(text, now).into())
     }
 
-    /// resolve everything in flight right here — the failed turn, and each
-    /// tool call with what it streamed so far — then cancel the futures,
-    /// whose late events the cleared ledger ignores; a summary is dropped
-    /// with them
+    /// cancel everything in flight, then resolve it right here -- the failed
+    /// turn, and each tool call with what it streamed so far; the cancelled
+    /// futures' late events are stale, and a summary is dropped with them
     fn abort(
         &mut self,
         now: u64,
@@ -383,7 +384,7 @@ impl Agent {
                 _ => {}
             }
         }
-        let tasks = self.ledger.clear();
+        let tasks = self.tasks.abort_all();
         self.compaction = None;
         self.needs_turn = false;
         let g = self.increment_generation()?;
@@ -405,7 +406,6 @@ impl Agent {
                 self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
         }
-        self.executor.abort_all();
         Ok(())
     }
 
@@ -459,7 +459,7 @@ impl Agent {
         anyhow::ensure!(!self.compacting(), "already compacting");
         // a turn in flight still writes to the last message: leave it out
         let len = self.history().state().len();
-        let stable = if self.ledger.in_turn() { len - 1 } else { len };
+        let stable = if self.tasks.in_turn() { len - 1 } else { len };
         let n_drop = n_drop.min(stable);
         anyhow::ensure!(n_drop > 0, "nothing to compact");
         let assistant = self
@@ -468,8 +468,7 @@ impl Agent {
             .assistant(&self.state.assistant_id)?;
         let instructions = self.history().instructions().to_string();
         let messages = self.history().compact_input(n_drop, now);
-        let id = self.ledger.register(Task::Compact { n_drop });
-        self.executor.spawn(id, "summary", async move {
+        self.tasks.spawn(Task::Compact { n_drop }, |_| async move {
             Self::summarize(&assistant, instructions, messages)
                 .await
                 .map(TaskOutput::Summary)
@@ -482,7 +481,7 @@ impl Agent {
         &mut self,
         now: u64,
     ) -> Result<()> {
-        // resolve the fallible lookup before any history/ledger mutation: a
+        // resolve the fallible lookup before any history/task mutation: a
         // stale assistant id must fail the submit, not wedge the agent busy
         let assistant = self
             .project
@@ -494,19 +493,20 @@ impl Agent {
         let instructions = self.history().instructions().to_string();
         let created = AssistantEvent::Created { created_at: now };
         self.handle_history(generation, HistoryUpdate::TurnResponse(created))?;
-        let id = self.ledger.register(Task::Turn { generation });
-        let sink = TaskSink::new(id, self.task_tx.clone());
-        self.executor.spawn(id, "turn", async move {
-            Self::turn(
-                sink,
-                &assistant,
-                TOOL_REGISTRY.clone(),
-                instructions,
-                messages,
-            )
-            .await
-            .map(|()| TaskOutput::Turn)
-            .map_err(|e| e.to_string())
+        self.tasks.spawn(Task::Turn { generation }, |id| {
+            let sink = TaskSink::new(id, self.task_tx.clone());
+            async move {
+                Self::turn(
+                    sink,
+                    &assistant,
+                    TOOL_REGISTRY.clone(),
+                    instructions,
+                    messages,
+                )
+                .await
+                .map(|()| TaskOutput::Turn)
+                .map_err(|e| e.to_string())
+            }
         });
         Ok(())
     }
@@ -535,7 +535,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::agent::router::graph::NodeStatus;
-    use crate::agent::task::executor::TaskExecutor;
+    use crate::agent::task::Tasks;
     use crate::config::CompactConfig;
     use crate::llm::history::message::CompactMessage;
     use crate::llm::history::message::Message;
@@ -583,7 +583,7 @@ mod tests {
             mut agent: Agent,
             app_rx: UnboundedReceiver<AppEvent>,
         ) -> Self {
-            agent.executor = TaskExecutor::Held(Vec::new());
+            agent.tasks = Tasks::held();
             Self { agent, app_rx }
         }
 
@@ -611,10 +611,7 @@ mod tests {
             while let Ok(AppEvent::Agent(_, event)) = self.app_rx.try_recv() {
                 ui.push(event);
             }
-            let TaskExecutor::Held(tasks) = &mut self.agent.executor else {
-                unreachable!("the harness holds its tasks");
-            };
-            let tasks = std::mem::take(tasks);
+            let tasks = self.agent.tasks.take_held();
             Step {
                 busy: self.agent.busy(),
                 ui,
@@ -780,7 +777,7 @@ mod tests {
     #[tokio::test]
     async fn submit_while_busy_queues_as_pending() {
         let mut h = Harness::with(&[]).await;
-        h.ledger.register(Task::turn());
+        h.tasks.register(Task::turn());
         assert_handled!(h, 7, submit("hi", 0), @"
         busy: true
         ui: []
@@ -817,7 +814,7 @@ mod tests {
 
     /// finding 3: a stale assistant id (e.g. removed from config after a
     /// restore) fails the submit cleanly — no queued turn message, no
-    /// dangling ledger task — and the idle agent accepts the fix
+    /// dangling task — and the idle agent accepts the fix
     #[tokio::test]
     async fn submit_with_unknown_assistant_fails_without_wedging() {
         let mut h = Harness::with(&[]).await;
@@ -890,7 +887,7 @@ mod tests {
                 }),
             )
             .unwrap();
-        let tid = h.ledger.register(Task::turn());
+        let tid = h.tasks.register(Task::turn());
 
         assert_handled!(h, 7, AgentEvent::Done(tid, Err("oops".into())), @"
         busy: false
@@ -909,7 +906,7 @@ mod tests {
     #[tokio::test]
     async fn set_assistant_rejected_while_busy() {
         let mut h = Harness::with(&[]).await;
-        h.ledger.register(Task::turn());
+        h.tasks.register(Task::turn());
         assert_rejected!(h, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - agent is busy
         - busy: true
@@ -949,7 +946,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_while_busy_reports_failure_for_the_copy() {
         let mut h = Harness::with(&[]).await;
-        h.ledger.register(Task::turn());
+        h.tasks.register(Task::turn());
         let copy = AgentId::from("copy".to_string());
         assert_handled!(h, 7, user(UserCommand::Duplicate(copy)), @"
         busy: true
@@ -1143,7 +1140,7 @@ mod tests {
             .0
             .unwrap();
         // a panic finalizes: slot gets the error plus the streamed partial,
-        // ledger unsticks, and the model sees the failure next turn
+        // tasks unstick, and the model sees the failure next turn
         assert_handled!(
             h, 5,
             AgentEvent::Done(tool, Err("tool panicked: boom".into())),
@@ -1277,7 +1274,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
         h.step(2, message("stranded")).await.0.unwrap();
-        // abort clears the ledger but deliberately never flushes
+        // abort clears the tasks but deliberately never flushes
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
         assert_eq!(h.state.pending_messages.len(), 1);
 
@@ -1490,7 +1487,7 @@ mod tests {
             - summary
         ");
         assert!(matches!(
-            h.ledger.get(compact),
+            h.tasks.get(compact),
             Some(Task::Compact { n_drop: 2 })
         ));
 
@@ -1584,7 +1581,7 @@ mod tests {
         let (result, step) = h.step(2, submit("hi", 0)).await;
         result.unwrap();
         assert!(step.starts_turn());
-        assert!(h.ledger.in_turn() && h.ledger.compacting());
+        assert!(h.tasks.in_turn() && h.tasks.compacting());
     }
 
     #[tokio::test]
@@ -1615,7 +1612,7 @@ mod tests {
           ui: []
           tasks: []
         ");
-        assert!(h.ledger.idle());
+        assert!(h.tasks.idle());
     }
 
     #[tokio::test]
@@ -1651,7 +1648,7 @@ mod tests {
 
         assert!(!step.starts_turn());
         assert_eq!(h.state.pending_messages.len(), 1);
-        assert!(h.ledger.idle());
+        assert!(h.tasks.idle());
     }
 
     #[tokio::test]
@@ -1663,7 +1660,7 @@ mod tests {
 
         let compact = step.summary();
         assert!(matches!(
-            h.ledger.get(compact),
+            h.tasks.get(compact),
             Some(Task::Compact { n_drop: 1 })
         ));
         assert!(step.starts_turn());
@@ -1677,7 +1674,7 @@ mod tests {
         let (result, step) = h.step(1, submit("hi", 0)).await;
         result.unwrap();
 
-        assert!(!h.ledger.compacting());
+        assert!(!h.tasks.compacting());
         assert!(step.starts_turn());
     }
 

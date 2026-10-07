@@ -53,7 +53,7 @@ impl Tab<'_> {
     ) {
         self.live_output.entry(call_id).or_default().push_str(chunk);
         // the pending call lives in the last message: nothing appends while
-        // the ledger is busy
+        // the agent is busy
         let len = self.state.history.state().messages.len();
         self.scroll.set_dirty(len.saturating_sub(1));
     }

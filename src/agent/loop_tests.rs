@@ -261,7 +261,7 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
 
     assert!(!agent.busy());
     // second request must carry the executed tool call back to the assistant
@@ -383,7 +383,7 @@ async fn tool_output_streams_to_app_and_terminal_item_resolves() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
 
     // every chunk reached the app in order, tagged by call id
     assert_eq!(drain_chunks(&mut app_rx, "call-1"), ["a", "b"]);
@@ -478,8 +478,8 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
         .unwrap();
 
     // abort returned with the call already finalized: partial output kept,
-    // marked aborted, ledger unstuck
-    assert!(agent.ledger.idle());
+    // marked aborted, tasks unstuck
+    assert!(agent.tasks.idle());
     assert!(!agent.busy());
     assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
@@ -608,10 +608,10 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
 
     // exactly one resolution: the slot failed with the partial output, the
-    // ledger unstuck, and the follow-up turn ran on the error
+    // tasks unstuck, and the follow-up turn ran on the error
     let last = agent
         .history()
         .state()
@@ -648,9 +648,9 @@ async fn panicking_turn_finalizes_the_history_turn() {
     fake.script_panicking_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
     agent.handle(now(), submit()).await.unwrap();
-    // drive to the turn's terminal; the ledger unsticks either way, but the
+    // drive to the turn's terminal; the tasks unstick either way, but the
     // turn's Done must also mark the history turn Error
-    pump_until(&mut agent, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
 
     let assistants: Vec<_> = agent
         .history()
@@ -987,7 +987,7 @@ async fn compaction_runs_alongside_tool_loop() {
         .handle(now(), AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    assert!(agent.ledger.in_turn() && agent.ledger.compacting());
+    assert!(agent.tasks.in_turn() && agent.tasks.compacting());
     pump_until(&mut agent, |a| !a.busy()).await;
 
     assert_eq!(fake.requests().len(), 3);
@@ -1077,7 +1077,7 @@ async fn failed_compaction_keeps_history() {
         .handle(now(), AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    pump_until(&mut agent, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
 
     assert!(!agent.busy());
     assert_eq!(agent.history().state().messages.len(), 2);
