@@ -41,12 +41,7 @@ pub struct Agent {
     pub state: AgentState,
 
     pub compaction: Option<Compaction>,
-    /// a turn is due: a message arrived, or the last turn asked for a
-    /// follow-up; outlives `handle` only while a turn is in flight, or while
-    /// held back by the hard limit, waiting for the summary
     pub needs_turn: bool,
-
-    /// turns, tool calls, compact
     pub executor: TaskExecutor,
     pub ledger: TaskLedger,
 
@@ -54,10 +49,10 @@ pub struct Agent {
     pub router: Router,
     /// ui updates
     pub app_tx: UnboundedSender<AppEvent>,
-    /// ui actions
+    // ui actions
     pub user_tx: UnboundedSender<UserCommand>,
     pub user_rx: UnboundedReceiver<UserCommand>,
-    /// turn streams and tool calls
+    // turn streams and tool calls
     pub task_tx: Sender<AgentEvent>,
     pub task_rx: Receiver<AgentEvent>,
 }
