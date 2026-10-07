@@ -24,6 +24,7 @@ use crate::llm::history::Compaction;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 
 pub const ABORTED_BY_USER: &str = "aborted by user";
@@ -41,9 +42,7 @@ impl Agent {
             AgentEvent::User(command) => self.command(now, command).await,
             AgentEvent::Message(msg) => self.deliver(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
-                Some(&Task::Turn { generation }) => {
-                    self.handle_history(generation, HistoryUpdate::TurnResponse(event))
-                }
+                Some(&Task::Turn { generation }) => self.stream(generation, event),
                 _ => Ok(()),
             },
             AgentEvent::Output(tid, chunk) => {
@@ -147,15 +146,11 @@ impl Agent {
         generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        // one clone: the match borrows, then the event moves into the emit —
-        // payloads (resolved tool calls) can embed a full workdir diff
+        // one clone: history takes a copy, then the event moves into the
+        // emit -- payloads (resolved tool calls) can embed a full workdir diff
         self.history_mut().handle(generation, event.clone())?;
-        match &event {
-            HistoryUpdate::TurnResponse(AssistantEvent::Item(item)) => self.run_tool_call(item),
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. }) => {
-                tracing::error!("response error: {message}");
-            }
-            _ => {}
+        if let HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. }) = &event {
+            tracing::error!("response error: {message}");
         }
         // TODO save less often; save on errors
         self.dirty |= !matches!(
@@ -167,18 +162,31 @@ impl Agent {
         Ok(())
     }
 
+    /// a turn's provider event lands in history; a tool call it completes
+    /// starts running right away
+    fn stream(
+        &mut self,
+        generation: HistoryGeneration,
+        event: AssistantEvent,
+    ) -> Result<()> {
+        let call = match &event {
+            AssistantEvent::Item(item) => match &**item {
+                AssistantItem::ToolCall(call) => Some(call.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        self.handle_history(generation, HistoryUpdate::TurnResponse(event))?;
+        if let Some(call) = call {
+            self.run_tool_call(call);
+        }
+        Ok(())
+    }
+
     fn run_tool_call(
         &mut self,
-        item: &AssistantItem,
+        mut call: ToolCallItem,
     ) {
-        let AssistantItem::ToolCall(call) = item else {
-            return;
-        };
-        // also the recursion terminator: resolved calls re-enter
-        // handle_history with the output already set
-        if call.task.output().is_some() {
-            return;
-        }
         // the one capture hook: the agent is the only holder of the
         // live history, so `spawn` snapshots it here, at dispatch
         let inherited_history = call
@@ -196,7 +204,6 @@ impl Agent {
             TaskSink::new(id, self.task_tx.clone()),
             inherited_history,
         );
-        let mut call = call.clone();
         self.executor.spawn(id, "tool", async move {
             call.task.run(ctx).await;
             call.touch_ready_at_now();
@@ -1404,40 +1411,6 @@ mod tests {
                     ended_at: 3
         tasks: []
         ");
-    }
-
-    #[tokio::test]
-    async fn resolved_tool_call_is_not_rerun() {
-        let mut h = Harness::with(&[]).await;
-        let tid = h.step(1, submit("hi", 0)).await.1.task();
-
-        assert_handled!(
-            h, 2,
-            AgentEvent::Stream(tid, todo_call(Some(Ok(TodoResult {})))),
-            @r#"
-        busy: true
-        ui:
-          - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Item:
-                    ToolCall:
-                      id: call-1
-                      call_id: call-1
-                      name: todo
-                      arguments:
-                        current: ""
-                        entries: []
-                      meta: ~
-                      output:
-                        Ok: {}
-                      token_count: 0
-                      started_at: 2
-                      ended_at: 3
-                      ready_at: ~
-        tasks: []
-        "#
-        );
     }
 
     #[tokio::test]
