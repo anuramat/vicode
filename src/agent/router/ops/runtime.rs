@@ -1,6 +1,6 @@
-//! lifecycle: registration, id allocation, status reports, and the one way
-//! to start an agent — `launch` — whose runtime runs supervised until its
-//! terminal `runtime_down`
+//! lifecycle: id allocation, status reports, and the one way to start an
+//! agent — `start` — whose runtime runs supervised until its terminal
+//! `runtime_down`
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -10,7 +10,6 @@ use futures::FutureExt;
 use futures::future::AbortHandle;
 use futures::future::AbortRegistration;
 use futures::future::Abortable;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::free_variant;
 use crate::agent::Agent;
@@ -20,23 +19,8 @@ use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::Runtime;
-use crate::llm::history::message::PeerMessage;
 
 impl Router {
-    /// primary registration (`new_tab`/duplicate): root = own id
-    pub fn register_root(
-        &self,
-        aid: &AgentId,
-    ) -> Result<()> {
-        let s = &mut *self.lock();
-        anyhow::ensure!(!s.graph.contains_key(aid), "agent {aid} already exists");
-        s.all_ids.insert(aid.clone());
-        let node = AgentNode::new(aid.clone(), None);
-        drop(s.project.store().save_graph(aid, &node.record(false)));
-        s.graph.insert(aid.clone(), node);
-        Ok(())
-    }
-
     pub fn allocate_agent_id(&self) -> AgentId {
         self.lock().allocate()
     }
@@ -58,16 +42,36 @@ impl Router {
         }
     }
 
-    /// the one way to start an agent: hand its registered node's mailbox to
-    /// the runtime and run it supervised
-    pub fn launch(
+    /// the one way to start a set-up agent: its node goes live under
+    /// `parent` (or as a root), and its runtime starts once the graph record
+    /// is durable — mail sent meanwhile queues in the agent's channel
+    pub async fn start(
         &self,
         agent: Agent,
+        parent: Option<&AgentId>,
     ) -> Result<()> {
-        let (abort, registration) = AbortHandle::new_pair();
-        let mail = self.lock().go_live(&agent.id, abort)?;
         let aid = agent.id.clone();
-        tokio::spawn(supervise(aid, self.clone(), agent.run(mail), registration));
+        let (abort, registration) = AbortHandle::new_pair();
+        let write = {
+            let s = &mut *self.lock();
+            let root = match parent {
+                Some(parent) => s.child_root(parent)?,
+                None => aid.clone(),
+            };
+            let node = AgentNode::live(root, parent.cloned(), agent.task_tx.clone(), abort);
+            let write = s.project.store().save_graph(&aid, &node.record(false));
+            s.graph.insert(aid.clone(), node);
+            write
+        };
+        if let Err(error) = write.await {
+            self.lock().drop_node(&aid);
+            return Err(error);
+        }
+        Launch {
+            agent,
+            registration,
+        }
+        .go();
         Ok(())
     }
 
@@ -92,30 +96,25 @@ impl RouterState {
         self.all_ids.insert(aid.clone());
         aid
     }
+}
 
-    /// one-shot: take the pending mailbox, the node is live from now on
-    pub fn go_live(
-        &mut self,
-        aid: &AgentId,
-        abort: AbortHandle,
-    ) -> Result<UnboundedReceiver<PeerMessage>> {
-        let node = self
-            .graph
-            .get_mut(aid)
-            .ok_or_else(|| anyhow::anyhow!("agent {aid} is unreachable"))?;
-        match node.runtime {
-            Runtime::Pending(_) => {}
-            Runtime::Live { .. } => anyhow::bail!("agent {aid} runtime is already attached"),
-            Runtime::Dead(_) => anyhow::bail!("agent {aid} is dead"),
-        }
-        let live = Runtime::Live {
-            abort,
-            status: NodeStatus::Spawning,
-        };
-        let Runtime::Pending(mail) = std::mem::replace(&mut node.runtime, live) else {
-            unreachable!("checked above");
-        };
-        Ok(mail)
+/// an agent whose node is already live in the graph, its runtime not yet
+/// started
+pub struct Launch {
+    pub agent: Agent,
+    pub registration: AbortRegistration,
+}
+
+impl Launch {
+    /// run the agent's loop supervised
+    pub fn go(self) {
+        let Self {
+            agent,
+            registration,
+        } = self;
+        let aid = agent.id.clone();
+        let router = agent.router.clone();
+        tokio::spawn(supervise(aid, router, agent.run(), registration));
     }
 }
 

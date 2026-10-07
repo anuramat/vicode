@@ -12,7 +12,7 @@ use crate::llm::history::message::ToolCallItem;
 #[derive(Debug)]
 pub enum AgentEvent {
     User(UserCommand),
-    /// inter-agent message
+    /// inter-agent message, sent by the router into the agent's channel
     Message(PeerMessage),
     /// a turn's provider stream
     Stream(TaskId, AssistantEvent),

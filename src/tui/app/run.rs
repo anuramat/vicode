@@ -15,9 +15,9 @@ use tokio::time::sleep_until;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use super::App;
-use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
+use crate::agent::router::Launch;
 use crate::agent::router::Router;
 use crate::agent::router::boot::Boot;
 use crate::config::Config;
@@ -98,7 +98,7 @@ impl App<'_> {
         mut self,
         mut term: Terminal<B>,
         tabs: Vec<(AgentId, AgentState)>,
-        agents: Vec<Agent>,
+        agents: Vec<Launch>,
     ) -> Result<()>
     where
         B: Backend,
@@ -108,7 +108,7 @@ impl App<'_> {
         // create shared lowerdir
         self.project.init().await?;
         // load tabs
-        self.load_tabs(tabs, agents)?;
+        self.load_tabs(tabs, agents);
 
         tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);

@@ -3,6 +3,7 @@
 
 use super::peer_message;
 use crate::agent::AgentId;
+use crate::agent::event::AgentEvent;
 use crate::agent::router::Router;
 use crate::agent::router::api::ListEntry;
 use crate::agent::router::api::RouterError;
@@ -17,14 +18,14 @@ impl Router {
     ) -> Result<(), RouterError> {
         let s = &*self.lock();
         let node = s.same_tab(caller, target).ok_or(RouterError::Unreachable)?;
-        if let Runtime::Dead(error) = &node.runtime {
-            return Err(RouterError::Dead(error.clone()));
+        match &node.runtime {
+            Runtime::Dead(error) => Err(RouterError::Dead(error.clone())),
+            // closed only once the runtime is gone, whose supervisor records
+            // the actual death reason
+            Runtime::Live { mailbox, .. } => mailbox
+                .send(AgentEvent::Message(peer_message(caller, text)))
+                .map_err(|_| RouterError::Dead("agent runtime mailbox closed".into())),
         }
-        // the mailbox exists from node creation; it's closed only once the
-        // runtime is gone, whose supervisor records the actual death reason
-        node.mailbox
-            .send(peer_message(caller, text))
-            .map_err(|_| RouterError::Dead("agent runtime mailbox closed".into()))
     }
 
     /// `None` = unknown caller

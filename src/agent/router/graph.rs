@@ -1,12 +1,10 @@
 use futures::future::AbortHandle;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::AgentId;
-use crate::llm::history::message::PeerMessage;
+use crate::agent::event::AgentEvent;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GraphRecord {
@@ -17,7 +15,6 @@ pub struct GraphRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeStatus {
-    Spawning,
     Running,
     Idle,
     Dead,
@@ -27,17 +24,16 @@ pub enum NodeStatus {
 pub struct AgentNode {
     pub root: AgentId,
     pub parent: Option<AgentId>,
-    /// minted with the node, so mail sent before the runtime starts parks here
-    pub mailbox: UnboundedSender<PeerMessage>,
     pub runtime: Runtime,
 }
 
 #[derive(Debug)]
 pub enum Runtime {
-    /// the mailbox's receiving end, until `launch` hands it to the runtime
-    Pending(UnboundedReceiver<PeerMessage>),
-    /// `status` stays `Spawning` until the runtime's startup report
+    /// `status` stays `Running` until the runtime's startup report
     Live {
+        /// the agent's event channel: mail queues there until the runtime
+        /// drains it
+        mailbox: UnboundedSender<AgentEvent>,
         abort: AbortHandle,
         status: NodeStatus,
     },
@@ -46,16 +42,20 @@ pub enum Runtime {
 }
 
 impl AgentNode {
-    pub fn new(
+    pub fn live(
         root: AgentId,
         parent: Option<AgentId>,
+        mailbox: UnboundedSender<AgentEvent>,
+        abort: AbortHandle,
     ) -> Self {
-        let (mailbox, rx) = unbounded_channel();
         Self {
             root,
             parent,
-            mailbox,
-            runtime: Runtime::Pending(rx),
+            runtime: Runtime::Live {
+                mailbox,
+                abort,
+                status: NodeStatus::Running,
+            },
         }
     }
 
@@ -72,7 +72,6 @@ impl AgentNode {
 
     pub fn status(&self) -> NodeStatus {
         match &self.runtime {
-            Runtime::Pending(_) => NodeStatus::Spawning,
             Runtime::Live { status, .. } => *status,
             Runtime::Dead(_) => NodeStatus::Dead,
         }

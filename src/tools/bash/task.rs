@@ -63,13 +63,13 @@ async fn drain(
         if n == 0 {
             break;
         }
-        sink.output(String::from_utf8_lossy(&buf[..n]).into()).await;
+        sink.output(String::from_utf8_lossy(&buf[..n]).into());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc::channel;
+    use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
     use crate::agent::event::AgentEvent;
@@ -83,7 +83,7 @@ mod tests {
             args: vec![],
             cwd: std::env::temp_dir(),
         };
-        let (tx, mut rx) = channel(64);
+        let (tx, mut rx) = unbounded_channel();
         let tid = TaskLedger::default().register(Task::turn());
         let sink = TaskSink::new(tid, tx);
 

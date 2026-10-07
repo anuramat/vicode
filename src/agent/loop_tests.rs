@@ -24,7 +24,6 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantStatus;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::OutputItem;
-use crate::llm::history::message::PeerMessage;
 use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 use crate::tools::todo::TodoArguments;
@@ -94,7 +93,7 @@ impl ToolCall for StreamTestCall {
         ctx: ToolRuntimeContext,
     ) {
         for chunk in &self.chunks {
-            ctx.sink.output(chunk.clone()).await;
+            ctx.sink.output(chunk.clone());
         }
         if self.hang {
             std::future::pending::<()>().await;
@@ -212,22 +211,20 @@ fn slot_output(
 }
 
 /// register the test-driven agent with its (real) router, so mail sent to
-/// it lands in the mailbox the test pumps
-fn register(agent: &Agent) -> UnboundedReceiver<PeerMessage> {
-    let mail = agent.router.attach_manual(&agent.id);
+/// it lands in the channel the test pumps
+fn register(agent: &Agent) {
+    agent.router.attach_manual(&agent.id, agent.task_tx.clone());
     agent.report_status();
-    mail
 }
 
 /// pump the agent's own event loop until the predicate holds
 async fn pump_until(
     agent: &mut Agent,
-    mail: &mut UnboundedReceiver<PeerMessage>,
     pred: impl Fn(&Agent) -> bool,
 ) {
     timeout(TIMEOUT, async {
         while !pred(agent) {
-            let event = agent.next_event(mail).await.unwrap();
+            let event = agent.next_event().await.unwrap();
             let _ = agent.handle(now(), event).await.unwrap();
         }
     })
@@ -250,7 +247,7 @@ macro_rules! assert_messages_snapshot {
 #[tokio::test]
 async fn submit_runs_tool_call_and_second_turn_to_idle() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-happy").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_turn(vec![
         output("out-1", 1),
         delta("out-1", "let me check", 2),
@@ -264,7 +261,7 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.ledger.idle()).await;
 
     assert!(!agent.busy());
     // second request must carry the executed tool call back to the assistant
@@ -327,11 +324,11 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
 #[tokio::test]
 async fn abort_mid_stream_fails_turn_and_goes_idle() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-abort").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_hanging_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
+    pump_until(&mut agent, |a| {
         a.history()
             .state()
             .last()
@@ -374,7 +371,7 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
 #[tokio::test]
 async fn tool_output_streams_to_app_and_terminal_item_resolves() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-stream").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_turn(vec![
         stream_call("call-1", &["a", "b"], false, false),
         AssistantEvent::Completed { ended_at: 3 },
@@ -386,7 +383,7 @@ async fn tool_output_streams_to_app_and_terminal_item_resolves() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.ledger.idle()).await;
 
     // every chunk reached the app in order, tagged by call id
     assert_eq!(drain_chunks(&mut app_rx, "call-1"), ["a", "b"]);
@@ -442,7 +439,7 @@ async fn tool_output_streams_to_app_and_terminal_item_resolves() {
 #[tokio::test]
 async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-stream-abort").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_turn(vec![
         stream_call("call-1", &["par", "tial"], true, false),
         AssistantEvent::Completed { ended_at: 3 },
@@ -460,7 +457,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
             ))
         {
             tokio::select! {
-                Some(event) = agent.next_event(&mut mail) => {
+                Some(event) = agent.next_event() => {
                     let _ = agent.handle(now(), event).await.unwrap();
                 }
                 Some(app_event) = app_rx.recv() => {
@@ -523,7 +520,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
 #[tokio::test]
 async fn abort_emits_updates_a_mirror_accepts() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-abort-mirror").await;
-    let mut mail = register(&agent);
+    register(&agent);
     let mut mirror = agent.history().clone();
     fake.script_turn(vec![
         stream_call("call-1", &["par", "tial"], true, false),
@@ -540,7 +537,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
             ) {
                 break;
             }
-            let event = agent.next_event(&mut mail).await.unwrap();
+            let event = agent.next_event().await.unwrap();
             agent.handle(now(), event).await.unwrap();
         }
     })
@@ -599,7 +596,7 @@ fn slot_in_history(
 #[tokio::test]
 async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-stream-panic").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_turn(vec![
         stream_call("call-1", &["pa"], false, true),
         AssistantEvent::Completed { ended_at: 3 },
@@ -611,7 +608,7 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
     ]);
 
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.ledger.idle()).await;
 
     // exactly one resolution: the slot failed with the partial output, the
     // ledger unstuck, and the follow-up turn ran on the error
@@ -647,13 +644,13 @@ async fn panicking_tool_resolves_once_and_next_turn_sees_the_error() {
 #[tokio::test]
 async fn panicking_turn_finalizes_the_history_turn() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-turn-panic").await;
-    let mut mail = register(&agent);
+    register(&agent);
     fake.script_panicking_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
 
     agent.handle(now(), submit()).await.unwrap();
     // drive to the turn's terminal; the ledger unsticks either way, but the
     // turn's Done must also mark the history turn Error
-    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.ledger.idle()).await;
 
     let assistants: Vec<_> = agent
         .history()
@@ -749,7 +746,7 @@ async fn spawn_commit_list_archive_lifecycle() {
     use crate::tools::agent::list::ListCall;
 
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-agents").await;
-    let mut mail = register(&agent);
+    register(&agent);
     // the spawn tail loads the parent's state; the tool resolves its HEAD
     agent.save().await.unwrap();
     let parent_workdir = checkout(&agent).await;
@@ -766,10 +763,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent.handle(now(), submit()).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        slot_output(a, "call-1").is_some()
-    })
-    .await;
+    pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
     let spawned = spawn_result(&agent, "call-1");
     let child = spawned.id;
     similar_asserts::assert_eq!(spawned.commit, agent.state.context.commit);
@@ -820,10 +814,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent.handle(now(), submit_text("collect")).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        slot_output(a, "call-3").is_some()
-    })
-    .await;
+    pump_until(&mut agent, |a| slot_output(a, "call-3").is_some()).await;
     let list_out = slot_output(&agent, "call-3").unwrap();
     assert!(
         list_out.contains(&child.to_string()) && list_out.contains(&agent.id.to_string()),
@@ -848,10 +839,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent.handle(now(), submit_text("cleanup")).await.unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        slot_output(a, "call-4").is_some()
-    })
-    .await;
+    pump_until(&mut agent, |a| slot_output(a, "call-4").is_some()).await;
     similar_asserts::assert_eq!(slot_output(&agent, "call-4").unwrap(), "null");
     similar_asserts::assert_eq!(
         agent.router.send_message(&agent.id, &child, "hi"),
@@ -867,7 +855,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
     use crate::llm::history::message::Message;
 
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-capture").await;
-    let mut mail = register(&agent);
+    register(&agent);
     agent.save().await.unwrap();
     let parent_workdir = checkout(&agent).await;
     tokio::fs::write(parent_workdir.join("pre.txt"), "v1")
@@ -895,10 +883,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
         .handle(now(), submit_text("the marker is PRE-SPAWN"))
         .await
         .unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        slot_output(a, "call-1").is_some()
-    })
-    .await;
+    pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
     let spawned = spawn_result(&agent, "call-1");
     similar_asserts::assert_eq!(spawned.commit, head);
 
@@ -928,7 +913,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
 #[tokio::test]
 async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-fresh").await;
-    let mut mail = register(&agent);
+    register(&agent);
     agent.save().await.unwrap();
     let parent_workdir = checkout(&agent).await;
     // committed after the parent loaded its instructions
@@ -955,10 +940,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
         .handle(now(), submit_text("PARENT-ONLY"))
         .await
         .unwrap();
-    pump_until(&mut agent, &mut mail, |a| {
-        slot_output(a, "call-1").is_some()
-    })
-    .await;
+    pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
     let spawned = spawn_result(&agent, "call-1");
     similar_asserts::assert_eq!(spawned.commit, marked);
     agent.router.idle_with_output(&spawned.id, "done").await;
@@ -976,7 +958,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
 #[tokio::test]
 async fn compaction_runs_alongside_tool_loop() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-compact").await;
-    let mut mail = register(&agent);
+    register(&agent);
     agent
         .history_mut()
         .handle(
@@ -1006,7 +988,7 @@ async fn compaction_runs_alongside_tool_loop() {
         .await
         .unwrap();
     assert!(agent.ledger.in_turn() && agent.ledger.compacting());
-    pump_until(&mut agent, &mut mail, |a| !a.busy()).await;
+    pump_until(&mut agent, |a| !a.busy()).await;
 
     assert_eq!(fake.requests().len(), 3);
     assert_messages_snapshot!(&fake.requests()[1], @r#"
@@ -1076,7 +1058,7 @@ async fn compaction_runs_alongside_tool_loop() {
 #[tokio::test]
 async fn failed_compaction_keeps_history() {
     let (mut agent, fake, mut parent_rx) = Agent::fake("loop-compact-fail").await;
-    let mut mail = register(&agent);
+    register(&agent);
     for text in ["first", "second"] {
         agent
             .history_mut()
@@ -1095,7 +1077,7 @@ async fn failed_compaction_keeps_history() {
         .handle(now(), AgentEvent::User(UserCommand::Compact(1)))
         .await
         .unwrap();
-    pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
+    pump_until(&mut agent, |a| a.ledger.idle()).await;
 
     assert!(!agent.busy());
     assert_eq!(agent.history().state().messages.len(), 2);

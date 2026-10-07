@@ -4,11 +4,13 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use futures::future::AbortHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::Agent;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
+use crate::agent::router::Launch;
 use crate::agent::router::Router;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::Runtime;
@@ -20,8 +22,9 @@ pub struct Boot {
     pub router: Router,
     /// the live roots' states, in id order
     pub tabs: Vec<(AgentId, AgentState)>,
-    /// every loadable live agent, roots included, ready to `launch`
-    pub agents: Vec<Agent>,
+    /// every loadable live agent, roots included: its node is live, its
+    /// runtime is started by `go`
+    pub agents: Vec<Launch>,
     /// the agents whose state failed to load
     pub failures: Vec<(AgentId, String)>,
 }
@@ -58,8 +61,7 @@ impl Router {
             if !is_root && !graph.contains_key(&record.root) {
                 continue;
             }
-            let mut node = AgentNode::new(record.root, record.parent);
-            match store.load_state(&aid).await {
+            let node = match store.load_state(&aid).await {
                 Ok(state) => {
                     if is_root {
                         boot.tabs.push((aid.clone(), state.clone()));
@@ -71,7 +73,14 @@ impl Router {
                         aid.clone(),
                         state,
                     );
-                    boot.agents.push(agent);
+                    let (abort, registration) = AbortHandle::new_pair();
+                    let node =
+                        AgentNode::live(record.root, record.parent, agent.task_tx.clone(), abort);
+                    boot.agents.push(Launch {
+                        agent,
+                        registration,
+                    });
+                    node
                 }
                 Err(error) => {
                     tracing::error!("failed to restore agent {aid}: {error:?}");
@@ -80,9 +89,13 @@ impl Router {
                     if is_root {
                         continue;
                     }
-                    node.runtime = Runtime::Dead(error);
+                    AgentNode {
+                        root: record.root,
+                        parent: record.parent,
+                        runtime: Runtime::Dead(error),
+                    }
                 }
-            }
+            };
             graph.insert(aid, node);
         }
         let s = &mut *router.lock();

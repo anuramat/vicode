@@ -13,8 +13,6 @@ use derive_more::From;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -57,8 +55,8 @@ pub struct Agent {
     pub user_tx: UnboundedSender<UserCommand>,
     pub user_rx: UnboundedReceiver<UserCommand>,
     // turn streams and tool calls
-    pub task_tx: Sender<AgentEvent>,
-    pub task_rx: Receiver<AgentEvent>,
+    pub task_tx: UnboundedSender<AgentEvent>,
+    pub task_rx: UnboundedReceiver<AgentEvent>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

@@ -10,6 +10,7 @@ use std::time::Duration;
 use futures::future::AbortHandle;
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::timeout;
 
@@ -17,6 +18,7 @@ use super::api::RouterError;
 use super::graph::NodeStatus;
 use super::graph::Runtime;
 use super::*;
+use crate::agent::event::AgentEvent;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
@@ -24,21 +26,23 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::OutputItem;
-use crate::llm::history::message::PeerMessage;
 use crate::llm::provider::api::fake::FakeApi;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Router {
-    /// register a root whose mailbox the test drives by hand — no runtime
-    /// task, so nothing reports status on its own
+    /// a live, durable root whose mailbox the test drives by hand — no
+    /// runtime task, so nothing reports status on its own
     pub fn attach_manual(
         &self,
         aid: &AgentId,
-    ) -> UnboundedReceiver<PeerMessage> {
+        mailbox: UnboundedSender<AgentEvent>,
+    ) {
         let (abort, _registration) = AbortHandle::new_pair();
-        self.register_root(aid).unwrap();
-        self.lock().go_live(aid, abort).unwrap()
+        let node = AgentNode::live(aid.clone(), None, mailbox, abort);
+        let s = &mut *self.lock();
+        drop(s.project.store().save_graph(aid, &node.record(false)));
+        s.graph.insert(aid.clone(), node);
     }
 
     /// Abort the agent's live runtime; the node stays reachable and the
@@ -121,7 +125,7 @@ struct Rig {
     router: Router,
     primary: AgentId,
     /// the dummy primary's mailbox: nobody runs it
-    primary_mail: UnboundedReceiver<PeerMessage>,
+    primary_mail: UnboundedReceiver<AgentEvent>,
     /// the repo's HEAD: the tab's snapshot, and where children start
     commit: String,
 }
@@ -192,7 +196,7 @@ async fn register_primary(
     project: &Project,
     router: &Router,
     name: &str,
-) -> (AgentId, UnboundedReceiver<PeerMessage>) {
+) -> (AgentId, UnboundedReceiver<AgentEvent>) {
     let aid = AgentId::from(name.to_string());
     tokio::fs::create_dir_all(project.agent_workdir(&aid))
         .await
@@ -202,7 +206,8 @@ async fn register_primary(
         .save_state(&aid, &project.fake_state())
         .await
         .unwrap();
-    let mail = router.attach_manual(&aid);
+    let (mailbox, mail) = unbounded_channel();
+    router.attach_manual(&aid, mailbox);
     router.report_status(&aid, NodeStatus::Idle);
     (aid, mail)
 }
@@ -217,17 +222,16 @@ async fn reboot(project: &Project) -> Router {
     .await
 }
 
-/// launch every restored agent; up once the runtimes report their startup
-/// status
+/// launch every restored agent; up once the runtimes settle idle
 async fn start(boot: boot::Boot) -> Router {
-    let aids: Vec<AgentId> = boot.agents.iter().map(|a| a.id.clone()).collect();
-    for agent in boot.agents {
-        boot.router.launch(agent).unwrap();
+    let aids: Vec<AgentId> = boot.agents.iter().map(|l| l.agent.id.clone()).collect();
+    for launch in boot.agents {
+        launch.go();
     }
     timeout(TIMEOUT, async {
         while aids
             .iter()
-            .any(|aid| boot.router.status(aid) == Some(NodeStatus::Spawning))
+            .any(|aid| boot.router.status(aid) == Some(NodeStatus::Running))
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -280,32 +284,31 @@ async fn child_reports_to_parent_by_send() {
         rig.router.send_message(&child, &rig.primary, "done"),
         Ok(())
     );
-    let report = timeout(TIMEOUT, rig.primary_mail.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let Some(AgentEvent::Message(report)) =
+        timeout(TIMEOUT, rig.primary_mail.recv()).await.unwrap()
+    else {
+        panic!("no report");
+    };
     assert_eq!(report.text, format!("[from: {child}]\ndone"));
 }
 
+/// a spawn's node joins the graph only once set up: nobody sees it in
+/// progress
 #[tokio::test]
-async fn send_to_still_spawning_child_parks_in_minted_mailbox() {
+async fn spawn_in_progress_is_invisible() {
     let rig = Rig::new("prime").await;
     rig.script("o1", "seeded");
-    // one poll registers the child under the lock and leaves its setup
-    // tail in flight, so we see it still spawning
+    // one poll leaves the setup tail in flight
     let mut spawn = std::pin::pin!(
         rig.router
             .spawn_agent(&rig.primary, &rig.commit, None, "go")
     );
     assert!(futures::poll!(&mut spawn).is_pending());
     let members = rig.router.list(&rig.primary, true).unwrap();
-    let child = members.iter().find(|m| m.id != rig.primary).unwrap();
-    assert_eq!(child.status, NodeStatus::Spawning);
+    assert_eq!(members.len(), 1);
 
-    // parks until the runtime starts — never Unreachable, never blocking
-    let sent = rig.router.send_message(&rig.primary, &child.id, "psst");
-    assert_eq!(sent, Ok(()));
-    timeout(TIMEOUT, spawn).await.unwrap().unwrap();
+    let child = timeout(TIMEOUT, spawn).await.unwrap().unwrap();
+    rig.router.idle_with_output(&child, "seeded").await;
 }
 
 #[tokio::test]
@@ -484,7 +487,7 @@ async fn boot_isolates_invalid_agents() {
         .collect();
     insta::assert_yaml_snapshot!(serde_json::json!({
         "tabs": boot.tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(),
-        "agents": boot.agents.iter().map(|a| &a.id).collect::<Vec<_>>(),
+        "agents": boot.agents.iter().map(|l| &l.agent.id).collect::<Vec<_>>(),
         "failures": boot.failures,
         "graph": graph,
         "all_ids": boot.router.lock().all_ids,
@@ -506,8 +509,8 @@ async fn boot_isolates_invalid_agents() {
         - agent bad-child not found
     graph:
       bad-child: Dead
-      good: Spawning
-      grandchild: Spawning
+      good: Running
+      grandchild: Running
     tabs:
       - good
     ");
@@ -711,49 +714,33 @@ async fn failed_spawn_after_checkout_leaves_no_branch() {
     assert_eq!(branches, Vec::<String>::new());
 }
 
+/// the parent archived mid-spawn: the commit finds it gone and rolls the
+/// child back, so it never joins the graph
 #[tokio::test]
-async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
+async fn spawn_under_parent_archived_mid_setup_rolls_back() {
     let rig = Rig::new("prime").await;
-    rig.script("o1", "never collected");
-    let mut spawn = std::pin::pin!(
-        rig.router
-            .spawn_agent(&rig.primary, &rig.commit, None, "go")
-    );
+    let child = rig.spawn_idle_child(&rig.primary, "child").await;
+    let mut spawn = std::pin::pin!(rig.router.spawn_agent(&child, &rig.commit, None, "go"));
     assert!(futures::poll!(&mut spawn).is_pending());
-    let members = rig.router.list(&rig.primary, true).unwrap();
-    let child = members
-        .iter()
-        .find(|m| m.id != rig.primary)
-        .unwrap()
-        .id
-        .clone();
 
-    // archive while the spawn tail is (likely) still in flight
     assert_eq!(
         rig.router.archive(&rig.primary, &child).await.unwrap(),
         Ok(())
     );
-    // Let the tail land either way. If archive won before attachment, setup
-    // rolls back; if attachment won, the durable archived graph record wins.
-    drop(timeout(TIMEOUT, spawn).await);
+    let err = timeout(TIMEOUT, spawn).await.unwrap().unwrap_err();
+    assert_eq!(err.to_string(), format!("unknown agent {child}"));
 
     let records = rig.project.store().load_graph().await.unwrap();
-    assert!(records.get(&child).is_none_or(|record| record.archived));
+    let ids: BTreeSet<&AgentId> = records.keys().collect();
+    assert_eq!(ids, BTreeSet::from([&rig.primary, &child]));
+    let dirs: BTreeSet<_> = std::fs::read_dir(rig.project.agents())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(
-        rig.router.send_message(&rig.primary, &child, "hi"),
-        Err(RouterError::Unreachable)
+        dirs,
+        BTreeSet::from([rig.primary.to_string().into(), child.to_string().into()])
     );
-}
-
-#[tokio::test]
-async fn launch_is_one_shot() {
-    let (project, _api) = Project::new_test().unwrap();
-    let router = Router::new(unbounded_channel().0, project.clone());
-    let aid = AgentId::from("dup".to_string());
-    let _mail = router.attach_manual(&aid);
-
-    let (abort, _registration) = AbortHandle::new_pair();
-    assert!(router.lock().go_live(&aid, abort).is_err());
 }
 
 /// a closed mailbox means the runtime is gone: the send fails, but the
@@ -842,9 +829,9 @@ async fn supervised(
     let (app_tx, _app_rx) = unbounded_channel();
     let router = Router::new(app_tx, project);
     let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
-    router.register_root(&aid).unwrap();
     let (abort, registration) = AbortHandle::new_pair();
-    let _mail = router.lock().go_live(&aid, abort.clone()).unwrap();
+    let node = AgentNode::live(aid.clone(), None, unbounded_channel().0, abort.clone());
+    router.lock().graph.insert(aid.clone(), node);
     tokio::spawn(ops::runtime::supervise(
         aid.clone(),
         router.clone(),

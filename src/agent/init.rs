@@ -1,6 +1,5 @@
 use anyhow::Result;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::Agent;
@@ -17,7 +16,6 @@ use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
 use crate::tui::app::AppEvent;
 
-pub const CHANNEL_CAPACITY: usize = 100;
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
 impl Agent {
@@ -34,7 +32,7 @@ impl Agent {
             .history
             .fail_unresolved_tool_calls(LOST_ON_RESTART);
         let (user_tx, user_rx) = unbounded_channel();
-        let (task_tx, task_rx) = channel(CHANNEL_CAPACITY);
+        let (task_tx, task_rx) = unbounded_channel();
         Self {
             project,
             id,
@@ -83,14 +81,13 @@ impl Agent {
         agent.launch_root().await
     }
 
-    /// register + persist + launch a fresh root agent
+    /// persist + start a fresh root agent
     pub async fn launch_root(self) -> Result<()> {
         let router = self.router.clone();
         let aid = self.id.clone();
-        router.register_root(&aid)?;
         let result = async {
             self.save().await?;
-            router.launch(self)
+            router.start(self, None).await
         }
         .await;
         if result.is_err() {

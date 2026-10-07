@@ -28,12 +28,11 @@ impl Agent {
         let started = assistant.stream_turn(instructions, messages, tools).await?;
         sink.stream(AssistantEvent::Started {
             started_at: started.started_at,
-        })
-        .await?;
+        })?;
         let mut stream = started.stream;
         while let Some(event) = stream.next().await {
             trace!(event = ?event, "Stream chunk received");
-            sink.stream(event?).await?;
+            sink.stream(event?)?;
         }
         Ok(())
     }

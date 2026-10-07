@@ -25,7 +25,6 @@ use crate::llm::history::Compaction;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::AssistantItem;
-use crate::llm::history::message::PeerMessage;
 use crate::llm::history::message::UserMessage;
 
 pub const ABORTED_BY_USER: &str = "aborted by user";
@@ -375,10 +374,13 @@ impl Agent {
         now: u64,
     ) -> Result<()> {
         // an abort keeps everything its tools streamed before it: apply the
-        // queued output first (queued turn events die with the turn anyway)
+        // queued output first, and buffer queued mail without waking (queued
+        // turn events die with the turn anyway)
         for _ in 0..self.task_rx.len() {
-            if let Ok(AgentEvent::Output(tid, chunk)) = self.task_rx.try_recv() {
-                self.output(tid, chunk);
+            match self.task_rx.try_recv() {
+                Ok(AgentEvent::Output(tid, chunk)) => self.output(tid, chunk),
+                Ok(AgentEvent::Message(msg)) => self.state.pending_messages.push(msg.into()),
+                _ => {}
             }
         }
         let tasks = self.ledger.clear();
@@ -538,6 +540,7 @@ mod tests {
     use crate::llm::history::message::Message;
     use crate::llm::history::message::OutputContent;
     use crate::llm::history::message::OutputItem;
+    use crate::llm::history::message::PeerMessage;
     use crate::llm::history::message::ToolCallItem;
     use crate::tools::todo::TodoArguments;
     use crate::tools::todo::TodoCall;

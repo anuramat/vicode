@@ -16,6 +16,8 @@ pub mod boot;
 pub mod graph;
 mod ops;
 
+pub use ops::runtime::Launch;
+
 // TODO move to config
 /// per-tab limit on live agents
 pub const TAB_AGENT_CAP: usize = 32;

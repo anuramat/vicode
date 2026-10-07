@@ -1,6 +1,7 @@
-//! `spawn`: a provisional node under the lock, then a detached setup task
-//! that checks the child's workdir out at the requested commit and launches
-//! it; any failure rolls back through `rollback_spawn`
+//! `spawn`: a detached setup task that checks the child's workdir out at the
+//! requested commit and saves its state, then `start`s it — the node joins
+//! the graph only then, so nobody ever sees a spawn in progress; any failure
+//! rolls back through `rollback_spawn`
 
 use anyhow::Result;
 
@@ -10,14 +11,14 @@ use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::router::Router;
+use crate::agent::router::RouterState;
 use crate::agent::router::TAB_AGENT_CAP;
-use crate::agent::router::graph::AgentNode;
-use crate::agent::router::graph::NodeStatus;
+use crate::agent::router::graph::Runtime;
 use crate::llm::history::History;
 
 impl Router {
-    /// registers the child synchronously; resolves once its {graph record,
-    /// state, workdir at `commit`} are durable
+    /// resolves once the child's {state, workdir at `commit`, graph record}
+    /// are durable and its runtime started
     pub async fn spawn_agent(
         &self,
         parent: &AgentId,
@@ -25,28 +26,11 @@ impl Router {
         inherited_history: Option<History>,
         prompt: &str,
     ) -> Result<AgentId> {
-        let (aid, record_write, project, app_tx) = {
+        // fail fast; `start` checks again at commit
+        let (aid, project, app_tx) = {
             let s = &mut *self.lock();
-            let root = match s.graph.get(parent) {
-                Some(node) if node.status() != NodeStatus::Dead => node.root.clone(),
-                Some(_) => anyhow::bail!("agent {parent} is dead"),
-                None => anyhow::bail!("unknown agent {parent}"),
-            };
-            // per-tab count cap; recovery must not depend on
-            // remembering ids — the error spells out the list → archive loop
-            anyhow::ensure!(
-                s.graph.values().filter(|n| n.root == root).count() < TAB_AGENT_CAP,
-                "this tab is at its agent cap ({TAB_AGENT_CAP}): archive finished agents to \
-                 free slots (list shows every member and its status)"
-            );
-            let aid = s.allocate();
-            let node = AgentNode::new(root, Some(parent.clone()));
-            // submitted under the lock, FIFO-ordered ahead of the tail's state
-            // save; the tail awaits this write so a failed graph write aborts
-            // the spawn instead of leaving state without a graph record
-            let record_write = s.project.store().save_graph(&aid, &node.record(false));
-            s.graph.insert(aid.clone(), node);
-            (aid, record_write, s.project.clone(), s.app_tx.clone())
+            s.child_root(parent)?;
+            (s.allocate(), s.project.clone(), s.app_tx.clone())
         };
         let seed = peer_message(parent, prompt);
 
@@ -88,10 +72,8 @@ impl Router {
                     // `resume` turns on it, and a crash before that can't lose it
                     pending_messages: vec![seed.into()],
                 };
-                // the state rides the same FIFO after the graph record: durable
-                // state ⇒ durable graph record — but only if the record itself
-                // committed, so check its receiver before writing the state
-                record_write.await?;
+                // durable graph record ⇒ durable state; a crash before the
+                // record leaves residue for cleanup
                 project.store().save_state(&child, &state).await?;
                 let agent = Agent::new(
                     project.clone(),
@@ -100,7 +82,7 @@ impl Router {
                     child.clone(),
                     state,
                 );
-                router.launch(agent)
+                router.start(agent, Some(&parent)).await
             }
             .await;
             guard.defuse();
@@ -120,7 +102,8 @@ impl Router {
         Ok(aid)
     }
 
-    /// drop a provisional node: its graph record, state and workdir go too
+    /// undo a failed start: its node (if any), graph record, state and
+    /// workdir
     pub async fn rollback_spawn(
         &self,
         aid: &AgentId,
@@ -135,8 +118,8 @@ impl Router {
     }
 }
 
-/// Rolls back a cancelled or panicking spawn setup instead of leaving a
-/// provisional `Spawning` node.
+/// Rolls back a cancelled or panicking spawn setup instead of leaving its
+/// residue.
 struct SpawnGuard {
     router: Router,
     aid: Option<AgentId>,
@@ -154,5 +137,27 @@ impl Drop for SpawnGuard {
             let router = self.router.clone();
             tokio::spawn(async move { drop(router.rollback_spawn(&aid).await) });
         }
+    }
+}
+
+impl RouterState {
+    /// the root a new child of `parent` joins, if its tab has room
+    pub fn child_root(
+        &self,
+        parent: &AgentId,
+    ) -> Result<AgentId> {
+        let root = match self.graph.get(parent) {
+            Some(node) if !matches!(node.runtime, Runtime::Dead(_)) => node.root.clone(),
+            Some(_) => anyhow::bail!("agent {parent} is dead"),
+            None => anyhow::bail!("unknown agent {parent}"),
+        };
+        // per-tab count cap; recovery must not depend on
+        // remembering ids — the error spells out the list → archive loop
+        anyhow::ensure!(
+            self.graph.values().filter(|n| n.root == root).count() < TAB_AGENT_CAP,
+            "this tab is at its agent cap ({TAB_AGENT_CAP}): archive finished agents to \
+             free slots (list shows every member and its status)"
+        );
+        Ok(root)
     }
 }

@@ -8,6 +8,7 @@ use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
+use crate::agent::router::Launch;
 use crate::tui::app::App;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
@@ -22,8 +23,8 @@ impl<'a> App<'a> {
     pub fn load_tabs(
         &mut self,
         tab_agents: Vec<(AgentId, AgentState)>,
-        agents: Vec<Agent>,
-    ) -> Result<()> {
+        agents: Vec<Launch>,
+    ) {
         let mut tabs = IndexMap::new();
         for (aid, state) in &tab_agents {
             tabs.insert(
@@ -34,11 +35,10 @@ impl<'a> App<'a> {
         self.tabs = tabs;
         self.rebuild_tablist();
 
-        // every node's mailbox exists already: launch order doesn't matter
-        for agent in agents {
-            self.router.launch(agent)?;
+        // every node is live already: launch order doesn't matter
+        for launch in agents {
+            launch.go();
         }
-        Ok(())
     }
 
     /// create a new primary agent, and a corresponding tab
@@ -259,7 +259,8 @@ mod tests {
         app.tabs.insert(aid.clone(), tab);
         app.rebuild_tablist();
         app.select_tab(Some(0));
-        let _mail = app.router.attach_manual(&aid);
+        app.router
+            .attach_manual(&aid, tokio::sync::mpsc::unbounded_channel().0);
 
         app.archive_tab().await.unwrap();
 
