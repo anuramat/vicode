@@ -28,8 +28,7 @@ impl Agent {
         id: AgentId,
         mut state: AgentState,
     ) -> Self {
-        // restore repair: a dangling function_call in history would 400
-        // every later turn
+        // restore repair: a dangling function_call in history would 400 every later turn
         state
             .context
             .history
