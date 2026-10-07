@@ -66,8 +66,8 @@ pub struct AgentState {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentContext {
-    /// the tab's snapshot commit: the overlay lowerdir, shared by every
-    /// agent in the tab
+    // TODO this is overlay specific, we should probably move it somewhere else
+    /// snapshot commit that the overlay uses as the lowerdir
     pub commit: String,
     pub history: History,
 }
