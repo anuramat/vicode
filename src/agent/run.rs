@@ -28,10 +28,8 @@ impl Agent {
         });
         // flush the saved buffer (a spawn seed, or messages buffered
         // before a restart) and start its turn, so the agent doesn't sit on
-        // unread mail
+        // unread mail; its step makes the startup report
         self.resume(now()).await?;
-        // the startup report: the workdir is mounted, the state live
-        self.report_status();
         while let Some(event) = self.next_event().await {
             if let Err(e) = self.handle(now(), event).await {
                 tracing::error!("error in agent {}: {:?}", self.id, e);

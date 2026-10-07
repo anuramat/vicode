@@ -207,7 +207,7 @@ async fn register_primary(
         .unwrap();
     let (mailbox, mail) = unbounded_channel();
     router.attach_manual(&aid, mailbox);
-    router.report_status(&aid, NodeStatus::Idle);
+    router.report_busy(&aid, false);
     (aid, mail)
 }
 
@@ -538,7 +538,7 @@ async fn runtime_death_is_terminal_until_restart() {
         .unwrap_err();
     assert_eq!(err.to_string(), format!("agent {child} is dead"));
     // A late status report cannot revive or overwrite a terminal node.
-    rig.router.report_status(&child, NodeStatus::Idle);
+    rig.router.report_busy(&child, false);
     assert_eq!(rig.router.send_message(&rig.primary, &child, "hi"), dead);
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(!records[&child].archived);

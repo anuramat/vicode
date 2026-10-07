@@ -29,13 +29,13 @@ pub struct AgentNode {
 
 #[derive(Debug)]
 pub enum Runtime {
-    /// `status` stays `Running` until the runtime's startup report
+    /// `busy` until the runtime's startup report
     Live {
         /// the agent's event channel: mail queues there until the runtime
         /// drains it
         mailbox: UnboundedSender<AgentEvent>,
         abort: AbortHandle,
-        status: NodeStatus,
+        busy: bool,
     },
     /// terminal for this process, with the error that ended it
     Dead(String),
@@ -54,7 +54,7 @@ impl AgentNode {
             runtime: Runtime::Live {
                 mailbox,
                 abort,
-                status: NodeStatus::Running,
+                busy: true,
             },
         }
     }
@@ -72,7 +72,8 @@ impl AgentNode {
 
     pub fn status(&self) -> NodeStatus {
         match &self.runtime {
-            Runtime::Live { status, .. } => *status,
+            Runtime::Live { busy: true, .. } => NodeStatus::Running,
+            Runtime::Live { busy: false, .. } => NodeStatus::Idle,
             Runtime::Dead(_) => NodeStatus::Dead,
         }
     }

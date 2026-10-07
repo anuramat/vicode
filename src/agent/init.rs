@@ -52,7 +52,7 @@ impl Agent {
         &self,
         aid: AgentId,
     ) -> Result<()> {
-        self.idle()?;
+        self.ensure_idle()?;
         let mut state = self.state.clone();
         state.pending_messages.clear();
         let generation = state.history.generation();

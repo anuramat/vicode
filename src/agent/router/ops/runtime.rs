@@ -19,7 +19,6 @@ use crate::agent::AgentState;
 use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
-use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::Runtime;
 use crate::agent::task::executor::panic_message;
 
@@ -29,19 +28,17 @@ impl Router {
     }
 
     /// informational: what `list` shows
-    pub fn report_status(
+    pub fn report_busy(
         &self,
         aid: &AgentId,
-        status: NodeStatus,
+        busy: bool,
     ) {
         let s = &mut *self.lock();
         // a terminal node never accepts a late in-flight report
         if let Some(node) = s.graph.get_mut(aid)
-            && let Runtime::Live {
-                status: current, ..
-            } = &mut node.runtime
+            && let Runtime::Live { busy: current, .. } = &mut node.runtime
         {
-            *current = status;
+            *current = busy;
         }
     }
 

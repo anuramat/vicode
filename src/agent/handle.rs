@@ -14,7 +14,6 @@ use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
-use crate::agent::router::graph::NodeStatus;
 use crate::agent::task::ledger::Task;
 use crate::agent::task::ledger::TaskId;
 use crate::agent::task::sink::TaskSink;
@@ -68,15 +67,13 @@ impl Agent {
         self.settle(result).await
     }
 
-    /// end of a step: report the status if it succeeded, and save what it
-    /// changed even if it failed; the first error wins
+    /// end of a step: report the status, and save what the step changed
+    /// even if it failed; the first error wins
     async fn settle(
         &mut self,
         result: Result<()>,
     ) -> Result<()> {
-        if result.is_ok() {
-            self.report_status();
-        }
+        self.report_status();
         if !std::mem::take(&mut self.dirty) {
             return result;
         }
@@ -93,19 +90,19 @@ impl Agent {
             UserCommand::Submit(prompt) => self.submit(now, prompt),
             UserCommand::Compact(n) => self.compact(now, n),
             UserCommand::Retry => {
-                self.idle()?;
+                self.ensure_idle()?;
                 self.increment_generation()?;
                 self.needs_turn = true;
                 self.advance(now)
             }
             UserCommand::Abort => self.abort(now),
             UserCommand::Undo(n) => {
-                self.idle()?;
+                self.ensure_idle()?;
                 let g = self.increment_generation()?;
                 self.handle_history(g, HistoryUpdate::Pop(n))
             }
             UserCommand::SetAssistant(id) => {
-                self.idle()?;
+                self.ensure_idle()?;
                 let id = self.project.assistants().assistant(&id)?.id;
                 self.emit(UiEvent::AssistantSet(id.clone()));
                 self.state.assistant_id = id;
@@ -125,23 +122,19 @@ impl Agent {
         }
     }
 
-    /// a turn or compaction is in flight or held
+    /// a task is in flight; this covers held work too: a turn held for a
+    /// summary waits on the summary task, a parked summary on the turn
     pub fn busy(&self) -> bool {
-        !self.ledger.idle() || self.needs_turn || self.compaction.is_some()
+        !self.ledger.idle()
     }
 
     /// informational: the router's `list`
     pub fn report_status(&self) {
-        let status = if self.busy() {
-            NodeStatus::Running
-        } else {
-            NodeStatus::Idle
-        };
-        self.router.report_status(&self.id, status);
+        self.router.report_busy(&self.id, self.busy());
     }
 
-    pub fn idle(&self) -> Result<()> {
-        anyhow::ensure!(self.ledger.idle(), "agent is busy");
+    pub fn ensure_idle(&self) -> Result<()> {
+        anyhow::ensure!(!self.busy(), "agent is busy");
         Ok(())
     }
 
@@ -534,6 +527,7 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentId;
+    use crate::agent::router::graph::NodeStatus;
     use crate::agent::task::executor::TaskExecutor;
     use crate::config::CompactConfig;
     use crate::llm::history::message::CompactMessage;
@@ -827,7 +821,7 @@ mod tests {
             "unknown assistant \"gone\"".to_string()
         );
         assert!(!step.starts_turn(), "{:?}", step.tasks);
-        h.idle().unwrap();
+        h.ensure_idle().unwrap();
         // a resubmit after the fix turns normally
         h.step(8, user(UserCommand::SetAssistant("test".into())))
             .await
@@ -1082,6 +1076,38 @@ mod tests {
             - turn
         "#
         );
+    }
+
+    /// a step that fails after its last task finished still reports the
+    /// agent idle to the router's `list`
+    #[tokio::test]
+    async fn failed_followup_still_reports_idle() {
+        let mut h = Harness::with(&[]).await;
+        h.router.attach_manual(&h.id, h.task_tx.clone());
+        let status = |h: &Harness| h.router.list(&h.id, false).unwrap()[0].status;
+        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let tool = h
+            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .await
+            .1
+            .task();
+        let completed = AssistantEvent::Completed { ended_at: 3 };
+        h.step(3, AgentEvent::Stream(turn, completed))
+            .await
+            .0
+            .unwrap();
+        h.step(4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)))
+            .await
+            .0
+            .unwrap();
+        assert_eq!(status(&h), NodeStatus::Running);
+
+        // the follow-up turn can't start
+        h.state.assistant_id = "gone".into();
+        let item = todo_item(Some(Ok(TodoResult {})));
+        let done = AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(item))));
+        assert!(h.step(5, done).await.0.is_err());
+        assert_eq!(status(&h), NodeStatus::Idle);
     }
 
     #[tokio::test]
