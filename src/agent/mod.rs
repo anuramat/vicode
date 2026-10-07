@@ -34,16 +34,17 @@ use crate::tui::app::AppEvent;
 
 #[derive(Debug)]
 pub struct Agent {
-    pub id: AgentId,
     pub project: Project,
 
-    dirty: bool,
+    pub id: AgentId,
     pub state: AgentState,
+    /// state has changed since last persisted
+    dirty: bool,
 
-    pub compaction: Option<Compaction>,
     pub needs_turn: bool,
     pub executor: TaskExecutor,
     pub ledger: TaskLedger,
+    pub compaction: Option<Compaction>,
 
     /// other agents
     pub router: Router,
