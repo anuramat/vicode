@@ -590,13 +590,8 @@ mod tests {
         async fn restart(&self) -> Self {
             let state = self.project.store().load_state(&self.id).await.unwrap();
             let (app_tx, app_rx) = unbounded_channel();
-            let agent = Agent::new(
-                self.project.clone(),
-                self.router.clone(),
-                app_tx,
-                self.id.clone(),
-                state,
-            );
+            let mut agent = Agent::new(self.router.clone(), self.id.clone(), state);
+            agent.app_tx = app_tx;
             Self::wrap(agent, app_rx)
         }
 

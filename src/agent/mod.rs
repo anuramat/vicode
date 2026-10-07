@@ -131,9 +131,9 @@ mod tests {
                 .await
                 .unwrap();
             let (app_tx, app_rx) = tokio::sync::mpsc::unbounded_channel();
-            let router = router::Router::new(app_tx.clone(), project.clone());
+            let router = router::Router::new(app_tx, project.clone());
             let state = project.fake_state();
-            let agent = Self::new(project, router, app_tx, aid, state);
+            let agent = Self::new(router, aid, state);
             (agent, api, app_rx)
         }
     }

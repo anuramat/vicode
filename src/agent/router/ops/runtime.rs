@@ -1,11 +1,12 @@
-//! lifecycle: id allocation, status reports, and the one way to start an
-//! agent — `start` — whose runtime runs supervised until its terminal
+//! lifecycle: id allocation, status reports, and the one way to create an
+//! agent -- `create` -- whose runtime runs supervised until its terminal
 //! `runtime_down`
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 
 use anyhow::Result;
+use anyhow::anyhow;
 use futures::FutureExt;
 use futures::future::AbortHandle;
 use futures::future::AbortRegistration;
@@ -14,11 +15,13 @@ use futures::future::Abortable;
 use super::free_variant;
 use crate::agent::Agent;
 use crate::agent::AgentId;
+use crate::agent::AgentState;
 use crate::agent::router::Router;
 use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::Runtime;
+use crate::agent::task::executor::panic_message;
 
 impl Router {
     pub fn allocate_agent_id(&self) -> AgentId {
@@ -42,37 +45,85 @@ impl Router {
         }
     }
 
-    /// the one way to start a set-up agent: its node goes live under
-    /// `parent` (or as a root), and its runtime starts once the graph record
-    /// is durable — mail sent meanwhile queues in the agent's channel
-    pub async fn start(
+    /// the one way to create an agent: `setup` prepares its workdir and
+    /// returns its state, which is saved before the agent `start`s; any
+    /// failure, panics included, rolls all of it back. Detached: the setup
+    /// completes (or rolls back) even if the caller is cancelled
+    pub async fn create(
+        &self,
+        aid: AgentId,
+        parent: Option<AgentId>,
+        setup: impl Future<Output = Result<AgentState>> + Send + 'static,
+    ) -> Result<AgentState> {
+        let router = self.clone();
+        tokio::spawn(async move {
+            let result = AssertUnwindSafe(async {
+                let state = setup.await?;
+                // durable graph record ⇒ durable state; a crash before the
+                // record leaves residue for cleanup
+                router.project.store().save_state(&aid, &state).await?;
+                let agent = Agent::new(router.clone(), aid.clone(), state.clone());
+                router.start(agent, parent.as_ref()).await?;
+                Ok(state)
+            })
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|panic| {
+                Err(anyhow!("agent setup panicked: {}", panic_message(&*panic)))
+            });
+            if let Err(error) = &result
+                && let Err(rollback) = router.rollback(&aid).await
+            {
+                return Err(anyhow!(
+                    "{error:#}; failed to roll back {aid}: {rollback:#}"
+                ));
+            }
+            result
+        })
+        .await?
+    }
+
+    /// start a set-up agent: its node goes live under `parent` (or as a
+    /// root), and its runtime starts once the graph record is durable -- mail
+    /// sent meanwhile queues in the agent's channel
+    async fn start(
         &self,
         agent: Agent,
         parent: Option<&AgentId>,
     ) -> Result<()> {
         let aid = agent.id.clone();
-        let (abort, registration) = AbortHandle::new_pair();
-        let write = {
+        let (launch, write) = {
             let s = &mut *self.lock();
             let root = match parent {
                 Some(parent) => s.child_root(parent)?,
                 None => aid.clone(),
             };
-            let node = AgentNode::live(root, parent.cloned(), agent.task_tx.clone(), abort);
-            let write = s.project.store().save_graph(&aid, &node.record(false));
+            let (node, launch) = Launch::new(agent, root, parent.cloned());
+            let write = self.project.store().save_graph(&aid, &node.record(false));
             s.graph.insert(aid.clone(), node);
-            write
+            (launch, write)
         };
         if let Err(error) = write.await {
             self.lock().drop_node(&aid);
             return Err(error);
         }
-        Launch {
-            agent,
-            registration,
-        }
-        .go();
+        launch.go();
         Ok(())
+    }
+
+    /// undo a failed create: its node (if any), graph record, state and
+    /// workdir
+    async fn rollback(
+        &self,
+        aid: &AgentId,
+    ) -> Result<()> {
+        let write = {
+            let s = &mut *self.lock();
+            s.drop_node(aid);
+            self.project.store().delete_agent(aid)
+        };
+        write.await?;
+        self.project.delete_agent_workdir(aid).await
     }
 
     /// A runtime failure is terminal for this process. The durable live
@@ -106,6 +157,24 @@ pub struct Launch {
 }
 
 impl Launch {
+    /// a runtime for `agent`, not yet started, and the live node it
+    /// reports to
+    pub fn new(
+        agent: Agent,
+        root: AgentId,
+        parent: Option<AgentId>,
+    ) -> (AgentNode, Self) {
+        let (abort, registration) = AbortHandle::new_pair();
+        let node = AgentNode::live(root, parent, agent.task_tx.clone(), abort);
+        (
+            node,
+            Self {
+                agent,
+                registration,
+            },
+        )
+    }
+
     /// run the agent's loop supervised
     pub fn go(self) {
         let Self {
@@ -133,10 +202,7 @@ pub async fn supervise(
         Ok(Ok(Ok(()))) => "agent runtime exited unexpectedly".into(),
         Ok(Ok(Err(error))) => format!("agent runtime failed: {error:#}"),
         Ok(Err(_)) => "agent runtime cancelled unexpectedly".into(),
-        Err(payload) => format!(
-            "agent runtime panicked: {}",
-            crate::agent::task::executor::panic_message(&*payload)
-        ),
+        Err(payload) => format!("agent runtime panicked: {}", panic_message(&*payload)),
     };
     router.runtime_down(&aid, error);
 }

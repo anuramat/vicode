@@ -4,7 +4,6 @@ use indexmap::IndexMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::instrument;
 
-use crate::agent::Agent;
 use crate::agent::AgentState;
 use crate::agent::event::UserCommand;
 use crate::agent::id::AgentId;
@@ -46,12 +45,16 @@ impl<'a> App<'a> {
         let aid = self.router.allocate_agent_id();
         let repo = Repository::discover(self.project.root())?;
         let commit = repo.head()?.peel_to_commit()?.id().to_string();
-        // context files are read from the agent's own tree
-        self.project.new_agent_workdir(&commit, &aid).await?;
-        let instructions = self.project.instructions(&aid).await?;
-        let assistant = self.project.assistants().primary()?;
-        let state = AgentState::new(assistant.id, commit, instructions);
-        self.new_agent(aid.clone(), state.clone()).await?;
+        let project = self.project.clone();
+        let id = aid.clone();
+        let setup = async move {
+            project.new_agent_workdir(&commit, &id).await?;
+            // context files are read from the agent's own tree
+            let instructions = project.instructions(&id).await?;
+            let assistant = project.assistants().primary()?;
+            Ok(AgentState::new(assistant.id, commit, instructions))
+        };
+        let state = self.router.create(aid.clone(), None, setup).await?;
         self.insert_tab(aid, state);
         Ok(())
     }
@@ -67,21 +70,6 @@ impl<'a> App<'a> {
         self.tabs.shift_insert(idx, aid, tab);
         self.select_tab(Some(idx));
         self.rebuild_tablist();
-    }
-
-    pub async fn new_agent(
-        &self,
-        aid: AgentId,
-        state: AgentState,
-    ) -> Result<()> {
-        let agent = Agent::new(
-            self.project.clone(),
-            self.router.clone(),
-            self.tx.clone(),
-            aid,
-            state,
-        );
-        agent.launch_root().await
     }
 
     pub async fn handle_started(

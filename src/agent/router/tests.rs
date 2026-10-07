@@ -41,7 +41,7 @@ impl Router {
         let (abort, _registration) = AbortHandle::new_pair();
         let node = AgentNode::live(aid.clone(), None, mailbox, abort);
         let s = &mut *self.lock();
-        drop(s.project.store().save_graph(aid, &node.record(false)));
+        drop(self.project.store().save_graph(aid, &node.record(false)));
         s.graph.insert(aid.clone(), node);
     }
 
@@ -81,7 +81,7 @@ impl Router {
         aid: &AgentId,
         text: &str,
     ) {
-        let project = self.lock().project.clone();
+        let project = self.project.clone();
         timeout(TIMEOUT, async {
             loop {
                 let answered = project.store().load_state(aid).await.is_ok_and(|state| {
@@ -712,6 +712,38 @@ async fn failed_spawn_after_checkout_leaves_no_branch() {
         .filter(|name| name.starts_with("vc-"))
         .collect();
     assert_eq!(branches, Vec::<String>::new());
+}
+
+/// a create whose setup fails or panics after making its workdir leaves
+/// no node, state, graph record or dir behind
+#[tokio::test]
+async fn create_rolls_back_failed_and_panicking_setups() {
+    let rig = Rig::new("prime").await;
+    for panics in [false, true] {
+        let aid = rig.router.allocate_agent_id();
+        let workdir = rig.project.agent_workdir(&aid);
+        let setup = async move {
+            tokio::fs::create_dir_all(&workdir).await?;
+            assert!(!panics, "boom");
+            anyhow::bail!("boom")
+        };
+        let err = rig
+            .router
+            .create(aid.clone(), None, setup)
+            .await
+            .unwrap_err();
+        let expected = if panics {
+            "agent setup panicked: boom"
+        } else {
+            "boom"
+        };
+        assert_eq!(err.to_string(), expected);
+        assert_eq!(rig.router.status(&aid), None);
+        assert!(rig.project.store().load_state(&aid).await.is_err());
+        assert!(!rig.project.agent(&aid).exists());
+    }
+    let records = rig.project.store().load_graph().await.unwrap();
+    assert_eq!(records.keys().collect::<Vec<_>>(), vec![&rig.primary]);
 }
 
 /// the parent archived mid-spawn: the commit finds it gone and rolls the

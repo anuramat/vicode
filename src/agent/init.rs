@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::Agent;
@@ -14,15 +13,12 @@ use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
-use crate::tui::app::AppEvent;
 
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
 impl Agent {
     pub fn new(
-        project: Project,
         router: Router,
-        app_tx: UnboundedSender<AppEvent>,
         id: AgentId,
         mut state: AgentState,
     ) -> Self {
@@ -34,15 +30,15 @@ impl Agent {
         let (user_tx, user_rx) = unbounded_channel();
         let (task_tx, task_rx) = unbounded_channel();
         Self {
-            project,
+            project: router.project.clone(),
             id,
             state,
             ledger: TaskLedger::default(),
             compaction: None,
             needs_turn: false,
             dirty: false,
+            app_tx: router.app_tx.clone(),
             router,
-            app_tx,
             user_tx,
             user_rx,
             executor: TaskExecutor::default(),
@@ -61,9 +57,6 @@ impl Agent {
         aid: AgentId,
     ) -> Result<()> {
         self.idle()?;
-        self.project
-            .duplicate_agent_workdir(&self.id, &aid, &self.state.context.commit)
-            .await?;
         let mut state = self.state.clone();
         state.pending_messages.clear();
         let generation = state.context.history.generation();
@@ -71,29 +64,16 @@ impl Agent {
             generation,
             HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(DUPLICATED_NOTE.into())),
         )?;
-        let agent = Self::new(
-            self.project.clone(),
-            self.router.clone(),
-            self.app_tx.clone(),
-            aid,
-            state,
-        );
-        agent.launch_root().await
-    }
-
-    /// persist + start a fresh root agent
-    pub async fn launch_root(self) -> Result<()> {
-        let router = self.router.clone();
-        let aid = self.id.clone();
-        let result = async {
-            self.save().await?;
-            router.start(self, None).await
-        }
-        .await;
-        if result.is_err() {
-            drop(router.rollback_spawn(&aid).await);
-        }
-        result
+        let project = self.project.clone();
+        let (original, copy) = (self.id.clone(), aid.clone());
+        let setup = async move {
+            project
+                .duplicate_agent_workdir(&original, &copy, &state.context.commit)
+                .await?;
+            Ok(state)
+        };
+        self.router.create(aid, None, setup).await?;
+        Ok(())
     }
 }
 
@@ -131,7 +111,7 @@ mod tests {
     async fn try_duplicate_registers_copy_with_router() {
         let project = Project::new_test().unwrap().0;
         let (app_tx, mut app_rx) = unbounded_channel();
-        let router = Router::new(app_tx.clone(), project.clone());
+        let router = Router::new(app_tx, project.clone());
 
         let parent_aid = AgentId::from(format!("dup-parent-{}", uuid::Uuid::new_v4()));
         let parent_workdir = project.agent_workdir(&parent_aid);
@@ -143,13 +123,7 @@ mod tests {
         state
             .pending_messages
             .push(crate::llm::history::message::PeerMessage::new("kid", "stranded", 1).into());
-        let mut parent = Agent::new(
-            project.clone(),
-            router.clone(),
-            app_tx,
-            parent_aid.clone(),
-            state,
-        );
+        let mut parent = Agent::new(router.clone(), parent_aid.clone(), state);
 
         let copy_aid = router.allocate_agent_id();
         parent

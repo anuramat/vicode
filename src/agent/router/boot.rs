@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use futures::future::AbortHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::Agent;
@@ -44,7 +43,7 @@ impl Router {
         let records = store.load_graph().await?;
         let mut all_ids = store.state_ids().await?;
         all_ids.extend(records.keys().cloned());
-        let router = Self::new(app_tx.clone(), project.clone());
+        let router = Self::new(app_tx, project.clone());
         let mut boot = Boot {
             router: router.clone(),
             tabs: Vec::new(),
@@ -66,20 +65,9 @@ impl Router {
                     if is_root {
                         boot.tabs.push((aid.clone(), state.clone()));
                     }
-                    let agent = Agent::new(
-                        project.clone(),
-                        router.clone(),
-                        app_tx.clone(),
-                        aid.clone(),
-                        state,
-                    );
-                    let (abort, registration) = AbortHandle::new_pair();
-                    let node =
-                        AgentNode::live(record.root, record.parent, agent.task_tx.clone(), abort);
-                    boot.agents.push(Launch {
-                        agent,
-                        registration,
-                    });
+                    let agent = Agent::new(router.clone(), aid.clone(), state);
+                    let (node, launch) = Launch::new(agent, record.root, record.parent);
+                    boot.agents.push(launch);
                     node
                 }
                 Err(error) => {

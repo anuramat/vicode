@@ -11,6 +11,7 @@ use crate::agent::router::api::RouterError;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::GraphRecord;
 use crate::agent::router::graph::Runtime;
+use crate::project::Project;
 
 impl Router {
     /// resolves once the subtree's graph records are durably archived and its
@@ -35,7 +36,7 @@ impl Router {
                 .filter(|id| s.descends(id, target))
                 .cloned()
                 .collect();
-            s.archive_members(members)
+            s.archive_members(&self.project, members)
         };
         durable.await??;
         Ok(Ok(()))
@@ -54,7 +55,7 @@ impl Router {
                 .filter(|(_, n)| &n.root == primary)
                 .map(|(id, _)| id.clone())
                 .collect();
-            s.archive_members(members)
+            s.archive_members(&self.project, members)
         };
         durable.await?
     }
@@ -81,14 +82,15 @@ impl RouterState {
     /// so the subtree resurrects at next boot
     fn archive_members(
         &mut self,
+        project: &Project,
         members: Vec<AgentId>,
     ) -> JoinHandle<Result<()>> {
         let flips: Vec<(AgentId, GraphRecord)> = members
             .iter()
             .filter_map(|aid| Some((aid.clone(), self.drop_node(aid)?.record(true))))
             .collect();
-        let write = self.project.store().save_graph_batch(&flips);
-        let project = self.project.clone();
+        let write = project.store().save_graph_batch(&flips);
+        let project = project.clone();
         tokio::spawn(async move {
             let durable = write
                 .await
