@@ -4,14 +4,14 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::agent::Agent;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
-use crate::llm::history::message::UserMessage;
+use crate::llm::history::message::PeerMessage;
 use crate::utils::now;
 
 impl Agent {
     /// the runtime: `mail` is the node's mailbox, handed over by `launch`
     pub async fn run(
         mut self,
-        mut mail: UnboundedReceiver<UserMessage>,
+        mut mail: UnboundedReceiver<PeerMessage>,
     ) -> Result<()> {
         match self.run_inner(&mut mail).await {
             Ok(()) => Ok(()),
@@ -25,7 +25,7 @@ impl Agent {
 
     async fn run_inner(
         &mut self,
-        mail: &mut UnboundedReceiver<UserMessage>,
+        mail: &mut UnboundedReceiver<PeerMessage>,
     ) -> Result<()> {
         self.project
             .mount_agent(&self.state.context.commit, &self.id)
@@ -55,7 +55,7 @@ impl Agent {
     /// drained)
     pub async fn next_event(
         &mut self,
-        mail: &mut UnboundedReceiver<UserMessage>,
+        mail: &mut UnboundedReceiver<PeerMessage>,
     ) -> Option<AgentEvent> {
         tokio::select! {
             biased;

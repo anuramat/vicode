@@ -20,7 +20,7 @@ use crate::agent::router::RouterState;
 use crate::agent::router::graph::AgentNode;
 use crate::agent::router::graph::NodeStatus;
 use crate::agent::router::graph::Runtime;
-use crate::llm::history::message::UserMessage;
+use crate::llm::history::message::PeerMessage;
 
 impl Router {
     /// primary registration (`new_tab`/duplicate): root = own id
@@ -98,7 +98,7 @@ impl RouterState {
         &mut self,
         aid: &AgentId,
         abort: AbortHandle,
-    ) -> Result<UnboundedReceiver<UserMessage>> {
+    ) -> Result<UnboundedReceiver<PeerMessage>> {
         let node = self
             .graph
             .get_mut(aid)

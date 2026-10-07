@@ -7,6 +7,7 @@ use tracing::debug;
 use tracing::instrument;
 
 use crate::agent::Agent;
+use crate::agent::PendingMessage;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::TaskOutput;
 use crate::agent::event::TaskResult;
@@ -24,6 +25,7 @@ use crate::llm::history::Compaction;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::PeerMessage;
 use crate::llm::history::message::UserMessage;
 
 pub const ABORTED_BY_USER: &str = "aborted by user";
@@ -39,7 +41,7 @@ impl Agent {
         debug!(event = ?event, "handling agent event");
         let result = match event {
             AgentEvent::User(command) => self.command(now, command).await,
-            AgentEvent::Message(msg) => self.deliver(now, msg),
+            AgentEvent::Message(msg) => self.deliver(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.ledger.get(tid) {
                 Some(&Task::Turn { generation }) => {
                     self.handle_history(generation, HistoryUpdate::TurnResponse(event))
@@ -323,7 +325,7 @@ impl Agent {
     fn deliver(
         &mut self,
         now: u64,
-        msg: UserMessage,
+        msg: PendingMessage,
     ) -> Result<()> {
         // buffered and saved: survives restart
         self.state.pending_messages.push(msg);
@@ -336,7 +338,7 @@ impl Agent {
     fn flush_pending(&mut self) -> Result<()> {
         for msg in std::mem::take(&mut self.state.pending_messages) {
             let generation = self.history().generation();
-            self.handle_history(generation, HistoryUpdate::UserMessage(msg))?;
+            self.handle_history(generation, msg.into())?;
         }
         Ok(())
     }
@@ -361,7 +363,7 @@ impl Agent {
         }
         // drains a buffer stranded by abort — abort itself never flushes:
         // a naive flush would auto-start a turn on user abort
-        self.deliver(now, UserMessage::new(text, now))
+        self.deliver(now, UserMessage::new(text, now).into())
     }
 
     /// resolve everything in flight right here — the failed turn, and each
@@ -656,7 +658,7 @@ mod tests {
     }
 
     fn message(text: &str) -> AgentEvent {
-        AgentEvent::Message(UserMessage::new(text.into(), 5))
+        AgentEvent::Message(PeerMessage::new("kid", text, 5))
     }
 
     fn todo_item(output: Option<std::result::Result<TodoResult, String>>) -> ToolCallItem {
@@ -1151,15 +1153,16 @@ mod tests {
     #[tokio::test]
     async fn message_while_idle_appends_and_wakes() {
         let mut h = Harness::with(&[]).await;
-        assert_handled!(h, 7, message("[from: kid]\nhi"), @r#"
+        assert_handled!(h, 7, message("hi"), @r#"
         busy: true
         ui:
           - HistoryUpdate:
               - 0
-              - UserMessage:
-                  text: "[from: kid]\nhi"
-                  token_count: 5
-                  created_at: 5
+              - DeveloperMessage:
+                  Peer:
+                    text: "[from: kid]\nhi"
+                    token_count: 5
+                    created_at: 5
           - HistoryUpdate:
               - 0
               - TurnResponse:
@@ -1178,7 +1181,7 @@ mod tests {
         let turn = h.step(1, submit("hi", 0)).await.1.task();
 
         // turn still streaming: buffered, save only
-        assert_handled!(h, 2, message("[from: kid]\nearly bird"), @"
+        assert_handled!(h, 2, message("early bird"), @"
         busy: true
         ui: []
         tasks: []
@@ -1198,10 +1201,11 @@ mod tests {
         ui:
           - HistoryUpdate:
               - 1
-              - UserMessage:
-                  text: "[from: kid]\nearly bird"
-                  token_count: 6
-                  created_at: 5
+              - DeveloperMessage:
+                  Peer:
+                    text: "[from: kid]\nearly bird"
+                    token_count: 6
+                    created_at: 5
           - HistoryUpdate:
               - 1
               - TurnResponse:
@@ -1220,16 +1224,17 @@ mod tests {
     async fn failed_wake_keeps_the_message() {
         let mut h = Harness::with(&[]).await;
         h.state.assistant_id = "gone".into();
-        assert_rejected!(h, 5, message("[from: kid]\nhi"), @r#"
+        assert_rejected!(h, 5, message("hi"), @r#"
         - "unknown assistant \"gone\""
         - busy: false
           ui:
             - HistoryUpdate:
                 - 0
-                - UserMessage:
-                    text: "[from: kid]\nhi"
-                    token_count: 5
-                    created_at: 5
+                - DeveloperMessage:
+                    Peer:
+                      text: "[from: kid]\nhi"
+                      token_count: 5
+                      created_at: 5
           tasks: []
         "#);
         let saved = h.project.store().load_state(&h.id).await.unwrap();
@@ -1240,7 +1245,7 @@ mod tests {
     async fn stale_submit_is_rejected_before_flush() {
         let mut h = Harness::with(&[]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("[from: kid]\nstranded")).await.0.unwrap();
+        h.step(2, message("stranded")).await.0.unwrap();
         // abort clears the ledger but deliberately never flushes
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
         assert_eq!(h.state.pending_messages.len(), 1);
@@ -1256,7 +1261,7 @@ mod tests {
     async fn submit_flushes_stranded_buffer_before_user_message() {
         let mut h = Harness::with(&[]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("[from: kid]\nstranded")).await.0.unwrap();
+        h.step(2, message("stranded")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
 
         let (result, step) = h.step(4, submit("continue", 2)).await;
@@ -1272,7 +1277,7 @@ mod tests {
             .collect();
         assert!(
             positions[0] < positions[1],
-            "pending message must precede the user message"
+            "peer message must precede the user message"
         );
         assert!(h.state.pending_messages.is_empty());
     }
@@ -1281,10 +1286,7 @@ mod tests {
     async fn resume_flushes_buffered_messages_and_starts_turn() {
         let mut h = Harness::with(&[]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("[from: kid]\npersisted"))
-            .await
-            .0
-            .unwrap();
+        h.step(2, message("persisted")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
 
         // simulated restart: rebuild the agent from the persisted state
@@ -1308,10 +1310,7 @@ mod tests {
     async fn buffered_message_survives_restore_and_flushes_on_submit() {
         let mut h = Harness::with(&[]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("[from: kid]\npersisted"))
-            .await
-            .0
-            .unwrap();
+        h.step(2, message("persisted")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
 
         let mut restored = h.restart().await;
@@ -1646,7 +1645,7 @@ mod tests {
     async fn summary_after_abort_keeps_stranded_buffer() {
         let mut h = Harness::with(&["first"]).await;
         h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("[from: kid]\nstranded")).await.0.unwrap();
+        h.step(2, message("stranded")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
         let compact = h.step(4, user(UserCommand::Compact(1))).await.1.summary();
 

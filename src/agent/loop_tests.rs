@@ -22,7 +22,9 @@ use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantStatus;
+use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::OutputItem;
+use crate::llm::history::message::PeerMessage;
 use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 use crate::tools::todo::TodoArguments;
@@ -211,7 +213,7 @@ fn slot_output(
 
 /// register the test-driven agent with its (real) router, so mail sent to
 /// it lands in the mailbox the test pumps
-fn register(agent: &Agent) -> UnboundedReceiver<UserMessage> {
+fn register(agent: &Agent) -> UnboundedReceiver<PeerMessage> {
     let mail = agent.router.attach_manual(&agent.id);
     agent.report_status();
     mail
@@ -220,7 +222,7 @@ fn register(agent: &Agent) -> UnboundedReceiver<UserMessage> {
 /// pump the agent's own event loop until the predicate holds
 async fn pump_until(
     agent: &mut Agent,
-    mail: &mut UnboundedReceiver<UserMessage>,
+    mail: &mut UnboundedReceiver<PeerMessage>,
     pred: impl Fn(&Agent) -> bool,
 ) {
     timeout(TIMEOUT, async {
@@ -776,12 +778,12 @@ async fn spawn_commit_list_archive_lifecycle() {
         .router
         .idle_with_output(&child, "the magic word is plum")
         .await;
-    // the seed rode the inbound path: user-role, tagged with the sender —
+    // the seed rode the inbound path: developer-role, tagged with the sender —
     // and the inherited context precedes it
     let seed_request = &fake.requests()[1];
     assert!(seed_request.len() > 1, "inherited context missing");
-    let Some(Message::User(seed)) = seed_request.last() else {
-        panic!("seed is not a user message: {seed_request:?}");
+    let Some(Message::Developer(DeveloperMessage::Peer(seed))) = seed_request.last() else {
+        panic!("seed is not a peer message: {seed_request:?}");
     };
     similar_asserts::assert_eq!(
         seed.text,

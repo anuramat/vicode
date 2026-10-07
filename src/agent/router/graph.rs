@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::AgentId;
-use crate::llm::history::message::UserMessage;
+use crate::llm::history::message::PeerMessage;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GraphRecord {
@@ -28,14 +28,14 @@ pub struct AgentNode {
     pub root: AgentId,
     pub parent: Option<AgentId>,
     /// minted with the node, so mail sent before the runtime starts parks here
-    pub mailbox: UnboundedSender<UserMessage>,
+    pub mailbox: UnboundedSender<PeerMessage>,
     pub runtime: Runtime,
 }
 
 #[derive(Debug)]
 pub enum Runtime {
     /// the mailbox's receiving end, until `launch` hands it to the runtime
-    Pending(UnboundedReceiver<UserMessage>),
+    Pending(UnboundedReceiver<PeerMessage>),
     /// `status` stays `Spawning` until the runtime's startup report
     Live {
         abort: AbortHandle,

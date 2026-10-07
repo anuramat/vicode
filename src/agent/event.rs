@@ -6,14 +6,14 @@ use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::CompactMessage;
+use crate::llm::history::message::PeerMessage;
 use crate::llm::history::message::ToolCallItem;
-use crate::llm::history::message::UserMessage;
 
 #[derive(Debug)]
 pub enum AgentEvent {
     User(UserCommand),
     /// inter-agent message
-    Message(UserMessage),
+    Message(PeerMessage),
     /// a turn's provider stream
     Stream(TaskId, AssistantEvent),
     /// a streaming tool's output chunk

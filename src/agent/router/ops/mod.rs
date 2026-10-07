@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use super::RouterState;
 use crate::agent::AgentId;
 use crate::agent::router::graph::AgentNode;
-use crate::llm::history::message::UserMessage;
+use crate::llm::history::message::PeerMessage;
 use crate::utils::now;
 
 mod archive;
@@ -44,13 +44,13 @@ impl RouterState {
     }
 }
 
-/// inter-agent message: user-role, tagged in-body with the sender id —
+/// inter-agent message: developer-role, tagged in-body with the sender id —
 /// stamped by the router, so it can't be spoofed
 fn peer_message(
     sender: &AgentId,
     text: &str,
-) -> UserMessage {
-    UserMessage::new(format!("[from: {sender}]\n{text}"), now())
+) -> PeerMessage {
+    PeerMessage::new(sender, text, now())
 }
 
 /// smallest free variant per name — `b`, `b-2`, `b-3`, … — so allocation is

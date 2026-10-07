@@ -86,7 +86,7 @@ impl Router {
                     },
                     // the seed rides the saved state: the child's startup
                     // `resume` turns on it, and a crash before that can't lose it
-                    pending_messages: vec![seed],
+                    pending_messages: vec![seed.into()],
                 };
                 // the state rides the same FIFO after the graph record: durable
                 // state ⇒ durable graph record — but only if the record itself

@@ -21,8 +21,10 @@ use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::Message;
 use crate::llm::history::message::OutputItem;
-use crate::llm::history::message::UserMessage;
+use crate::llm::history::message::PeerMessage;
 use crate::llm::provider::api::fake::FakeApi;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,7 +35,7 @@ impl Router {
     pub fn attach_manual(
         &self,
         aid: &AgentId,
-    ) -> UnboundedReceiver<UserMessage> {
+    ) -> UnboundedReceiver<PeerMessage> {
         let (abort, _registration) = AbortHandle::new_pair();
         self.register_root(aid).unwrap();
         self.lock().go_live(aid, abort).unwrap()
@@ -119,7 +121,7 @@ struct Rig {
     router: Router,
     primary: AgentId,
     /// the dummy primary's mailbox: nobody runs it
-    primary_mail: UnboundedReceiver<UserMessage>,
+    primary_mail: UnboundedReceiver<PeerMessage>,
     /// the repo's HEAD: the tab's snapshot, and where children start
     commit: String,
 }
@@ -190,7 +192,7 @@ async fn register_primary(
     project: &Project,
     router: &Router,
     name: &str,
-) -> (AgentId, UnboundedReceiver<UserMessage>) {
+) -> (AgentId, UnboundedReceiver<PeerMessage>) {
     let aid = AgentId::from(name.to_string());
     tokio::fs::create_dir_all(project.agent_workdir(&aid))
         .await
@@ -413,10 +415,7 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let mut kept_state = rig.project.store().load_state(&kept).await.unwrap();
     kept_state
         .pending_messages
-        .push(crate::llm::history::message::UserMessage::new(
-            "[from: prime]\nresume".into(),
-            10,
-        ));
+        .push(crate::llm::history::message::PeerMessage::new("prime", "resume", 10).into());
     rig.project
         .store()
         .save_state(&kept, &kept_state)
@@ -821,7 +820,7 @@ async fn send_burst_drains_into_the_target_history() {
                 .state()
                 .iter()
                 .filter_map(|m| match m {
-                    crate::llm::history::message::Message::User(u) => Some(u.text.clone()),
+                    Message::Developer(DeveloperMessage::Peer(p)) => Some(p.text.clone()),
                     _ => None,
                 })
                 .collect();

@@ -9,6 +9,7 @@ pub mod task;
 pub mod tool;
 pub mod turn;
 
+use derive_more::From;
 pub use id::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -26,6 +27,10 @@ use crate::agent::task::ledger::TaskLedger;
 use crate::forward;
 use crate::llm::history::Compaction;
 use crate::llm::history::History;
+use crate::llm::history::HistoryUpdate;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::PeerMessage;
+use crate::llm::history::message::UserMessage;
 use crate::llm::provider::assistant::Assistant;
 use crate::project::Project;
 use crate::tui::app::AppEvent;
@@ -61,7 +66,23 @@ pub struct AgentState {
     pub assistant_id: String,
     pub context: AgentContext,
     /// inbound messages buffered while busy
-    pub pending_messages: Vec<crate::llm::history::message::UserMessage>,
+    pub pending_messages: Vec<PendingMessage>,
+}
+
+/// an inbound message, buffered until the next turn boundary
+#[derive(Clone, Serialize, Deserialize, Debug, From)]
+pub enum PendingMessage {
+    User(UserMessage),
+    Peer(PeerMessage),
+}
+
+impl From<PendingMessage> for HistoryUpdate {
+    fn from(msg: PendingMessage) -> Self {
+        match msg {
+            PendingMessage::User(m) => Self::UserMessage(m),
+            PendingMessage::Peer(m) => Self::DeveloperMessage(DeveloperMessage::Peer(m)),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

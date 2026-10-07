@@ -5,7 +5,7 @@ use crate::llm::history::message::Message;
 
 const SUBAGENT_HEADER: &str = r"
 You are a subagent, assisting your parent agent.
-The parent agent will provide you with a task in the next user message, and you should closely follow the instructions in it.
+The parent agent will provide you with a task in the next developer message, and you should closely follow the instructions in it.
 Your working directory is your own git branch, checked out at the commit your parent spawned you from.
 
 - Do NOT converse, ask questions, or suggest next steps
@@ -159,7 +159,7 @@ mod tests {
               ready_at: ~
             - role: developer
               Misc:
-                text: "\nYou are a subagent, assisting your parent agent.\nThe parent agent will provide you with a task in the next user message, and you should closely follow the instructions in it.\nYour working directory is your own git branch, checked out at the commit your parent spawned you from.\n\n- Do NOT converse, ask questions, or suggest next steps\n- Do NOT editorialize or add meta-commentary\n- Do NOT emit text between tool calls. Use tools silently, then report once at the end, by `send`ing the report to your parent (the `[from: <id>]` of your task message) -- your final text reaches no one.\n- Stay strictly within your directive's scope. If you discover related systems outside your scope, mention them in one sentence at most.\n- Keep your report under 500 words unless the directive specifies otherwise. Be factual and concise.\n- Commit the file changes you want your parent to see: it reads them from your branch, and never sees uncommitted ones. Do NOT describe them in your report.\n\nMessages above are from the conversation between the user and your parent agent. Changes your parent made but did not commit are NOT in your working directory, even if mentioned above.\n"
+                text: "\nYou are a subagent, assisting your parent agent.\nThe parent agent will provide you with a task in the next developer message, and you should closely follow the instructions in it.\nYour working directory is your own git branch, checked out at the commit your parent spawned you from.\n\n- Do NOT converse, ask questions, or suggest next steps\n- Do NOT editorialize or add meta-commentary\n- Do NOT emit text between tool calls. Use tools silently, then report once at the end, by `send`ing the report to your parent (the `[from: <id>]` of your task message) -- your final text reaches no one.\n- Stay strictly within your directive's scope. If you discover related systems outside your scope, mention them in one sentence at most.\n- Keep your report under 500 words unless the directive specifies otherwise. Be factual and concise.\n- Commit the file changes you want your parent to see: it reads them from your branch, and never sees uncommitted ones. Do NOT describe them in your report.\n\nMessages above are from the conversation between the user and your parent agent. Changes your parent made but did not commit are NOT in your working directory, even if mentioned above.\n"
                 token_count: 247
                 created_at: "[created_at]"
           token_count: 280

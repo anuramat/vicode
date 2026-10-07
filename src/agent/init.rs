@@ -145,10 +145,7 @@ mod tests {
         // not inherit it
         state
             .pending_messages
-            .push(crate::llm::history::message::UserMessage::new(
-                "[from: kid]\nstranded".into(),
-                1,
-            ));
+            .push(crate::llm::history::message::PeerMessage::new("kid", "stranded", 1).into());
         let mut parent = Agent::new(
             project.clone(),
             router.clone(),
