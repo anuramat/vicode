@@ -6,7 +6,6 @@ use anyhow::Result;
 use tracing::debug;
 use tracing::instrument;
 
-use crate::agent::ActivityStatus;
 use crate::agent::Agent;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::TaskOutput;
@@ -68,14 +67,14 @@ impl Agent {
         self.settle(result).await
     }
 
-    /// end of a step: sync the status if it succeeded, and save what it
+    /// end of a step: report the status if it succeeded, and save what it
     /// changed even if it failed; the first error wins
     async fn settle(
         &mut self,
         result: Result<()>,
     ) -> Result<()> {
         if result.is_ok() {
-            self.sync_status();
+            self.report_status();
         }
         if !std::mem::take(&mut self.dirty) {
             return result;
@@ -125,31 +124,17 @@ impl Agent {
         }
     }
 
-    pub fn derive_status(&self) -> ActivityStatus {
-        let busy = self.ledger.in_turn() || self.needs_turn;
-        ActivityStatus {
-            turn: self.history().state().turn_status(busy),
-            compacting: self.compacting(),
-        }
-    }
-
-    /// report a changed status to the router's list and the UI
-    fn sync_status(&mut self) {
-        let new_status = self.derive_status();
-        if new_status == self.state.status {
-            return;
-        }
-        self.state.status = new_status.clone();
-        self.report_status();
-        self.emit(UiEvent::StatusUpdate(new_status));
+    /// a turn or compaction is in flight or held
+    pub fn busy(&self) -> bool {
+        !self.ledger.idle() || self.needs_turn || self.compaction.is_some()
     }
 
     /// informational: the router's `list`
     pub fn report_status(&self) {
-        let status = if self.state.status.idle() {
-            NodeStatus::Idle
-        } else {
+        let status = if self.busy() {
             NodeStatus::Running
+        } else {
+            NodeStatus::Idle
         };
         self.router.report_status(&self.id, status);
     }
@@ -547,7 +532,6 @@ mod tests {
     use crate::agent::AgentId;
     use crate::agent::task::executor::TaskExecutor;
     use crate::config::CompactConfig;
-    use crate::llm::history::TurnStatus;
     use crate::llm::history::message::CompactMessage;
     use crate::llm::history::message::Message;
     use crate::llm::history::message::OutputContent;
@@ -571,7 +555,7 @@ mod tests {
     /// what a step did
     #[derive(serde::Serialize)]
     struct Step {
-        status: ActivityStatus,
+        busy: bool,
         ui: Vec<UiEvent>,
         /// started tasks, as (id, kind)
         tasks: Vec<(TaskId, &'static str)>,
@@ -631,7 +615,7 @@ mod tests {
             };
             let tasks = std::mem::take(tasks);
             Step {
-                status: self.agent.derive_status(),
+                busy: self.agent.busy(),
                 ui,
                 tasks,
             }
@@ -759,9 +743,7 @@ mod tests {
     async fn submit_starts_turn() {
         let mut h = Harness::with(&[]).await;
         assert_handled!(h, 7, submit("hi", 0), @"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 0
@@ -777,9 +759,6 @@ mod tests {
               - TurnResponse:
                   Created:
                     created_at: 7
-          - StatusUpdate:
-              turn: InProgress
-              compacting: false
         tasks:
           - - 0
             - turn
@@ -791,9 +770,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         assert_rejected!(h, 7, submit("hi", 1), @r#"
         - "history generation mismatch: expected 0"
-        - status:
-            turn: Idle
-            compacting: false
+        - busy: false
           ui: []
           tasks: []
         "#);
@@ -804,13 +781,8 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         h.ledger.register(Task::turn());
         assert_handled!(h, 7, submit("hi", 0), @"
-        status:
-          turn: InProgress
-          compacting: false
-        ui:
-          - StatusUpdate:
-              turn: InProgress
-              compacting: false
+        busy: true
+        ui: []
         tasks: []
         ");
         assert_eq!(h.state.pending_messages.len(), 1);
@@ -862,13 +834,7 @@ mod tests {
             .0
             .unwrap();
         h.step(9, submit("retry", 1)).await.0.unwrap();
-        assert_eq!(
-            h.derive_status(),
-            ActivityStatus {
-                turn: TurnStatus::InProgress,
-                compacting: false,
-            }
-        );
+        assert!(h.busy());
     }
 
     #[tokio::test]
@@ -876,10 +842,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         h.step(7, submit("hi", 0)).await.0.unwrap();
         assert_handled!(h, 9, user(UserCommand::Abort), @"
-        status:
-          turn:
-            Failed: aborted by user
-          compacting: false
+        busy: false
         ui:
           - HistoryUpdate:
               - 1
@@ -890,10 +853,6 @@ mod tests {
                   Failed:
                     message: aborted by user
                     ended_at: 9
-          - StatusUpdate:
-              turn:
-                Failed: aborted by user
-              compacting: false
         tasks: []
         ");
         assert!(matches!(
@@ -906,12 +865,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_failure_emits_error_and_keeps_failed_status() {
+    async fn task_failure_emits_error_and_fails_turn() {
         let mut h = Harness::with(&[]).await;
-        h.state.status = ActivityStatus {
-            turn: TurnStatus::InProgress,
-            compacting: false,
-        };
         let history = h.history_mut();
         history
             .handle(
@@ -937,10 +892,7 @@ mod tests {
         let tid = h.ledger.register(Task::turn());
 
         assert_handled!(h, 7, AgentEvent::Done(tid, Err("oops".into())), @"
-        status:
-          turn:
-            Failed: oops
-          compacting: false
+        busy: false
         ui:
           - Error: oops
           - HistoryUpdate:
@@ -949,10 +901,6 @@ mod tests {
                   Failed:
                     message: oops
                     ended_at: 7
-          - StatusUpdate:
-              turn:
-                Failed: oops
-              compacting: false
         tasks: []
         ");
     }
@@ -963,9 +911,7 @@ mod tests {
         h.ledger.register(Task::turn());
         assert_rejected!(h, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - agent is busy
-        - status:
-            turn: InProgress
-            compacting: false
+        - busy: true
           ui: []
           tasks: []
         ");
@@ -976,9 +922,7 @@ mod tests {
     async fn set_assistant_switches_saves_and_emits() {
         let mut h = Harness::with(&[]).await;
         assert_handled!(h, 7, user(UserCommand::SetAssistant("test2".into())), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - AssistantSet: test2
         tasks: []
@@ -993,9 +937,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         assert_rejected!(h, 7, user(UserCommand::SetAssistant("nope".into())), @r#"
         - "unknown assistant \"nope\""
-        - status:
-            turn: Idle
-            compacting: false
+        - busy: false
           ui: []
           tasks: []
         "#);
@@ -1009,16 +951,11 @@ mod tests {
         h.ledger.register(Task::turn());
         let copy = AgentId::from("copy".to_string());
         assert_handled!(h, 7, user(UserCommand::Duplicate(copy)), @"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - DuplicateFailed:
               copy: copy
               error: agent is busy
-          - StatusUpdate:
-              turn: InProgress
-              compacting: false
         tasks: []
         ");
     }
@@ -1027,9 +964,7 @@ mod tests {
     async fn abort_while_idle_emits_no_history_event() {
         let mut h = Harness::with(&[]).await;
         assert_handled!(h, 9, user(UserCommand::Abort), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - HistoryUpdate:
               - 0
@@ -1045,10 +980,7 @@ mod tests {
         h.step(2, user(UserCommand::Abort)).await.0.unwrap();
 
         assert_handled!(h, 3, AgentEvent::Done(tid, Err("stream closed".into())), @"
-        status:
-          turn:
-            Failed: aborted by user
-          compacting: false
+        busy: false
         ui:
           - Error: stream closed
         tasks: []
@@ -1062,10 +994,7 @@ mod tests {
         h.step(2, user(UserCommand::Abort)).await.0.unwrap();
 
         assert_handled!(h, 3, AgentEvent::Stream(tid, text_output("out", "late")), @"
-        status:
-          turn:
-            Failed: aborted by user
-          compacting: false
+        busy: false
         ui: []
         tasks: []
         ");
@@ -1080,9 +1009,7 @@ mod tests {
         result.unwrap();
         let tool = step.task();
         insta::assert_yaml_snapshot!(step, @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 1
@@ -1115,9 +1042,7 @@ mod tests {
         .unwrap();
         // the turn task finishing leaves the tool task pending: no new turn yet
         assert_handled!(h, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui: []
         tasks: []
         ");
@@ -1127,9 +1052,7 @@ mod tests {
             h, 6,
             AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
             @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 1
@@ -1192,9 +1115,7 @@ mod tests {
             h, 5,
             AgentEvent::Done(tool, Err("tool panicked: boom".into())),
             @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 1
@@ -1231,9 +1152,7 @@ mod tests {
     async fn message_while_idle_appends_and_wakes() {
         let mut h = Harness::with(&[]).await;
         assert_handled!(h, 7, message("[from: kid]\nhi"), @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 0
@@ -1246,9 +1165,6 @@ mod tests {
               - TurnResponse:
                   Created:
                     created_at: 7
-          - StatusUpdate:
-              turn: InProgress
-              compacting: false
         tasks:
           - - 0
             - turn
@@ -1263,9 +1179,7 @@ mod tests {
 
         // turn still streaming: buffered, save only
         assert_handled!(h, 2, message("[from: kid]\nearly bird"), @"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui: []
         tasks: []
         ");
@@ -1280,9 +1194,7 @@ mod tests {
         .unwrap();
         // idle: the buffer flushes and wakes the agent
         assert_handled!(h, 4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 1
@@ -1310,9 +1222,7 @@ mod tests {
         h.state.assistant_id = "gone".into();
         assert_rejected!(h, 5, message("[from: kid]\nhi"), @r#"
         - "unknown assistant \"gone\""
-        - status:
-            turn: Idle
-            compacting: false
+        - busy: false
           ui:
             - HistoryUpdate:
                 - 0
@@ -1435,19 +1345,14 @@ mod tests {
         .unwrap();
 
         assert_handled!(h, 4, AgentEvent::Done(tid, Ok(TaskOutput::Turn)), @"
-        status:
-          turn: Idle
-          compacting: false
-        ui:
-          - StatusUpdate:
-              turn: Idle
-              compacting: false
+        busy: false
+        ui: []
         tasks: []
         ");
     }
 
     #[tokio::test]
-    async fn task_done_failure_surfaces_error_and_failed_status() {
+    async fn task_done_failure_surfaces_error_and_fails_turn() {
         let mut h = Harness::with(&[]).await;
         let tid = h.step(1, submit("hi", 0)).await.1.task();
         h.step(
@@ -1465,10 +1370,7 @@ mod tests {
         .unwrap();
 
         assert_handled!(h, 3, AgentEvent::Done(tid, Err("boom".into())), @"
-        status:
-          turn:
-            Failed: boom
-          compacting: false
+        busy: false
         ui:
           - Error: boom
           - HistoryUpdate:
@@ -1477,10 +1379,6 @@ mod tests {
                   Failed:
                     message: boom
                     ended_at: 3
-          - StatusUpdate:
-              turn:
-                Failed: boom
-              compacting: false
         tasks: []
         ");
     }
@@ -1494,9 +1392,7 @@ mod tests {
             h, 2,
             AgentEvent::Stream(tid, todo_call(Some(Ok(TodoResult {})))),
             @r#"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 1
@@ -1548,9 +1444,7 @@ mod tests {
             .unwrap();
 
         assert_handled!(h, 7, user(UserCommand::Retry), @"
-        status:
-          turn: InProgress
-          compacting: false
+        busy: true
         ui:
           - HistoryUpdate:
               - 0
@@ -1560,9 +1454,6 @@ mod tests {
               - TurnResponse:
                   Created:
                     created_at: 7
-          - StatusUpdate:
-              turn: InProgress
-              compacting: false
         tasks:
           - - 0
             - turn
@@ -1573,9 +1464,7 @@ mod tests {
     async fn undo_pops_messages() {
         let mut h = Harness::with(&["first", "second"]).await;
         assert_handled!(h, 7, user(UserCommand::Undo(1)), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - HistoryUpdate:
               - 0
@@ -1598,13 +1487,8 @@ mod tests {
         result.unwrap();
         let compact = step.summary();
         insta::assert_yaml_snapshot!(step, @"
-        status:
-          turn: InProgress
-          compacting: true
-        ui:
-          - StatusUpdate:
-              turn: InProgress
-              compacting: true
+        busy: true
+        ui: []
         tasks:
           - - 1
             - summary
@@ -1616,9 +1500,7 @@ mod tests {
 
         // the summary lands mid-turn: held until the turn ends
         assert_handled!(h, 3, AgentEvent::Done(compact, summary("gist")), @"
-        status:
-          turn: InProgress
-          compacting: true
+        busy: true
         ui: []
         tasks: []
         ");
@@ -1634,9 +1516,7 @@ mod tests {
         .0
         .unwrap();
         assert_handled!(h, 6, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - HistoryUpdate:
               - 1
@@ -1648,9 +1528,6 @@ mod tests {
                     created_at: 1
                     started_at: 2
                     ended_at: 3
-          - StatusUpdate:
-              turn: Idle
-              compacting: false
         tasks: []
         ");
         insta::assert_yaml_snapshot!(h.history().state().messages, @"
@@ -1686,9 +1563,7 @@ mod tests {
         let compact = h.step(1, user(UserCommand::Compact(1))).await.1.summary();
 
         assert_handled!(h, 2, AgentEvent::Done(compact, summary("gist")), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - HistoryUpdate:
               - 0
@@ -1700,9 +1575,6 @@ mod tests {
                     created_at: 1
                     started_at: 2
                     ended_at: 3
-          - StatusUpdate:
-              turn: Idle
-              compacting: false
         tasks: []
         ");
         assert_eq!(h.history().state().messages.len(), 2);
@@ -1726,17 +1598,13 @@ mod tests {
 
         assert_rejected!(h, 2, user(UserCommand::Compact(1)), @"
         - already compacting
-        - status:
-            turn: Idle
-            compacting: true
+        - busy: true
           ui: []
           tasks: []
         ");
         assert_rejected!(h, 3, user(UserCommand::Undo(1)), @"
         - agent is busy
-        - status:
-            turn: Idle
-            compacting: true
+        - busy: true
           ui: []
           tasks: []
         ");
@@ -1747,9 +1615,7 @@ mod tests {
         let mut h = Harness::with(&["short"]).await;
         assert_rejected!(h, 7, user(UserCommand::Compact(0)), @"
         - nothing to compact
-        - status:
-            turn: Idle
-            compacting: false
+        - busy: false
           ui: []
           tasks: []
         ");
@@ -1763,14 +1629,11 @@ mod tests {
         let compact = h.step(2, user(UserCommand::Compact(1))).await.1.summary();
 
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
-        assert!(!h.derive_status().compacting);
+        assert!(!h.compacting());
 
         // the late summary is stale
         assert_handled!(h, 4, AgentEvent::Done(compact, summary("gist")), @"
-        status:
-          turn:
-            Failed: aborted by user
-          compacting: false
+        busy: false
         ui: []
         tasks: []
         ");
@@ -1835,10 +1698,7 @@ mod tests {
             h.history().state().last(),
             Some(Message::User(UserMessage { text, .. })) if text == "hi"
         ));
-        insta::assert_yaml_snapshot!(h.derive_status(), @"
-        turn: InProgress
-        compacting: true
-        ");
+        assert!(h.busy() && h.compacting());
 
         // held = busy: a second prompt lands without starting a turn either
         let (result, step) = h.step(2, submit("more", 999)).await;
@@ -1848,7 +1708,7 @@ mod tests {
         let (result, step) = h.step(3, AgentEvent::Done(compact, summary("gist"))).await;
         result.unwrap();
         assert!(step.starts_turn());
-        assert!(!h.derive_status().compacting);
+        assert!(!h.compacting());
         insta::assert_yaml_snapshot!(
             h.history().state().messages,
             {
@@ -1897,14 +1757,9 @@ mod tests {
         let compact = h.step(1, submit("hi", 0)).await.1.summary();
 
         assert_handled!(h, 2, AgentEvent::Done(compact, Err("rate limited".into())), @"
-        status:
-          turn: Idle
-          compacting: false
+        busy: false
         ui:
           - Error: rate limited
-          - StatusUpdate:
-              turn: Idle
-              compacting: false
         tasks: []
         ");
 

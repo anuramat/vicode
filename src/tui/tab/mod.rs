@@ -105,12 +105,17 @@ impl Tab<'_> {
     }
 
     pub fn label(&self) -> String {
-        let prefix = if self.control.is_none() {
-            "*"
-        } else {
-            self.state.status.label()
-        };
+        let prefix = if self.control.is_none() { "*" } else { " " };
         format!("[{prefix}]{}", self.aid)
+    }
+
+    /// re-read the workdir: the agent may have changed it
+    pub async fn refresh(&mut self) -> Result<()> {
+        if self.control.is_none() {
+            return Ok(());
+        }
+        self.refresh_file_completion()?;
+        self.refresh_info().await
     }
 
     pub async fn refresh_info(&mut self) -> Result<()> {

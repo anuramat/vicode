@@ -7,7 +7,6 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::timeout;
 
-use crate::agent::ActivityStatus;
 use crate::agent::Agent;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
@@ -19,7 +18,6 @@ use crate::agent::tool::traits::ToolCall;
 use crate::agent::tool::traits::ToolCallSerializable;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::TurnStatus;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
@@ -266,7 +264,7 @@ async fn submit_runs_tool_call_and_second_turn_to_idle() {
     let _ = agent.handle(now(), submit()).await.unwrap();
     pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
-    assert_eq!(agent.state.status, ActivityStatus::default());
+    assert!(!agent.busy());
     // second request must carry the executed tool call back to the assistant
     assert_eq!(fake.requests().len(), 2);
     assert_messages_snapshot!(&agent.history().state().messages, @r#"
@@ -345,11 +343,7 @@ async fn abort_mid_stream_fails_turn_and_goes_idle() {
         .await
         .unwrap();
 
-    assert!(matches!(
-        &agent.state.status,
-        ActivityStatus { turn: TurnStatus::Failed(msg), compacting: false } if msg == "aborted by user"
-    ));
-    assert!(agent.ledger.idle());
+    assert!(!agent.busy());
     assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
@@ -487,7 +481,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     // abort returned with the call already finalized: partial output kept,
     // marked aborted, ledger unstuck
     assert!(agent.ledger.idle());
-    assert_eq!(agent.state.status, ActivityStatus::default());
+    assert!(!agent.busy());
     assert_messages_snapshot!(&agent.history().state().messages, @r#"
     - role: user
       text: hi
@@ -1010,10 +1004,7 @@ async fn compaction_runs_alongside_tool_loop() {
         .await
         .unwrap();
     assert!(agent.ledger.in_turn() && agent.ledger.compacting());
-    pump_until(&mut agent, &mut mail, |a| {
-        a.ledger.idle() && !a.derive_status().compacting
-    })
-    .await;
+    pump_until(&mut agent, &mut mail, |a| !a.busy()).await;
 
     assert_eq!(fake.requests().len(), 3);
     assert_messages_snapshot!(&fake.requests()[1], @r#"
@@ -1104,7 +1095,7 @@ async fn failed_compaction_keeps_history() {
         .unwrap();
     pump_until(&mut agent, &mut mail, |a| a.ledger.idle()).await;
 
-    assert_eq!(agent.state.status, ActivityStatus::default());
+    assert!(!agent.busy());
     assert_eq!(agent.history().state().messages.len(), 2);
     let mut errors = Vec::new();
     while let Ok(AppEvent::Agent(_, event)) = parent_rx.try_recv() {

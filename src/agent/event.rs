@@ -1,6 +1,5 @@
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::agent::ActivityStatus;
 use crate::agent::id::AgentId;
 use crate::agent::task::ledger::TaskId;
 use crate::llm::history::AssistantEvent;
@@ -43,7 +42,6 @@ pub enum UiEvent {
         control: UnboundedSender<UserCommand>,
     },
     HistoryUpdate(HistoryGeneration, HistoryUpdate),
-    StatusUpdate(ActivityStatus),
     AssistantSet(String),
     Error(String),
     ToolOutput {

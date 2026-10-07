@@ -79,7 +79,6 @@ impl Router {
                     None => History::new_subagent(project.instructions(&child).await?),
                 };
                 let state = AgentState {
-                    status: Default::default(),
                     assistant_id,
                     context: AgentContext {
                         commit: snapshot,

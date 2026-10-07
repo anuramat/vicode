@@ -93,8 +93,7 @@ impl<'a> App<'a> {
         let tab = self.tab_mut_by_aid(aid)?;
         tab.state = state;
         // a (re)start's fresh runtime has no in-flight calls; the prior
-        // runtime's tee'd output is stale render state and the following
-        // deduplicated StatusUpdate(Idle) would skip set_state's clear
+        // runtime's tee'd output is stale render state
         tab.live_output.clear();
         tab.refresh_assistant_config();
         tab.control = Some(control);

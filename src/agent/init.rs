@@ -3,7 +3,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::agent::ActivityStatus;
 use crate::agent::Agent;
 use crate::agent::AgentContext;
 use crate::agent::AgentId;
@@ -110,7 +109,6 @@ impl AgentState {
         instructions: String,
     ) -> Self {
         Self {
-            status: ActivityStatus::default(),
             assistant_id,
             context: AgentContext {
                 commit,

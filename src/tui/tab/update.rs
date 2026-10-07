@@ -1,8 +1,9 @@
 use anyhow::Result;
 
-use crate::agent::ActivityStatus;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
+use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::UserMessage;
 use crate::tui::osc7::set_osc7;
@@ -24,6 +25,9 @@ impl Tab<'_> {
         } else {
             None
         };
+        if let Some(call_id) = finalized_call(&event) {
+            self.live_output.remove(call_id);
+        }
         // a compaction rewrites the front of the history too
         if matches!(event, HistoryUpdate::Compact(_)) {
             self.scroll.set_len(0);
@@ -54,24 +58,6 @@ impl Tab<'_> {
         self.scroll.set_dirty(len.saturating_sub(1));
     }
 
-    /// true = status changed; the caller rebuilds the tablist (the app
-    /// loop never sends into its own channel)
-    pub fn set_state(
-        &mut self,
-        status: ActivityStatus,
-    ) -> Result<bool> {
-        if self.state.status == status {
-            return Ok(false);
-        }
-        // idle = every call resolved; resolved calls render their real output
-        if status.idle() {
-            self.live_output.clear();
-        }
-        self.state.status = status;
-        self.refresh_file_completion()?;
-        Ok(true)
-    }
-
     pub fn combined_user_msgs(
         &self,
         popped: usize,
@@ -86,5 +72,17 @@ impl Tab<'_> {
             }
         }
         result.join("\n")
+    }
+}
+
+/// the call an update gives its real output; its live buffer is done
+fn finalized_call(event: &HistoryUpdate) -> Option<&str> {
+    match event {
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(item)) => match &**item {
+            AssistantItem::ToolCall(call) if call.task.output().is_some() => Some(&call.call_id),
+            _ => None,
+        },
+        HistoryUpdate::ToolCallFailed { call_id, .. } => Some(call_id),
+        _ => None,
     }
 }

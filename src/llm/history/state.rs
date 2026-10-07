@@ -2,7 +2,6 @@ use derive_more::AsMut;
 use derive_more::AsRef;
 use derive_more::Deref;
 use derive_more::DerefMut;
-use derive_more::Display;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -10,18 +9,6 @@ use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::AssistantStatus;
 use crate::llm::history::message::Message;
 use crate::llm::history::tokens::TokenCount;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Display)]
-#[cfg_attr(test, derive(serde::Serialize))]
-pub enum TurnStatus {
-    #[default]
-    #[display("idle")]
-    Idle,
-    #[display("in progress")]
-    InProgress,
-    #[display("failed: {_0}")]
-    Failed(String),
-}
 
 // TODO drop deref and derefmut
 
@@ -100,39 +87,6 @@ impl HistoryState {
             }
         }
         self.recount();
-    }
-
-    pub fn has_unresolved_tool_calls(&self) -> bool {
-        self.last()
-            .and_then(|m| m.try_as_assistant_ref())
-            .is_some_and(|msg| {
-                msg.content.values().any(
-                    |item| matches!(item, AssistantItem::ToolCall(t) if t.task.output().is_none()),
-                )
-            })
-    }
-
-    pub fn turn_status(
-        &self,
-        busy: bool,
-    ) -> TurnStatus {
-        if busy {
-            return TurnStatus::InProgress;
-        }
-        if self.has_unresolved_tool_calls() {
-            return TurnStatus::Failed("tool calls not resolved".into());
-        }
-        self.status()
-            .map_or(TurnStatus::Idle, |status| match status {
-                AssistantStatus::Queued => TurnStatus::Failed(
-                    "last assistant message is queued but no tasks are running".into(),
-                ),
-                AssistantStatus::InProgress => TurnStatus::Failed(
-                    "last assistant message is in progress but no tasks are running".into(),
-                ),
-                AssistantStatus::Success => TurnStatus::Idle,
-                AssistantStatus::Error(e) => TurnStatus::Failed(e),
-            })
     }
 }
 

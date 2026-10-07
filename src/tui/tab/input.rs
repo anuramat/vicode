@@ -33,9 +33,6 @@ impl Tab<'_> {
         &self,
         prev: bool,
     ) -> Result<()> {
-        if !self.state.status.idle() {
-            return Ok(());
-        }
         let id = self
             .project
             .assistants()
@@ -236,32 +233,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cycle_assistant_sends_switch_only_when_idle() {
-        use crate::agent::ActivityStatus;
-        use crate::llm::history::TurnStatus;
-
+    async fn cycle_assistant_sends_switch() {
         let project = Project::new_test().unwrap().0;
         let aid = AgentId::from("cycle".to_string());
         let (control, mut user_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
+        let tab = Tab::new(Some(control), aid, AgentState::fake(), &project);
 
         tab.cycle_assistant(false).unwrap();
         assert!(matches!(
             user_rx.try_recv(),
             Ok(UserCommand::SetAssistant(id)) if id == "test2"
         ));
-
-        tab.state.status.turn = TurnStatus::InProgress;
-        tab.cycle_assistant(false).unwrap();
-        assert!(user_rx.try_recv().is_err());
-
-        // a compaction in flight keeps the agent busy too
-        tab.state.status = ActivityStatus {
-            turn: TurnStatus::Idle,
-            compacting: true,
-        };
-        tab.cycle_assistant(false).unwrap();
-        assert!(user_rx.try_recv().is_err());
     }
 
     #[tokio::test]

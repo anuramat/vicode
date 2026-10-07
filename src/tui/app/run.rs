@@ -31,6 +31,7 @@ use crate::tui::app::NotificationKind;
 use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 impl App<'_> {
     pub async fn launch(config: Config) -> Result<()> {
@@ -111,6 +112,8 @@ impl App<'_> {
         tracing::debug!("entering main loop");
         let mut render_interval = tokio::time::interval(MIN_DRAW_INTERVAL);
         render_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut refresh_interval = tokio::time::interval(REFRESH_INTERVAL);
+        refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 // throttled render
@@ -119,6 +122,16 @@ impl App<'_> {
                         self.draw(&mut term)?;
                         self.dirty = false;
                     }
+                }
+
+                // the active tab's workdir views
+                _ = refresh_interval.tick() => {
+                    if let Ok(tab) = self.selected_tab_mut()
+                        && let Err(e) = tab.refresh().await
+                    {
+                        self.notify(NotificationKind::Error, e.to_string());
+                    }
+                    self.dirty = true;
                 }
 
                 // notification expiration

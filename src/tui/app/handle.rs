@@ -60,12 +60,6 @@ impl App<'_> {
             Error(msg) => {
                 self.notify(NotificationKind::Error, msg);
             }
-            StatusUpdate(status) => {
-                if tab.set_state(status)? {
-                    tab.refresh_info().await?;
-                    self.rebuild_tablist();
-                }
-            }
             AssistantSet(assistant) => {
                 tab.state.assistant_id = assistant;
                 tab.refresh_assistant_config();

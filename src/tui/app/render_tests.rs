@@ -4,13 +4,11 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::agent::ActivityStatus;
 use crate::agent::AgentState;
 use crate::agent::id::AgentId;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
-use crate::llm::history::TurnStatus;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
@@ -30,14 +28,10 @@ fn render(
     term.backend().to_string()
 }
 
-fn app_with_tab(
-    history: History,
-    status: ActivityStatus,
-) -> App<'static> {
+fn app_with_tab(history: History) -> App<'static> {
     let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
     let mut state = AgentState::fake();
-    state.status = status;
     state.context.history = history;
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
@@ -98,23 +92,20 @@ async fn renders_logo_screen_without_tabs() {
 
 #[tokio::test]
 async fn renders_conversation_tab() {
-    let mut app = app_with_tab(
-        history([
-            HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 2 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
-                OutputItem::new("out-1".into(), 3),
-            )))),
-            HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta::new_at(
-                "out-1".into(),
-                DeltaContent::Output("Hi! How can I help?".into()),
-                4,
-            ))),
-            HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
-        ]),
-        ActivityStatus::default(),
-    );
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 2 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::Output(
+            OutputItem::new("out-1".into(), 3),
+        )))),
+        HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta::new_at(
+            "out-1".into(),
+            DeltaContent::Output("Hi! How can I help?".into()),
+            4,
+        ))),
+        HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
+    ]));
     app.focus = super::AppFocus::Body;
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
@@ -137,30 +128,24 @@ async fn renders_conversation_tab() {
     "                                                                                                    "
     "hello                                                                                               "
     "Hi! How can I help?                                                                                 "
-    "demo/tab-1                                                               1.2 / 32.0 kT | idle | test"
+    "demo/tab-1                                                                      1.2 / 32.0 kT | test"
     "#);
 }
 
 #[tokio::test]
-async fn renders_failed_tab_with_tablist_overlay() {
-    let mut app = app_with_tab(
-        history([
-            HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
-            HistoryUpdate::TurnResponse(AssistantEvent::Failed {
-                message: "aborted by user".into(),
-                ended_at: 2,
-            }),
-        ]),
-        ActivityStatus {
-            turn: TurnStatus::Failed("aborted by user".into()),
-            compacting: false,
-        },
-    );
+async fn renders_failed_turn_with_tablist_overlay() {
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+            message: "aborted by user".into(),
+            ended_at: 2,
+        }),
+    ]));
 
     insta::assert_snapshot!(render(&mut app, 100, 20), @r#"
     "┌──────────────────────┐                                                                            "
-    "│ [!]tab-1             │                                                                            "
+    "│ [ ]tab-1             │                                                                            "
     "│                      │                                                                            "
     "│                      │                                                                            "
     "│                      │                                                                            "
@@ -178,6 +163,6 @@ async fn renders_failed_tab_with_tablist_overlay() {
     "│                      │                                                                            "
     "│                      │                                                                            "
     "└──────────────────────┘                                                                            "
-    "demo/tab-1                                            1.2 / 32.0 kT | failed: aborted by user | test"
+    "demo/tab-1                                                                      1.2 / 32.0 kT | test"
     "#);
 }
