@@ -97,9 +97,8 @@ impl<'a> App<'a> {
         tab.live_output.clear();
         tab.refresh_assistant_config();
         tab.control = Some(control);
-        tab.refresh_file_completion()?;
-        tab.refresh_info().await?;
         self.rebuild_tablist();
+        self.refresh();
         self.save_app_state().await?;
         Ok(())
     }

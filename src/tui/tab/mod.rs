@@ -109,23 +109,6 @@ impl Tab<'_> {
         format!("[{prefix}]{}", self.aid)
     }
 
-    /// re-read the workdir: the agent may have changed it
-    pub async fn refresh(&mut self) -> Result<()> {
-        if self.control.is_none() {
-            return Ok(());
-        }
-        self.refresh_file_completion()?;
-        self.refresh_info().await
-    }
-
-    pub async fn refresh_info(&mut self) -> Result<()> {
-        if self.control.is_none() {
-            return Ok(());
-        }
-        self.info = InfoWidget::new(&self.project, &self.aid).await?;
-        Ok(())
-    }
-
     pub fn scroll(
         &mut self,
         op: ScrollOp,

@@ -19,7 +19,7 @@ fn file_completion_items(paths: Vec<String>) -> Vec<CompletionItem> {
         .collect()
 }
 
-fn tracked_files(workdir: &Path) -> Result<Vec<String>> {
+pub fn tracked_files(workdir: &Path) -> Result<Vec<String>> {
     let repo = Repository::open(workdir)?;
     let index = repo.index()?;
     index
@@ -50,9 +50,10 @@ impl Tab<'_> {
         self.update_input_title();
     }
 
-    pub fn refresh_file_completion(&mut self) -> Result<()> {
-        let workdir = self.project.agent_workdir(&self.aid);
-        let paths = tracked_files(&workdir)?;
+    pub fn set_file_completion(
+        &mut self,
+        paths: Vec<String>,
+    ) -> Result<()> {
         self.input
             .completion
             .source_mut()

@@ -18,22 +18,26 @@ pub struct InfoWidget {
     sections: CollapsibleSections,
 }
 
-impl InfoWidget {
-    pub async fn new(
-        project: &Project,
-        aid: &AgentId,
-    ) -> Result<Self> {
-        let args = vec!["-c".to_string(), project.config().info_cmd.clone()];
-        let output = Command::new(deps::BASH)
-            .current_dir(project.agent_workdir(aid))
-            .args(args)
-            .output()
-            .await?;
+/// the stdout of `info_cmd` in the agent's workdir
+pub async fn read_info(
+    project: &Project,
+    aid: &AgentId,
+) -> Result<Vec<u8>> {
+    let args = vec!["-c".to_string(), project.config().info_cmd.clone()];
+    let output = Command::new(deps::BASH)
+        .current_dir(project.agent_workdir(aid))
+        .args(args)
+        .output()
+        .await?;
+    Ok(output.stdout)
+}
 
+impl InfoWidget {
+    pub fn new(stdout: &[u8]) -> Result<Self> {
         Ok(Self {
             sections: CollapsibleSections::new([CollapsibleSection::new(
                 "status",
-                Paragraph::new(output.stdout.into_text()?),
+                Paragraph::new(stdout.into_text()?),
             )]),
         })
     }

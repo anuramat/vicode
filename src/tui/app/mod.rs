@@ -1,6 +1,7 @@
 pub mod command;
 pub mod handle;
 pub mod key;
+pub mod refresh;
 mod render_tests;
 pub mod run;
 pub mod tabs;
@@ -19,6 +20,7 @@ use crate::agent::event::UiEvent;
 use crate::agent::id::AgentId;
 use crate::agent::router::Router;
 use crate::project::Project;
+use crate::tui::app::refresh::RefreshTask;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::cmdline::Cmdline;
 use crate::tui::widgets::container::element::RenderContext;
@@ -80,6 +82,8 @@ pub struct App<'a> {
     pub notification: Option<Notification>,
     pub tablist: TabList<'a>,
     pub focus: AppFocus,
+    /// the selected tab's workdir read in flight
+    pub refreshing: Option<RefreshTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -113,6 +117,7 @@ impl App<'_> {
             tablist: TabList::default(),
             tabs: IndexMap::new(),
             notification: None,
+            refreshing: None,
         }
     }
 

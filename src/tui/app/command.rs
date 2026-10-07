@@ -37,7 +37,7 @@ impl<'a> App<'a> {
             CommandName::MsgUndo => self.selected_tab_mut()?.undo(1)?,
             CommandName::MsgUndoUser => self.selected_tab_mut()?.undo_user()?,
             CommandName::Quit => self.should_exit = true,
-            CommandName::RefreshInfo => self.selected_tab_mut()?.refresh_info().await?,
+            CommandName::RefreshInfo => self.refresh(),
             CommandName::Scroll => {
                 let op: ScrollOp = parse_arg(command.args.as_deref())?
                     .ok_or_else(|| anyhow::anyhow!("missing argument"))?;

@@ -28,6 +28,7 @@ use crate::project::lock::ProjectLock;
 use crate::project::store::Store;
 use crate::tui::app::AppEvent;
 use crate::tui::app::NotificationKind;
+use crate::tui::app::refresh::join_refresh;
 use crate::tui::osc7::set_osc7;
 
 const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(1000 / 60);
@@ -124,11 +125,16 @@ impl App<'_> {
                     }
                 }
 
-                // the active tab's workdir views
+                // the selected tab's workdir views; a slow read skips ticks
                 _ = refresh_interval.tick() => {
-                    if let Ok(tab) = self.selected_tab_mut()
-                        && let Err(e) = tab.refresh().await
-                    {
+                    if self.refreshing.is_none() {
+                        self.refresh();
+                    }
+                }
+
+                views = join_refresh(&mut self.refreshing) => {
+                    self.refreshing = None;
+                    if let Err(e) = views.and_then(|views| self.apply_refresh(views)) {
                         self.notify(NotificationKind::Error, e.to_string());
                     }
                     self.dirty = true;
