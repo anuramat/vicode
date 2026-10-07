@@ -37,26 +37,26 @@ pub struct Agent {
     pub id: AgentId,
     pub project: Project,
 
+    dirty: bool,
     pub state: AgentState,
-    pub ledger: TaskLedger,
-    /// a summary that landed mid-turn, applied at the turn boundary
+
     pub compaction: Option<Compaction>,
     /// a turn is due: a message arrived, or the last turn asked for a
     /// follow-up; outlives `handle` only while a turn is in flight, or while
     /// held back by the hard limit, waiting for the summary
     pub wants_turn: bool,
-    /// the step in progress changed the persisted state: saved once at the
-    /// end of the step, even when it fails
-    dirty: bool,
-    /// router handle for reaching other agents
+
+    /// turns, tool calls, compact
+    pub executor: TaskExecutor,
+    pub ledger: TaskLedger,
+
+    /// other agents
     pub router: Router,
-    /// history/status/output updates for rendering
+    /// ui updates
     pub app_tx: UnboundedSender<AppEvent>,
     /// ui actions
     pub user_tx: UnboundedSender<UserCommand>,
     pub user_rx: UnboundedReceiver<UserCommand>,
-    /// runs turns, tool calls and summaries on tokio tasks
-    pub executor: TaskExecutor,
     /// turn streams and tool calls
     pub task_tx: Sender<AgentEvent>,
     pub task_rx: Receiver<AgentEvent>,
