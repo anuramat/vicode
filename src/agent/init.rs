@@ -43,7 +43,7 @@ impl Agent {
             state,
             ledger: TaskLedger::default(),
             compaction: None,
-            wants_turn: false,
+            needs_turn: false,
             dirty: false,
             router,
             app_tx,

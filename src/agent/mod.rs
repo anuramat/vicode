@@ -44,7 +44,7 @@ pub struct Agent {
     /// a turn is due: a message arrived, or the last turn asked for a
     /// follow-up; outlives `handle` only while a turn is in flight, or while
     /// held back by the hard limit, waiting for the summary
-    pub wants_turn: bool,
+    pub needs_turn: bool,
 
     /// turns, tool calls, compact
     pub executor: TaskExecutor,

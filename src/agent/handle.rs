@@ -63,7 +63,7 @@ impl Agent {
         &mut self,
         now: u64,
     ) -> Result<()> {
-        self.wants_turn = !self.state.pending_messages.is_empty();
+        self.needs_turn = !self.state.pending_messages.is_empty();
         let result = self.advance(now);
         self.settle(result).await
     }
@@ -95,7 +95,7 @@ impl Agent {
             UserCommand::Retry => {
                 self.idle()?;
                 self.increment_generation()?;
-                self.wants_turn = true;
+                self.needs_turn = true;
                 self.advance(now)
             }
             UserCommand::Abort => self.abort(now),
@@ -126,7 +126,7 @@ impl Agent {
     }
 
     pub fn derive_status(&self) -> ActivityStatus {
-        let busy = self.ledger.in_turn() || self.wants_turn;
+        let busy = self.ledger.in_turn() || self.needs_turn;
         ActivityStatus {
             turn: self.history().state().turn_status(busy),
             compacting: self.compacting(),
@@ -297,12 +297,12 @@ impl Agent {
                     .err()
                     .unwrap_or_else(|| "compaction returned no summary".into());
                 self.emit(UiEvent::Error(error));
-                self.wants_turn = false;
+                self.needs_turn = false;
                 return Ok(());
             }
         }
         if !self.ledger.in_turn() {
-            self.wants_turn |= self.history().state().ends_with_tool_calls();
+            self.needs_turn |= self.history().state().ends_with_tool_calls();
         }
         self.advance(now)
     }
@@ -321,13 +321,13 @@ impl Agent {
             let g = self.history().generation();
             self.handle_history(g, HistoryUpdate::Compact(compaction))?;
         }
-        if !self.wants_turn {
+        if !self.needs_turn {
             return Ok(());
         }
         self.flush_pending()?;
         self.autocompact(now)?;
-        self.wants_turn = self.compacting() && self.past(self.project.config().compact.hard_limit);
-        if self.wants_turn {
+        self.needs_turn = self.compacting() && self.past(self.project.config().compact.hard_limit);
+        if self.needs_turn {
             return Ok(());
         }
         self.start_turn(now)
@@ -343,7 +343,7 @@ impl Agent {
         // buffered and saved: survives restart
         self.state.pending_messages.push(msg);
         self.dirty = true;
-        self.wants_turn = true;
+        self.needs_turn = true;
         self.advance(now)
     }
 
@@ -364,7 +364,7 @@ impl Agent {
         // busy: queue instead of reject — pending messages carry no
         // generation and flush into a fresh turn at the next turn boundary,
         // so typed input is never destroyed and doubles as steering
-        if !self.ledger.in_turn() && !self.wants_turn {
+        if !self.ledger.in_turn() && !self.needs_turn {
             let current = self.history().generation();
             // a stale submit is rejected *before* the flush: pending
             // messages carry no generation and must never be dropped as stale
@@ -396,7 +396,7 @@ impl Agent {
         }
         let tasks = self.ledger.clear();
         self.compaction = None;
-        self.wants_turn = false;
+        self.needs_turn = false;
         let g = self.increment_generation()?;
         if self
             .history()
