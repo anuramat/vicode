@@ -163,7 +163,7 @@ pub fn scan(
             // extraction diff — the diff reads the composed workdir
             let commits: HashSet<String> = keep
                 .iter()
-                .map(|aid| store.load_state(aid).map(|s| s.context.commit))
+                .map(|aid| store.load_state(aid).map(|s| s.commit))
                 .collect::<Result<_>>()?;
             read_dir_or_empty(overlay.snapshots(paths))?
                 .into_iter()

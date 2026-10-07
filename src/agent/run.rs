@@ -20,7 +20,7 @@ impl Agent {
 
     async fn run_inner(&mut self) -> Result<()> {
         self.project
-            .mount_agent(&self.state.context.commit, &self.id)
+            .mount_agent(&self.state.commit, &self.id)
             .await?;
         self.emit(UiEvent::Started {
             state: Box::new(self.state.clone()),

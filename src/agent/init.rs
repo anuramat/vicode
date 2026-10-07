@@ -2,7 +2,6 @@ use anyhow::Result;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::agent::Agent;
-use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::handle::LOST_ON_RESTART;
@@ -23,10 +22,7 @@ impl Agent {
         mut state: AgentState,
     ) -> Self {
         // restore repair: a dangling function_call in history would 400 every later turn
-        state
-            .context
-            .history
-            .fail_unresolved_tool_calls(LOST_ON_RESTART);
+        state.history.fail_unresolved_tool_calls(LOST_ON_RESTART);
         let (user_tx, user_rx) = unbounded_channel();
         let (task_tx, task_rx) = unbounded_channel();
         Self {
@@ -59,8 +55,8 @@ impl Agent {
         self.idle()?;
         let mut state = self.state.clone();
         state.pending_messages.clear();
-        let generation = state.context.history.generation();
-        state.context.history.handle(
+        let generation = state.history.generation();
+        state.history.handle(
             generation,
             HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(DUPLICATED_NOTE.into())),
         )?;
@@ -68,7 +64,7 @@ impl Agent {
         let (original, copy) = (self.id.clone(), aid.clone());
         let setup = async move {
             project
-                .duplicate_agent_workdir(&original, &copy, &state.context.commit)
+                .duplicate_agent_workdir(&original, &copy, &state.commit)
                 .await?;
             Ok(state)
         };
@@ -86,10 +82,8 @@ impl AgentState {
     ) -> Self {
         Self {
             assistant_id,
-            context: AgentContext {
-                commit,
-                history: History::new(instructions),
-            },
+            commit,
+            history: History::new(instructions),
             pending_messages: Vec::new(),
         }
     }
@@ -153,14 +147,7 @@ mod tests {
         // and an empty buffer (new-empty-root rule)
         let copy_state = project.store().load_state(&copy_aid).await.unwrap();
         assert!(copy_state.pending_messages.is_empty());
-        let last = copy_state
-            .context
-            .history
-            .state()
-            .messages
-            .last()
-            .unwrap()
-            .clone();
+        let last = copy_state.history.state().messages.last().unwrap().clone();
         assert!(
             matches!(
                 &last,

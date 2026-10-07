@@ -38,7 +38,7 @@ impl Tab<'_> {
             self.update_input_title();
         }
         // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
-        let len = self.state.context.history.state().messages.len();
+        let len = self.state.history.state().messages.len();
         self.scroll.set_dirty(len.saturating_sub(1));
         self.scroll.set_len(len);
         Ok(())
@@ -54,7 +54,7 @@ impl Tab<'_> {
         self.live_output.entry(call_id).or_default().push_str(chunk);
         // the pending call lives in the last message: nothing appends while
         // the ledger is busy
-        let len = self.state.context.history.state().messages.len();
+        let len = self.state.history.state().messages.len();
         self.scroll.set_dirty(len.saturating_sub(1));
     }
 
@@ -64,7 +64,7 @@ impl Tab<'_> {
     ) -> String {
         // NOTE we only apply the results if history event was successfully handled, so we don't have to check it here
         let mut result = Vec::new();
-        let messages = &self.state.context.history.state().messages;
+        let messages = &self.state.history.state().messages;
         let start = messages.len().saturating_sub(popped);
         for msg in &messages[start..] {
             if let Message::User(UserMessage { text, .. }) = msg {

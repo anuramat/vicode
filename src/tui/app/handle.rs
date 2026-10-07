@@ -222,7 +222,7 @@ mod tests {
             })),
             HistoryUpdate::TurnResponse(AssistantEvent::Completed { ended_at: 5 }),
         ];
-        let mut expected = state.context.history.clone();
+        let mut expected = state.history.clone();
 
         for event in events {
             let generation = expected.generation();
@@ -232,7 +232,7 @@ mod tests {
                 .unwrap();
         }
 
-        let actual = &app.tab_mut_by_aid(&aid).unwrap().state.context.history;
+        let actual = &app.tab_mut_by_aid(&aid).unwrap().state.history;
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
             serde_json::to_value(expected).unwrap()

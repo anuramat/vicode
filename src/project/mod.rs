@@ -264,7 +264,7 @@ mod tests {
 
         pub fn fake_state(&self) -> AgentState {
             let mut state = AgentState::fake();
-            state.context.commit = self.head_commit();
+            state.commit = self.head_commit();
             state
         }
     }

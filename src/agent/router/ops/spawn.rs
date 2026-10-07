@@ -5,7 +5,6 @@
 use anyhow::Result;
 
 use super::peer_message;
-use crate::agent::AgentContext;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::router::Router;
@@ -37,7 +36,7 @@ impl Router {
         let setup = async move {
             let parent_state = project.store().load_state(&parent_id).await?;
             // the whole tab shares one snapshot; the child starts at `commit`
-            let snapshot = parent_state.context.commit;
+            let snapshot = parent_state.commit;
             project
                 .spawn_agent_workdir(&child, &snapshot, &commit)
                 .await?;
@@ -52,10 +51,8 @@ impl Router {
             };
             Ok(AgentState {
                 assistant_id,
-                context: AgentContext {
-                    commit: snapshot,
-                    history,
-                },
+                commit: snapshot,
+                history,
                 // the seed rides the saved state: the child's startup
                 // `resume` turns on it, and a crash before that can't lose it
                 pending_messages: vec![seed.into()],

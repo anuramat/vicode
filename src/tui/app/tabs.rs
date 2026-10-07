@@ -223,12 +223,12 @@ mod tests {
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.selected_tab_idx(), Some(0));
         let (tab_aid, tab) = app.tabs.get_index(0).unwrap();
-        assert!(!tab.state.context.commit.is_empty());
+        assert!(!tab.state.commit.is_empty());
         let instructions = app.project.instructions(tab_aid).await.unwrap();
-        assert_eq!(tab.state.context.history.instructions(), instructions);
+        assert_eq!(tab.state.history.instructions(), instructions);
         // the agent is real: state saved, runtime registered with the router
         let saved = app.project.store().load_state(tab_aid).await.unwrap();
-        assert_eq!(saved.context.commit, tab.state.context.commit);
+        assert_eq!(saved.commit, tab.state.commit);
         app.router.shutdown(&tab_aid).unwrap();
     }
 

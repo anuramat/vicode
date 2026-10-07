@@ -62,7 +62,10 @@ pub struct Agent {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AgentState {
     pub assistant_id: String,
-    pub context: AgentContext,
+    // TODO this is overlay specific, we should probably move it somewhere else
+    /// snapshot commit that the overlay uses as the lowerdir
+    pub commit: String,
+    pub history: History,
     /// inbound messages buffered while busy
     pub pending_messages: Vec<PendingMessage>,
 }
@@ -83,17 +86,9 @@ impl From<PendingMessage> for HistoryUpdate {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct AgentContext {
-    // TODO this is overlay specific, we should probably move it somewhere else
-    /// snapshot commit that the overlay uses as the lowerdir
-    pub commit: String,
-    pub history: History,
-}
-
 impl Agent {
     forward! {
-        history: History = self.state.context.history;
+        history: History = self.state.history;
     }
 
     /// a closed app bus means the app is shutting down: nothing to report to

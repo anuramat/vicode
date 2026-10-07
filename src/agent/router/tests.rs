@@ -86,7 +86,6 @@ impl Router {
             loop {
                 let answered = project.store().load_state(aid).await.is_ok_and(|state| {
                     state
-                        .context
                         .history
                         .state()
                         .iter()
@@ -651,7 +650,7 @@ async fn spawn_checks_the_child_out_at_the_requested_commit() {
     assert_eq!(branch.get().target().unwrap().to_string(), start);
     // the snapshot stays the tab's
     let state = rig.project.store().load_state(&child).await.unwrap();
-    assert_eq!(state.context.commit, rig.commit);
+    assert_eq!(state.commit, rig.commit);
 }
 
 #[tokio::test]
@@ -834,7 +833,6 @@ async fn send_burst_drains_into_the_target_history() {
         loop {
             let state = rig.project.store().load_state(&child).await.unwrap();
             let texts: Vec<String> = state
-                .context
                 .history
                 .state()
                 .iter()

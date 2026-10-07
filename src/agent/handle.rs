@@ -1236,7 +1236,7 @@ mod tests {
           tasks: []
         "#);
         let saved = h.project.store().load_state(&h.id).await.unwrap();
-        assert!(format!("{:?}", saved.context.history).contains("[from: kid]"));
+        assert!(format!("{:?}", saved.history).contains("[from: kid]"));
     }
 
     #[tokio::test]

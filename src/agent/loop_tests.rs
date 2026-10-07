@@ -677,7 +677,7 @@ async fn panicking_turn_finalizes_the_history_turn() {
 async fn checkout(agent: &Agent) -> std::path::PathBuf {
     agent
         .project
-        .new_agent_workdir(&agent.state.context.commit, &agent.id)
+        .new_agent_workdir(&agent.state.commit, &agent.id)
         .await
         .unwrap();
     agent.project.agent_workdir(&agent.id)
@@ -766,7 +766,7 @@ async fn spawn_commit_list_archive_lifecycle() {
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
     let spawned = spawn_result(&agent, "call-1");
     let child = spawned.id;
-    similar_asserts::assert_eq!(spawned.commit, agent.state.context.commit);
+    similar_asserts::assert_eq!(spawned.commit, agent.state.commit);
 
     agent
         .router
@@ -947,7 +947,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
 
     assert!(!agent.history().instructions().contains("FRESH-MARKER"));
     let state = agent.project.store().load_state(&spawned.id).await.unwrap();
-    let history = &state.context.history;
+    let history = &state.history;
     assert!(history.instructions().contains("FRESH-MARKER"));
     let messages = format!("{:?}", history.state().messages);
     assert!(!messages.contains("PARENT-ONLY"));

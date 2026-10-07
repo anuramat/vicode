@@ -32,7 +32,7 @@ fn app_with_tab(history: History) -> App<'static> {
     let mut app = App::new(Project::new_test().unwrap().0);
     app.project_name = "demo".into();
     let mut state = AgentState::fake();
-    state.context.history = history;
+    state.history = history;
     let aid = AgentId::from("tab-1".to_string());
     let project = app.project.clone();
     let mut tab = Tab::new(

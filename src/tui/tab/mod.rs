@@ -32,7 +32,6 @@ pub fn message_views<'s>(
     live_output: &'s HashMap<String, String>,
 ) -> Vec<MessageView<'s>> {
     state
-        .context
         .history
         .state()
         .messages
@@ -64,7 +63,7 @@ pub struct Tab<'a> {
 
 impl Tab<'_> {
     forward! {
-        history: History = self.state.context.history;
+        history: History = self.state.history;
     }
 
     pub fn new(
