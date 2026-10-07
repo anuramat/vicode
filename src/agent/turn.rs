@@ -1,5 +1,6 @@
 use anyhow::Result;
-use futures::StreamExt;
+use futures::TryStreamExt;
+use futures::future::ready;
 use tracing::instrument;
 use tracing::trace;
 
@@ -7,7 +8,6 @@ use super::Agent;
 use super::Assistant;
 use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::registry::ToolRegistry;
-use crate::llm::history::AssistantEvent;
 use crate::llm::history::Summary;
 use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::Message;
@@ -25,16 +25,13 @@ impl Agent {
         instructions: String,
         messages: Vec<Message>,
     ) -> Result<()> {
-        let started = assistant.stream_turn(instructions, messages, tools).await?;
-        sink.stream(AssistantEvent::Started {
-            started_at: started.started_at,
-        })?;
-        let mut stream = started.stream;
-        while let Some(event) = stream.next().await {
-            trace!(event = ?event, "Stream chunk received");
-            sink.stream(event?)?;
-        }
-        Ok(())
+        let stream = assistant.stream_turn(instructions, messages, tools).await?;
+        stream
+            .try_for_each(|event| {
+                trace!(event = ?event, "Stream chunk received");
+                ready(sink.stream(event))
+            })
+            .await
     }
 
     /// run a tool-less request to completion; its text output is the summary
@@ -45,16 +42,12 @@ impl Agent {
         messages: Vec<Message>,
     ) -> Result<CompactMessage> {
         let mut summary = Summary::new(now());
-        let started = assistant
+        let stream = assistant
             .stream_turn(instructions, messages, ToolRegistry::empty())
             .await?;
-        summary.handle(AssistantEvent::Started {
-            started_at: started.started_at,
-        })?;
-        let mut stream = started.stream;
-        while let Some(event) = stream.next().await {
-            summary.handle(event?)?;
-        }
+        stream
+            .try_for_each(|event| ready(summary.handle(event)))
+            .await?;
         summary.finish()
     }
 }
