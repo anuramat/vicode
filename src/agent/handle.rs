@@ -47,7 +47,7 @@ impl Agent {
             }
             AgentEvent::Done(tid, result) => self.task_done(now, tid, result),
         };
-        self.settle(result).await
+        result.and(self.save().await)
     }
 
     /// startup wake: an idle agent flushes its saved buffer — a spawn
@@ -58,21 +58,17 @@ impl Agent {
         now: u64,
     ) -> Result<()> {
         self.needs_turn = !self.state.pending_messages.is_empty();
-        let result = self.advance(now);
-        self.settle(result).await
+        self.advance(now).and(self.save().await)
     }
 
-    /// end of a step: save what the step changed even if it failed; the
-    /// first error wins
-    async fn settle(
-        &mut self,
-        result: Result<()>,
-    ) -> Result<()> {
+    /// end of a step: save what the step changed, if anything; a failed
+    /// step saves too -- callers do `result.and(self.save().await)`, so the
+    /// step's error wins
+    async fn save(&mut self) -> Result<()> {
         if !std::mem::take(&mut self.dirty) {
-            return result;
+            return Ok(());
         }
-        let saved = self.save().await;
-        result.and(saved)
+        self.state.save(&self.project, &self.id).await
     }
 
     async fn command(

@@ -38,10 +38,6 @@ impl Agent {
         }
     }
 
-    pub async fn save(&self) -> Result<()> {
-        self.state.save(&self.project, &self.id).await
-    }
-
     /// clone an idle agent into a new root under `aid`
     pub async fn try_duplicate(
         &self,

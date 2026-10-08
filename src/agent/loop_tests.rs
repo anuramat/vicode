@@ -757,7 +757,7 @@ async fn spawn_commit_list_archive_lifecycle() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-agents").await;
     register(&agent);
     // the spawn tail loads the parent's state; the tool resolves its HEAD
-    agent.save().await.unwrap();
+    agent.state.save(&agent.project, &agent.id).await.unwrap();
     let parent_workdir = checkout(&agent).await;
 
     // phase 1 — spawn; the child's seed turn answers
@@ -865,7 +865,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
 
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-capture").await;
     register(&agent);
-    agent.save().await.unwrap();
+    agent.state.save(&agent.project, &agent.id).await.unwrap();
     let parent_workdir = checkout(&agent).await;
     tokio::fs::write(parent_workdir.join("pre.txt"), "v1")
         .await
@@ -923,7 +923,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
 async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
     let (mut agent, fake, _parent_rx) = Agent::fake("loop-fresh").await;
     register(&agent);
-    agent.save().await.unwrap();
+    agent.state.save(&agent.project, &agent.id).await.unwrap();
     let parent_workdir = checkout(&agent).await;
     // committed after the parent loaded its instructions
     tokio::fs::write(parent_workdir.join("AGENTS.md"), "FRESH-MARKER")
