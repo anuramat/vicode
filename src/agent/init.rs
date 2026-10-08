@@ -49,7 +49,6 @@ impl Agent {
     ) -> Result<()> {
         self.ensure_idle()?;
         let mut state = self.state.clone();
-        state.pending_messages.clear();
         let generation = state.history.generation();
         state.history.handle(
             generation,
@@ -107,8 +106,8 @@ mod tests {
         tokio::fs::create_dir_all(&parent_workdir).await.unwrap();
 
         let mut state = project.fake_state();
-        // buffered mail addresses the original's subagents: the copy must
-        // not inherit it
+        // buffered mail is undelivered history: the copy inherits it, like
+        // the earlier mail from the original's subagents
         state
             .pending_messages
             .push(crate::llm::history::message::PeerMessage::new("kid", "stranded", 1).into());
@@ -124,24 +123,35 @@ mod tests {
             )
             .await
             .unwrap();
-        // the copy registered in-handler: nothing reported a failure
-        while let Ok(event) = app_rx.try_recv() {
-            assert!(
-                !matches!(
-                    event,
-                    crate::tui::app::AppEvent::Agent(
-                        _,
-                        crate::agent::event::UiEvent::DuplicateFailed { .. }
-                    )
+        // the copy registered in-handler: nothing reported a failure before
+        // its Started, which carries the state before resume flushes the buffer
+        let copy_state = loop {
+            match app_rx.recv().await.unwrap() {
+                crate::tui::app::AppEvent::Agent(
+                    aid,
+                    crate::agent::event::UiEvent::Started { state, .. },
+                ) if aid == copy_aid => break state,
+                event => assert!(
+                    !matches!(
+                        event,
+                        crate::tui::app::AppEvent::Agent(
+                            _,
+                            crate::agent::event::UiEvent::DuplicateFailed { .. }
+                        )
+                    ),
+                    "{event:?}"
                 ),
-                "{event:?}"
-            );
-        }
+            }
+        };
 
-        // the copy starts with the one-line "new empty tab" devmsg
-        // and an empty buffer (new-empty-root rule)
-        let copy_state = project.store().load_state(&copy_aid).await.unwrap();
-        assert!(copy_state.pending_messages.is_empty());
+        // the copy starts with the original's buffer and the one-line
+        // duplicated-note devmsg
+        insta::assert_yaml_snapshot!(copy_state.pending_messages, @r#"
+        - Peer:
+            text: "[from: kid]\nstranded"
+            token_count: 6
+            created_at: 1
+        "#);
         let last = copy_state.history.state().messages.last().unwrap().clone();
         assert!(
             matches!(
