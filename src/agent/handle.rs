@@ -61,9 +61,6 @@ impl Agent {
         self.advance(now).and(self.save().await)
     }
 
-    /// end of a step: save what the step changed, if anything; a failed
-    /// step saves too -- callers do `result.and(self.save().await)`, so the
-    /// step's error wins
     async fn save(&mut self) -> Result<()> {
         if !std::mem::take(&mut self.dirty) {
             return Ok(());
