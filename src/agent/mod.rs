@@ -33,7 +33,8 @@ use crate::tui::app::AppEvent;
 
 #[derive(Debug)]
 pub struct Agent {
-    pub project: Project,
+    pub tx: UnboundedSender<AgentEvent>,
+    pub rx: UnboundedReceiver<AgentEvent>,
 
     pub id: AgentId,
     pub state: AgentState,
@@ -48,10 +49,8 @@ pub struct Agent {
     pub router: Router,
     /// ui updates
     pub app_tx: UnboundedSender<AppEvent>,
-    /// every input, in arrival order: user commands, inter-agent mail,
-    /// turn streams and tool output
-    pub events_tx: UnboundedSender<AgentEvent>,
-    pub events_rx: UnboundedReceiver<AgentEvent>,
+
+    pub project: Project,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

@@ -24,7 +24,7 @@ impl Agent {
             .await?;
         self.emit(UiEvent::Started {
             state: Box::new(self.state.clone()),
-            control: self.events_tx.clone(),
+            control: self.tx.clone(),
         });
         // flush the saved buffer (a spawn seed, or messages buffered
         // before a restart) and start its turn, so the agent doesn't sit on
@@ -45,7 +45,7 @@ impl Agent {
     pub async fn next_event(&mut self) -> Option<AgentEvent> {
         tokio::select! {
             biased;
-            Some(event) = self.events_rx.recv() => Some(event),
+            Some(event) = self.rx.recv() => Some(event),
             Some((id, result)) = self.tasks.reap() => Some(AgentEvent::Done(id, result)),
             else => None,
         }

@@ -215,7 +215,7 @@ fn slot_output(
 fn register(agent: &Agent) {
     agent
         .router
-        .attach_manual(&agent.id, agent.events_tx.clone());
+        .attach_manual(&agent.id, agent.tx.clone());
     agent.report_status();
 }
 

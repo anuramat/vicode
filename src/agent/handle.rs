@@ -202,7 +202,7 @@ impl Agent {
                 self.id.clone(),
                 self.project.clone(),
                 self.router.clone(),
-                TaskSink::new(id, self.events_tx.clone()),
+                TaskSink::new(id, self.tx.clone()),
                 inherited_history,
             );
             async move {
@@ -485,7 +485,7 @@ impl Agent {
         let created = AssistantEvent::Created { created_at: now };
         self.handle_history(generation, HistoryUpdate::TurnResponse(created))?;
         self.tasks.spawn(Task::Turn { generation }, |id| {
-            let sink = TaskSink::new(id, self.events_tx.clone());
+            let sink = TaskSink::new(id, self.tx.clone());
             async move {
                 Self::turn(
                     sink,
@@ -869,9 +869,9 @@ mod tests {
             user(UserCommand::Abort),
             AgentEvent::Output(tool, "late".into()),
         ] {
-            h.events_tx.send(event).unwrap();
+            h.tx.send(event).unwrap();
         }
-        while let Ok(event) = h.events_rx.try_recv() {
+        while let Ok(event) = h.rx.try_recv() {
             h.agent.handle(3, event).await.unwrap();
         }
         insta::assert_yaml_snapshot!(h.drain(), @r#"
@@ -1123,7 +1123,7 @@ mod tests {
     #[tokio::test]
     async fn failed_followup_still_reports_idle() {
         let mut h = Harness::with(&[]).await;
-        h.router.attach_manual(&h.id, h.events_tx.clone());
+        h.router.attach_manual(&h.id, h.tx.clone());
         let status = |h: &Harness| h.router.list(&h.id, false).unwrap()[0].status;
         let turn = h.step(1, submit("hi", 0)).await.1.task();
         let tool = h
