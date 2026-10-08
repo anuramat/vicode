@@ -5,7 +5,6 @@ use crate::agent::event::UiEvent;
 use crate::utils::now;
 
 impl Agent {
-    /// the runtime, started by the router once the agent's node is live
     pub async fn run(mut self) -> Result<()> {
         match self.run_inner().await {
             Ok(()) => Ok(()),
