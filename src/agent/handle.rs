@@ -148,9 +148,6 @@ impl Agent {
         // one clone: history takes a copy, then the event moves into the
         // emit -- payloads (resolved tool calls) can embed a full workdir diff
         self.history_mut().handle(generation, event.clone())?;
-        if let HistoryUpdate::TurnResponse(AssistantEvent::Failed { message, .. }) = &event {
-            tracing::error!("response error: {message}");
-        }
         // TODO save less often; save on errors
         self.dirty |= !matches!(
             event,
@@ -252,6 +249,7 @@ impl Agent {
             // an erroring or panicking turn terminates its response, so the
             // next flush can't stack a turn on an orphaned InProgress one
             (Task::Turn { generation }, Err(message)) => {
+                tracing::error!("turn error in agent {}: {message}", self.id);
                 self.emit(UiEvent::Error(message.clone()));
                 let failed = AssistantEvent::Failed {
                     message,

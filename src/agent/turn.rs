@@ -13,8 +13,6 @@ use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::Message;
 use crate::utils::now;
 
-// TODO should these ResponseFailed events also coincide with UiEvent::Error? and if so, should we emit UiEvent::Error right here or in the HistoryEvent handler in the agent event loop?
-
 impl Agent {
     /// pump one assistant turn from the provider stream into the task sink
     #[instrument(skip(sink, instructions, messages, assistant, tools))]

@@ -50,11 +50,4 @@ impl AssistantEvent {
         item.touch_ended_at(now());
         Self::Item(Box::new(item))
     }
-
-    pub fn failed(message: String) -> Self {
-        Self::Failed {
-            message,
-            ended_at: now(),
-        }
-    }
 }
