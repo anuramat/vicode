@@ -1,7 +1,3 @@
-//! agent event handling: every [`AgentEvent`] is one step that updates the
-//! state, spawns tasks and emits UI events right away; the state is saved
-//! once, at the end of the step
-
 use anyhow::Result;
 use tracing::debug;
 use tracing::instrument;
