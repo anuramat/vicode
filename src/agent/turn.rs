@@ -14,7 +14,6 @@ use crate::llm::history::message::Message;
 use crate::utils::now;
 
 impl Agent {
-    /// pump one assistant turn from the provider stream into the task sink
     #[instrument(skip(sink, instructions, messages, assistant, tools))]
     pub async fn turn(
         sink: TaskSink,
@@ -32,7 +31,6 @@ impl Agent {
             .await
     }
 
-    /// run a tool-less request to completion; its text output is the summary
     #[instrument(skip(instructions, messages, assistant))]
     pub async fn summarize(
         assistant: &Assistant,
