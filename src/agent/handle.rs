@@ -38,7 +38,8 @@ impl Agent {
             AgentEvent::Message(msg) => self.deliver(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.tasks.get(tid) {
                 Some(&Task::Turn { generation }) => self.stream(generation, event),
-                _ => Ok(()),
+                Some(task) => unreachable!("stream event from {task:?}"),
+                None => Ok(()),
             },
             AgentEvent::Output(tid, chunk) => {
                 self.output(tid, chunk);
@@ -211,10 +212,15 @@ impl Agent {
         tid: TaskId,
         chunk: String,
     ) {
-        if let Some(Task::Tool { call_id, partial }) = self.tasks.get_mut(tid) {
-            partial.push_str(&chunk);
-            let call_id = call_id.clone();
-            self.emit(UiEvent::ToolOutput { call_id, chunk });
+        match self.tasks.get_mut(tid) {
+            Some(Task::Tool { call_id, partial }) => {
+                partial.push_str(&chunk);
+                let call_id = call_id.clone();
+                self.emit(UiEvent::ToolOutput { call_id, chunk });
+            }
+            Some(task) => unreachable!("output chunk from {task:?}"),
+            // stale: the tool was aborted
+            None => {}
         }
     }
 
