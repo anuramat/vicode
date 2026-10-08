@@ -213,10 +213,7 @@ fn slot_output(
 /// register the test-driven agent with its (real) router, so mail sent to
 /// it lands in the channel the test pumps
 fn register(agent: &Agent) {
-    agent
-        .router
-        .attach_manual(&agent.id, agent.tx.clone());
-    agent.report_status();
+    agent.router.attach_manual(&agent.id, agent.tx.clone());
 }
 
 /// pump the agent's own event loop until the predicate holds
@@ -782,7 +779,7 @@ async fn spawn_commit_list_archive_lifecycle() {
 
     agent
         .router
-        .idle_with_output(&child, "the magic word is plum")
+        .completed_output(&child, "the magic word is plum")
         .await;
     // the seed rode the inbound path: developer-role, tagged with the sender —
     // and the inherited context precedes it
@@ -909,7 +906,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
     assert!(!child_workdir.join("draft.txt").exists());
 
     // history: the seed request opens with the pre-spawn conversation
-    agent.router.idle_with_output(&spawned.id, "done").await;
+    agent.router.completed_output(&spawned.id, "done").await;
     let seed_request = &fake.requests()[1];
     assert!(
         seed_request
@@ -955,7 +952,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
     let spawned = spawn_result(&agent, "call-1");
     similar_asserts::assert_eq!(spawned.commit, marked);
-    agent.router.idle_with_output(&spawned.id, "done").await;
+    agent.router.completed_output(&spawned.id, "done").await;
 
     assert!(!agent.history().instructions().contains("FRESH-MARKER"));
     let state = agent.project.store().load_state(&spawned.id).await.unwrap();

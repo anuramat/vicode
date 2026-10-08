@@ -15,24 +15,26 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::timeout;
 
 use super::api::RouterError;
-use super::graph::NodeStatus;
 use super::graph::Runtime;
 use super::*;
 use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::AssistantStatus;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::OutputItem;
 use crate::llm::provider::api::fake::FakeApi;
+use crate::tui::app::AppEvent;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Router {
     /// a live, durable root whose mailbox the test drives by hand — no
-    /// runtime task, so nothing reports status on its own
+    /// runtime task
     pub fn attach_manual(
         &self,
         aid: &AgentId,
@@ -65,18 +67,10 @@ impl Router {
         Ok(())
     }
 
-    fn status(
-        &self,
-        aid: &AgentId,
-    ) -> Option<NodeStatus> {
-        self.lock().graph.get(aid).map(AgentNode::status)
-    }
-
-    /// test-facing sync point: poll until `aid` is idle with an assistant
-    /// message reading `text` in its saved history. The output is saved
-    /// while the turn still runs, so idle-after-output is the turn's end,
-    /// never the idle before the mail was handled
-    pub async fn idle_with_output(
+    /// test-facing sync point: poll until `aid`'s saved history holds a
+    /// completed assistant message reading `text`, i.e. the turn that
+    /// wrote it has ended
+    pub async fn completed_output(
         &self,
         aid: &AgentId,
         text: &str,
@@ -90,16 +84,18 @@ impl Router {
                         .state()
                         .iter()
                         .filter_map(|m| m.try_as_assistant_ref())
-                        .any(|m| m.text_output() == text)
+                        .any(|m| {
+                            matches!(m.status, AssistantStatus::Success) && m.text_output() == text
+                        })
                 });
-                if answered && self.status(aid) == Some(NodeStatus::Idle) {
+                if answered {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("{aid} never went idle on {text:?}"));
+        .unwrap_or_else(|_| panic!("{aid} never completed {text:?}"));
     }
 
     /// poll until `aid` is dead; returns what a send to it reports
@@ -108,7 +104,13 @@ impl Router {
         aid: &AgentId,
     ) -> Result<(), RouterError> {
         timeout(TIMEOUT, async {
-            while self.status(aid) != Some(NodeStatus::Dead) {
+            while !matches!(
+                self.lock().graph.get(aid),
+                Some(AgentNode {
+                    runtime: Runtime::Dead(_),
+                    ..
+                })
+            ) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -165,7 +167,7 @@ impl Rig {
             .spawn_agent(&parent, &self.commit, None, "go")
             .await
             .unwrap();
-        self.router.idle_with_output(&child, text).await;
+        self.router.completed_output(&child, text).await;
         child
     }
 }
@@ -189,8 +191,7 @@ fn script_turn(
     ]);
 }
 
-/// a primary with a workdir + saved state and a dummy (test-held) runtime,
-/// reported idle
+/// a primary with a workdir + saved state and a dummy (test-held) runtime
 async fn register_primary(
     project: &Project,
     router: &Router,
@@ -207,32 +208,30 @@ async fn register_primary(
         .unwrap();
     let (mailbox, mail) = unbounded_channel();
     router.attach_manual(&aid, mailbox);
-    router.report_busy(&aid, false);
     (aid, mail)
 }
 
 /// boot from the store as the app does, and start every restored agent
 async fn reboot(project: &Project) -> Router {
-    start(
-        Router::boot(unbounded_channel().0, project.clone())
-            .await
-            .unwrap(),
-    )
-    .await
+    let (app_tx, app_rx) = unbounded_channel();
+    let boot = Router::boot(app_tx, project.clone()).await.unwrap();
+    start(boot, app_rx).await
 }
 
-/// launch every restored agent; up once the runtimes settle idle
-async fn start(boot: boot::Boot) -> Router {
-    let aids: Vec<AgentId> = boot.agents.iter().map(|l| l.agent.id.clone()).collect();
+/// launch every restored agent; up once each runtime reports `Started`
+async fn start(
+    boot: boot::Boot,
+    mut app_rx: UnboundedReceiver<AppEvent>,
+) -> Router {
+    let mut down: BTreeSet<AgentId> = boot.agents.iter().map(|l| l.agent.id.clone()).collect();
     for launch in boot.agents {
         launch.go();
     }
     timeout(TIMEOUT, async {
-        while aids
-            .iter()
-            .any(|aid| boot.router.status(aid) == Some(NodeStatus::Running))
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        while !down.is_empty() {
+            if let Some(AppEvent::Agent(aid, UiEvent::Started { .. })) = app_rx.recv().await {
+                down.remove(&aid);
+            }
         }
     })
     .await
@@ -258,7 +257,6 @@ async fn spawn_registers_under_parent() {
     let members = rig.router.list(&rig.primary, false).unwrap();
     let child_member = members.iter().find(|m| m.id == child).unwrap();
     assert_eq!(child_member.parent, Some(rig.primary.clone()));
-    assert_eq!(child_member.status, NodeStatus::Idle);
 }
 
 #[tokio::test]
@@ -269,7 +267,7 @@ async fn send_wakes_an_idle_target() {
     rig.script("second", "second");
     let sent = rig.router.send_message(&rig.primary, &child, "more");
     assert_eq!(sent, Ok(()));
-    rig.router.idle_with_output(&child, "second").await;
+    rig.router.completed_output(&child, "second").await;
 }
 
 /// a child reports back the only way there is: a send into the parent's
@@ -307,7 +305,7 @@ async fn spawn_in_progress_is_invisible() {
     assert_eq!(members.len(), 1);
 
     let child = timeout(TIMEOUT, spawn).await.unwrap().unwrap();
-    rig.router.idle_with_output(&child, "seeded").await;
+    rig.router.completed_output(&child, "seeded").await;
 }
 
 #[tokio::test]
@@ -427,8 +425,7 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
 
     let router2 = reboot(&rig.project).await;
 
-    router2.idle_with_output(&kept, "resumed").await;
-    assert_eq!(router2.status(&kept), Some(NodeStatus::Idle));
+    router2.completed_output(&kept, "resumed").await;
     assert_eq!(
         router2.send_message(&rig.primary, &archived, "hi"),
         Err(RouterError::Unreachable)
@@ -474,15 +471,21 @@ async fn boot_isolates_invalid_agents() {
             .unwrap();
     }
 
-    let boot = Router::boot(unbounded_channel().0, project.clone())
-        .await
-        .unwrap();
-    let graph: BTreeMap<AgentId, NodeStatus> = boot
+    let (app_tx, app_rx) = unbounded_channel();
+    let boot = Router::boot(app_tx, project.clone()).await.unwrap();
+    // the death reason, if any
+    let graph: BTreeMap<AgentId, Option<String>> = boot
         .router
         .lock()
         .graph
         .iter()
-        .map(|(id, node)| (id.clone(), node.status()))
+        .map(|(id, node)| {
+            let death = match &node.runtime {
+                Runtime::Live { .. } => None,
+                Runtime::Dead(reason) => Some(reason.clone()),
+            };
+            (id.clone(), death)
+        })
         .collect();
     insta::assert_yaml_snapshot!(serde_json::json!({
         "tabs": boot.tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(),
@@ -507,15 +510,15 @@ async fn boot_isolates_invalid_agents() {
       - - bad-child
         - agent bad-child not found
     graph:
-      bad-child: Dead
-      good: Running
-      grandchild: Running
+      bad-child: agent bad-child not found
+      good: ~
+      grandchild: ~
     tabs:
       - good
     ");
 
-    let router = start(boot).await;
-    assert_eq!(router.status(&aid("grandchild")), Some(NodeStatus::Idle));
+    // the grandchild starts under its dead parent
+    let router = start(boot, app_rx).await;
     assert_eq!(
         router.send_message(&aid("good"), &aid("bad-child"), "hi"),
         Err(RouterError::Dead("agent bad-child not found".into()))
@@ -537,14 +540,14 @@ async fn runtime_death_is_terminal_until_restart() {
         .await
         .unwrap_err();
     assert_eq!(err.to_string(), format!("agent {child} is dead"));
-    // A late status report cannot revive or overwrite a terminal node.
-    rig.router.report_busy(&child, false);
-    assert_eq!(rig.router.send_message(&rig.primary, &child, "hi"), dead);
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(!records[&child].archived);
 
     let router2 = reboot(&rig.project).await;
-    assert_eq!(router2.status(&child), Some(NodeStatus::Idle));
+    assert!(matches!(
+        router2.lock().graph[&child].runtime,
+        Runtime::Live { .. }
+    ));
 }
 
 #[tokio::test]
@@ -605,7 +608,7 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         .spawn_agent(&prime, &project.head_commit(), None, "go")
         .await
         .unwrap();
-    router.idle_with_output(&child, "fits now").await;
+    router.completed_output(&child, "fits now").await;
 }
 
 /// a spawn checks the child out at the requested commit, on its own
@@ -636,7 +639,7 @@ async fn spawn_checks_the_child_out_at_the_requested_commit() {
         .spawn_agent(&rig.primary, &start, None, "go")
         .await
         .unwrap();
-    rig.router.idle_with_output(&child, "done").await;
+    rig.router.completed_output(&child, "done").await;
 
     let workdir = rig.project.agent_workdir(&child);
     assert_eq!(
@@ -737,7 +740,7 @@ async fn create_rolls_back_failed_and_panicking_setups() {
             "boom"
         };
         assert_eq!(err.to_string(), expected);
-        assert_eq!(rig.router.status(&aid), None);
+        assert!(!rig.router.lock().graph.contains_key(&aid));
         assert!(rig.project.store().load_state(&aid).await.is_err());
         assert!(!rig.project.agent(&aid).exists());
     }

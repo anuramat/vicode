@@ -1,4 +1,4 @@
-//! lifecycle: id allocation, status reports, and the one way to create an
+//! lifecycle: id allocation, and the one way to create an
 //! agent -- `create` -- whose runtime runs supervised until its terminal
 //! `runtime_down`
 
@@ -25,21 +25,6 @@ use crate::agent::task::panic_message;
 impl Router {
     pub fn allocate_agent_id(&self) -> AgentId {
         self.lock().allocate()
-    }
-
-    /// informational: what `list` shows
-    pub fn report_busy(
-        &self,
-        aid: &AgentId,
-        busy: bool,
-    ) {
-        let s = &mut *self.lock();
-        // a terminal node never accepts a late in-flight report
-        if let Some(node) = s.graph.get_mut(aid)
-            && let Runtime::Live { busy: current, .. } = &mut node.runtime
-        {
-            *current = busy;
-        }
     }
 
     /// the one way to create an agent: `setup` prepares its workdir and

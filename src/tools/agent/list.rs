@@ -12,7 +12,7 @@ use crate::tui::widgets::message::toolcall::ToolCallWidget;
 
 declare_tool!(
     name: "list",
-    description: "Enumerate your tab's members — {id, parent, status} — or, with subtree, \
+    description: "Enumerate your tab's members — {id, parent} — or, with subtree, \
         only your own spawn-descendants. The id-recovery path when an agent's id has \
         fallen out of your history.",
     call: ListCall,

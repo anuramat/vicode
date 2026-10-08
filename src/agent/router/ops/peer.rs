@@ -44,7 +44,6 @@ impl Router {
             .map(|(id, n)| ListEntry {
                 id: id.clone(),
                 parent: n.parent.clone(),
-                status: n.status(),
             })
             .collect();
         members.sort_by(|a, b| a.id.cmp(&b.id));

@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::agent::AgentId;
-use crate::agent::router::graph::NodeStatus;
 
 /// router errors that can be caused by inter-agent comms
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -22,5 +21,4 @@ pub enum RouterError {
 pub struct ListEntry {
     pub id: AgentId,
     pub parent: Option<AgentId>,
-    pub status: NodeStatus,
 }

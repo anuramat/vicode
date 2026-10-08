@@ -62,13 +62,12 @@ impl Agent {
         self.settle(result).await
     }
 
-    /// end of a step: report the status, and save what the step changed
-    /// even if it failed; the first error wins
+    /// end of a step: save what the step changed even if it failed; the
+    /// first error wins
     async fn settle(
         &mut self,
         result: Result<()>,
     ) -> Result<()> {
-        self.report_status();
         if !std::mem::take(&mut self.dirty) {
             return result;
         }
@@ -121,11 +120,6 @@ impl Agent {
     /// summary waits on the summary task, a parked summary on the turn
     pub fn busy(&self) -> bool {
         !self.tasks.idle()
-    }
-
-    /// informational: the router's `list`
-    pub fn report_status(&self) {
-        self.router.report_busy(&self.id, self.busy());
     }
 
     pub fn ensure_idle(&self) -> Result<()> {
@@ -522,7 +516,6 @@ mod tests {
 
     use super::*;
     use crate::agent::AgentId;
-    use crate::agent::router::graph::NodeStatus;
     use crate::agent::task::Tasks;
     use crate::config::CompactConfig;
     use crate::llm::history::message::CompactMessage;
@@ -1113,38 +1106,6 @@ mod tests {
             - turn
         "#
         );
-    }
-
-    /// a step that fails after its last task finished still reports the
-    /// agent idle to the router's `list`
-    #[tokio::test]
-    async fn failed_followup_still_reports_idle() {
-        let mut h = Harness::with(&[]).await;
-        h.router.attach_manual(&h.id, h.tx.clone());
-        let status = |h: &Harness| h.router.list(&h.id, false).unwrap()[0].status;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
-        let tool = h
-            .step(2, AgentEvent::Stream(turn, todo_call(None)))
-            .await
-            .1
-            .task();
-        let completed = AssistantEvent::Completed { ended_at: 3 };
-        h.step(3, AgentEvent::Stream(turn, completed))
-            .await
-            .0
-            .unwrap();
-        h.step(4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)))
-            .await
-            .0
-            .unwrap();
-        assert_eq!(status(&h), NodeStatus::Running);
-
-        // the follow-up turn can't start
-        h.state.assistant_id = "gone".into();
-        let item = todo_item(Some(Ok(TodoResult {})));
-        let done = AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(item))));
-        assert!(h.step(5, done).await.0.is_err());
-        assert_eq!(status(&h), NodeStatus::Idle);
     }
 
     #[tokio::test]
