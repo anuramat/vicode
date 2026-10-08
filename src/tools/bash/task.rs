@@ -84,7 +84,7 @@ mod tests {
             cwd: std::env::temp_dir(),
         };
         let (tx, mut rx) = unbounded_channel();
-        let tid = Tasks::default().register(Task::turn());
+        let tid = Tasks::held().register(Task::turn());
         let sink = TaskSink::new(tid, tx);
 
         let mut result = exec_streaming(

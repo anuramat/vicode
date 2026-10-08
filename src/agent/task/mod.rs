@@ -8,9 +8,12 @@ use std::future::Future;
 use std::panic::AssertUnwindSafe;
 
 use futures::FutureExt;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
 
+use crate::agent::event::AgentEvent;
 use crate::agent::event::TaskResult;
+use crate::agent::task::sink::TaskSink;
 use crate::llm::history::HistoryGeneration;
 
 /// loop-local task identifier
@@ -48,44 +51,54 @@ impl Task {
 }
 
 /// in-flight tasks; a result whose task is not in here (aborted) is stale
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Tasks {
     next: u64,
     by_id: BTreeMap<TaskId, Task>,
+    /// the agent's channel: a task's events, then its `Done`
+    tx: UnboundedSender<AgentEvent>,
     executor: Executor,
 }
 
 #[derive(Debug)]
 enum Executor {
-    Live(JoinSet<(TaskId, TaskResult)>),
+    /// owns the futures, so dropping it cancels them
+    Live(JoinSet<()>),
     /// records each task as (id, kind) and drops it unrun: the test feeds
     /// the task's events by hand
     #[cfg(test)]
     Held(Vec<(TaskId, &'static str)>),
 }
 
-impl Default for Executor {
-    fn default() -> Self {
-        Self::Live(JoinSet::new())
-    }
-}
-
 impl Tasks {
-    /// run `task` as the future `run` builds for its id, converting panics
-    /// to `Err`
+    pub fn new(tx: UnboundedSender<AgentEvent>) -> Self {
+        Self {
+            next: 0,
+            by_id: BTreeMap::new(),
+            tx,
+            executor: Executor::Live(JoinSet::new()),
+        }
+    }
+
+    /// run `task` as the future `run` builds for its sink; its result,
+    /// panics converted to `Err`, goes down the same sink as `Done`, after
+    /// everything it streamed
     pub fn spawn<F>(
         &mut self,
         task: Task,
-        run: impl FnOnce(TaskId) -> F,
+        run: impl FnOnce(TaskSink) -> F,
     ) -> TaskId
     where
         F: Future<Output = TaskResult> + Send + 'static,
     {
         let kind = task.kind();
         let id = self.insert(task);
-        let future = run(id);
+        let sink = TaskSink::new(id, self.tx.clone());
+        let future = run(sink.clone());
         match &mut self.executor {
             Executor::Live(set) => {
+                // drop the handles of tasks that have finished since
+                while set.try_join_next().is_some() {}
                 set.spawn(async move {
                     let result = AssertUnwindSafe(future)
                         .catch_unwind()
@@ -93,7 +106,7 @@ impl Tasks {
                         .unwrap_or_else(|panic| {
                             Err(format!("{kind} panicked: {}", panic_message(&*panic)))
                         });
-                    (id, result)
+                    sink.done(result);
                 });
             }
             #[cfg(test)]
@@ -110,19 +123,6 @@ impl Tasks {
         self.next += 1;
         self.by_id.insert(id, task);
         id
-    }
-
-    /// the next finished task's result, stale ones included
-    pub async fn reap(&mut self) -> Option<(TaskId, TaskResult)> {
-        match &mut self.executor {
-            Executor::Live(set) => loop {
-                if let Ok(done) = set.join_next().await? {
-                    return Some(done);
-                }
-            },
-            #[cfg(test)]
-            Executor::Held(_) => None,
-        }
     }
 
     pub fn get(
@@ -186,6 +186,8 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
+    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::agent::event::TaskOutput;
@@ -198,11 +200,12 @@ mod tests {
     }
 
     impl Tasks {
-        /// tasks whose futures are recorded, never run
+        /// tasks whose futures are recorded, never run, so nothing is
+        /// ever sent
         pub fn held() -> Self {
             Self {
                 executor: Executor::Held(Vec::new()),
-                ..Self::default()
+                ..Self::new(unbounded_channel().0)
             }
         }
 
@@ -225,7 +228,7 @@ mod tests {
 
     #[test]
     fn register_finish_get_idle() {
-        let mut tasks = Tasks::default();
+        let mut tasks = Tasks::held();
         assert!(tasks.idle());
 
         let a = tasks.register(Task::turn());
@@ -244,7 +247,7 @@ mod tests {
 
     #[test]
     fn compaction_is_neither_turn_work_nor_idle() {
-        let mut tasks = Tasks::default();
+        let mut tasks = Tasks::held();
         let compact = tasks.register(Task::Compact { n_drop: 1 });
         assert!(!tasks.idle() && !tasks.in_turn() && tasks.compacting());
 
@@ -259,7 +262,7 @@ mod tests {
 
     #[test]
     fn abort_all_keeps_next_so_ids_are_never_reused() {
-        let mut tasks = Tasks::default();
+        let mut tasks = Tasks::held();
         let a = tasks.register(Task::turn());
         assert_eq!(tasks.abort_all().len(), 1);
         assert!(tasks.idle());
@@ -270,11 +273,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returning_and_panicking_tasks_reap_once_cancelled_ones_never() {
-        let mut tasks = Tasks::default();
+    async fn tasks_send_done_after_their_events_cancelled_ones_never() {
+        let (tx, mut rx) = unbounded_channel();
+        let mut tasks = Tasks::new(tx);
 
-        let ok = tasks.spawn(Task::turn(), |_| async { Ok(TaskOutput::Turn) });
-        assert!(matches!(tasks.reap().await, Some((id, Ok(TaskOutput::Turn))) if id == ok));
+        let ok = tasks.spawn(Task::turn(), |sink| async move {
+            sink.output("chunk".into());
+            Ok(TaskOutput::Turn)
+        });
+        assert!(
+            matches!(rx.recv().await, Some(AgentEvent::Output(id, c)) if id == ok && c == "chunk")
+        );
+        assert!(
+            matches!(rx.recv().await, Some(AgentEvent::Done(id, Ok(TaskOutput::Turn))) if id == ok)
+        );
 
         let tool = Task::Tool {
             call_id: "call".into(),
@@ -282,13 +294,19 @@ mod tests {
         };
         let boom = tasks.spawn(tool, |_| async { panic!("boom") });
         assert!(matches!(
-            tasks.reap().await,
-            Some((id, Err(e))) if id == boom && e == "tool panicked: boom"
+            rx.recv().await,
+            Some(AgentEvent::Done(id, Err(e))) if id == boom && e == "tool panicked: boom"
         ));
 
-        tasks.spawn(Task::turn(), |_| std::future::pending());
+        // the guard drops with the future: once it's gone, nothing can follow
+        let (guard, cancelled) = oneshot::channel::<()>();
+        tasks.spawn(Task::turn(), |_| async move {
+            let _guard = guard;
+            std::future::pending().await
+        });
         tasks.abort_all();
-        assert!(tasks.reap().await.is_none());
+        cancelled.await.unwrap_err();
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

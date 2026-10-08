@@ -2,11 +2,12 @@ use anyhow::Result;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent::event::AgentEvent;
+use crate::agent::event::TaskResult;
 use crate::agent::task::TaskId;
 use crate::llm::history::AssistantEvent;
 
 /// a task's line back to its agent: the turn's stream events, or a tool's
-/// output chunks
+/// output chunks, then its result
 #[derive(Clone, Debug)]
 pub struct TaskSink {
     id: TaskId,
@@ -34,5 +35,12 @@ impl TaskSink {
         chunk: String,
     ) {
         drop(self.tx.send(AgentEvent::Output(self.id, chunk)));
+    }
+
+    pub fn done(
+        self,
+        result: TaskResult,
+    ) {
+        drop(self.tx.send(AgentEvent::Done(self.id, result)));
     }
 }

@@ -16,7 +16,6 @@ use crate::agent::event::UserCommand;
 use crate::agent::event::UserPrompt;
 use crate::agent::task::Task;
 use crate::agent::task::TaskId;
-use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::llm::history::AssistantEvent;
@@ -197,12 +196,12 @@ impl Agent {
             call_id: call.call_id.clone(),
             partial: String::new(),
         };
-        self.tasks.spawn(task, |id| {
+        self.tasks.spawn(task, |sink| {
             let ctx = ToolRuntimeContext::new(
                 self.id.clone(),
                 self.project.clone(),
                 self.router.clone(),
-                TaskSink::new(id, self.tx.clone()),
+                sink,
                 inherited_history,
             );
             async move {
@@ -484,9 +483,8 @@ impl Agent {
         let instructions = self.history().instructions().to_string();
         let created = AssistantEvent::Created { created_at: now };
         self.handle_history(generation, HistoryUpdate::TurnResponse(created))?;
-        self.tasks.spawn(Task::Turn { generation }, |id| {
-            let sink = TaskSink::new(id, self.tx.clone());
-            async move {
+        self.tasks
+            .spawn(Task::Turn { generation }, |sink| async move {
                 Self::turn(
                     sink,
                     &assistant,
@@ -497,8 +495,7 @@ impl Agent {
                 .await
                 .map(|()| TaskOutput::Turn)
                 .map_err(|e| e.to_string())
-            }
-        });
+            });
         Ok(())
     }
 }
@@ -1081,7 +1078,7 @@ mod tests {
         tasks: []
         ");
 
-        // the reaper's terminal resolves the slot and starts the follow-up
+        // the tool task's terminal resolves the slot and starts the follow-up
         assert_handled!(
             h, 6,
             AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
@@ -1151,7 +1148,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reaped_tool_failure_patches_slot_and_starts_followup() {
+    async fn tool_failure_patches_slot_and_starts_followup() {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi", 0)).await.1.task();
         let tool = h

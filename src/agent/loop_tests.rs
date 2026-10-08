@@ -226,7 +226,7 @@ async fn pump_until(
 ) {
     timeout(TIMEOUT, async {
         while !pred(agent) {
-            let event = agent.next_event().await.unwrap();
+            let event = agent.rx.recv().await.unwrap();
             let _ = agent.handle(now(), event).await.unwrap();
         }
     })
@@ -459,7 +459,7 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
             ))
         {
             tokio::select! {
-                Some(event) = agent.next_event() => {
+                Some(event) = agent.rx.recv() => {
                     let _ = agent.handle(now(), event).await.unwrap();
                 }
                 Some(app_event) = app_rx.recv() => {
@@ -544,7 +544,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
             {
                 break;
             }
-            let event = agent.next_event().await.unwrap();
+            let event = agent.rx.recv().await.unwrap();
             agent.handle(now(), event).await.unwrap();
         }
     })

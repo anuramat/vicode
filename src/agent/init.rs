@@ -27,7 +27,7 @@ impl Agent {
             project: router.project.clone(),
             id,
             state,
-            tasks: Tasks::default(),
+            tasks: Tasks::new(tx.clone()),
             compaction: None,
             needs_turn: false,
             dirty: false,

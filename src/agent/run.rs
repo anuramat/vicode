@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::agent::Agent;
-use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::utils::now;
 
@@ -30,24 +29,15 @@ impl Agent {
         // before a restart) and start its turn, so the agent doesn't sit on
         // unread mail; its step makes the startup report
         self.resume(now()).await?;
-        while let Some(event) = self.next_event().await {
+        // the agent holds a sender, so this only ends when the runtime is
+        // aborted; a task sends its `Done` after its events, so FIFO
+        // delivers them in order
+        while let Some(event) = self.rx.recv().await {
             if let Err(e) = self.handle(now(), event).await {
                 tracing::error!("error in agent {}: {:?}", self.id, e);
                 self.emit(UiEvent::Error(e.to_string()));
             }
         }
         Ok(())
-    }
-
-    /// the event source: the event channel, then the reaper (FIFO per
-    /// task, so a task's events precede its terminal: the reaper is polled
-    /// only once the channel is drained)
-    pub async fn next_event(&mut self) -> Option<AgentEvent> {
-        tokio::select! {
-            biased;
-            Some(event) = self.rx.recv() => Some(event),
-            Some((id, result)) = self.tasks.reap() => Some(AgentEvent::Done(id, result)),
-            else => None,
-        }
     }
 }
