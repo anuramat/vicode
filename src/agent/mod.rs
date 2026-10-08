@@ -84,7 +84,6 @@ impl Agent {
         history: History = self.state.history;
     }
 
-    /// a closed app bus means the app is shutting down: nothing to report to
     pub fn emit(
         &self,
         event: UiEvent,
