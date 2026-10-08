@@ -64,7 +64,6 @@ pub struct AgentState {
     pub pending_messages: Vec<PendingMessage>,
 }
 
-/// an inbound message, buffered until the next turn boundary
 #[derive(Clone, Serialize, Deserialize, Debug, From)]
 pub enum PendingMessage {
     User(UserMessage),
