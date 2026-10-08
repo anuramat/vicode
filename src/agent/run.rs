@@ -25,13 +25,7 @@ impl Agent {
             state: Box::new(self.state.clone()),
             control: self.tx.clone(),
         });
-        // flush the saved buffer (a spawn seed, or messages buffered
-        // before a restart) and start its turn, so the agent doesn't sit on
-        // unread mail; its step makes the startup report
         self.resume(now()).await?;
-        // the agent holds a sender, so this only ends when the runtime is
-        // aborted; a task sends its `Done` after its events, so FIFO
-        // delivers them in order
         while let Some(event) = self.rx.recv().await {
             if let Err(e) = self.handle(now(), event).await {
                 tracing::error!("error in agent {}: {:?}", self.id, e);
