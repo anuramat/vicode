@@ -123,8 +123,6 @@ impl Agent {
         Ok(())
     }
 
-    /// a turn's provider event lands in history; a tool call it completes
-    /// starts running right away
     fn handle_turn_event(
         &mut self,
         generation: HistoryGeneration,
