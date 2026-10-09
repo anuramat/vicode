@@ -170,7 +170,6 @@ impl Agent {
         });
     }
 
-    /// accumulate (authoritative) + tee to the app for live render
     fn handle_tool_output(
         &mut self,
         tid: TaskId,
