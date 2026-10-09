@@ -192,8 +192,6 @@ impl Agent {
         Ok(self.history().generation())
     }
 
-    /// the single resolver: a task's terminal lands in history, then the
-    /// agent continues if that was the last one
     fn handle_task_done(
         &mut self,
         now: u64,
