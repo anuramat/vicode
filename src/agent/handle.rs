@@ -85,9 +85,6 @@ impl Agent {
                 self.dirty = true;
                 Ok(())
             }
-            // success needs no reply: the copy's own Started event attaches
-            // the app's preview tab; the rejection names the copy, so the
-            // app can drop its preview
             UserCommand::Duplicate(copy) => {
                 if let Err(e) = self.try_duplicate(copy.clone()).await {
                     let error = format!("{e:#}");
