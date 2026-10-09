@@ -959,27 +959,20 @@ mod tests {
         ");
     }
 
+    /// abort already resolved the task: whatever it sent after, failures
+    /// included, is dropped
     #[tokio::test]
-    async fn task_failure_after_abort_surfaces_error_without_reply() {
-        let mut h = Harness::with(&[]).await;
-        let tid = h.step(1, submit("hi", 0)).await.1.task();
-        h.step(2, user(UserCommand::Abort)).await.0.unwrap();
-
-        assert_handled!(h, 3, AgentEvent::Done(tid, Err("stream closed".into())), @"
-        busy: false
-        ui:
-          - Error: stream closed
-        tasks: []
-        ");
-    }
-
-    #[tokio::test]
-    async fn task_event_after_abort_is_dropped() {
+    async fn task_events_after_abort_are_dropped() {
         let mut h = Harness::with(&[]).await;
         let tid = h.step(1, submit("hi", 0)).await.1.task();
         h.step(2, user(UserCommand::Abort)).await.0.unwrap();
 
         assert_handled!(h, 3, AgentEvent::Stream(tid, text_output("out", "late")), @"
+        busy: false
+        ui: []
+        tasks: []
+        ");
+        assert_handled!(h, 4, AgentEvent::Done(tid, Err("stream closed".into())), @"
         busy: false
         ui: []
         tasks: []
