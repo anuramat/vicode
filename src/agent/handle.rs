@@ -34,18 +34,18 @@ impl Agent {
     ) -> Result<()> {
         debug!(event = ?event, "handling agent event");
         let result = match event {
-            AgentEvent::User(command) => self.command(now, command).await,
+            AgentEvent::User(command) => self.handle_command(now, command).await,
             AgentEvent::Message(msg) => self.deliver(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.tasks.get(tid) {
-                Some(&Task::Turn { generation }) => self.stream(generation, event),
+                Some(&Task::Turn { generation }) => self.handle_turn_event(generation, event),
                 Some(task) => unreachable!("stream event from {task:?}"),
                 None => Ok(()),
             },
             AgentEvent::Output(tid, chunk) => {
-                self.output(tid, chunk);
+                self.handle_tool_output(tid, chunk);
                 Ok(())
             }
-            AgentEvent::Done(tid, result) => self.task_done(now, tid, result),
+            AgentEvent::Done(tid, result) => self.handle_task_done(now, tid, result),
         };
         result.and(self.save().await)
     }
@@ -57,7 +57,7 @@ impl Agent {
         self.state.save(&self.project, &self.id).await
     }
 
-    async fn command(
+    async fn handle_command(
         &mut self,
         now: u64,
         command: UserCommand,
@@ -75,7 +75,7 @@ impl Agent {
             UserCommand::Undo(n) => {
                 self.ensure_idle()?;
                 let g = self.increment_generation()?;
-                self.handle_history(g, HistoryUpdate::Pop(n))
+                self.handle_history_update(g, HistoryUpdate::Pop(n))
             }
             UserCommand::SetAssistant(id) => {
                 self.ensure_idle()?;
@@ -108,7 +108,7 @@ impl Agent {
         self.tasks.compacting() || self.compaction.is_some()
     }
 
-    fn handle_history(
+    fn handle_history_update(
         &mut self,
         generation: HistoryGeneration,
         event: HistoryUpdate,
@@ -125,7 +125,7 @@ impl Agent {
 
     /// a turn's provider event lands in history; a tool call it completes
     /// starts running right away
-    fn stream(
+    fn handle_turn_event(
         &mut self,
         generation: HistoryGeneration,
         event: AssistantEvent,
@@ -137,7 +137,7 @@ impl Agent {
             },
             _ => None,
         };
-        self.handle_history(generation, HistoryUpdate::TurnResponse(event))?;
+        self.handle_history_update(generation, HistoryUpdate::TurnResponse(event))?;
         if let Some(call) = call {
             self.run_tool_call(call);
         }
@@ -175,7 +175,7 @@ impl Agent {
     }
 
     /// accumulate (authoritative) + tee to the app for live render
-    fn output(
+    fn handle_tool_output(
         &mut self,
         tid: TaskId,
         chunk: String,
@@ -194,13 +194,13 @@ impl Agent {
 
     fn increment_generation(&mut self) -> Result<HistoryGeneration> {
         let generation = self.history().generation();
-        self.handle_history(generation, HistoryUpdate::GenerationIncremented)?;
+        self.handle_history_update(generation, HistoryUpdate::GenerationIncremented)?;
         Ok(self.history().generation())
     }
 
     /// the single resolver: a task's terminal lands in history, then the
     /// agent continues if that was the last one
-    fn task_done(
+    fn handle_task_done(
         &mut self,
         now: u64,
         tid: TaskId,
@@ -225,21 +225,21 @@ impl Agent {
                     message,
                     ended_at: now,
                 };
-                self.handle_history(generation, HistoryUpdate::TurnResponse(failed))?;
+                self.handle_history_update(generation, HistoryUpdate::TurnResponse(failed))?;
             }
             // a streaming tool's authoritative text is the partial; its
             // return carries only metadata
             (Task::Tool { partial, .. }, Ok(TaskOutput::Tool(mut item))) => {
                 item.task.compose(partial);
                 let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
-                self.handle_history(g, HistoryUpdate::TurnResponse(item))?;
+                self.handle_history_update(g, HistoryUpdate::TurnResponse(item))?;
             }
             (Task::Tool { call_id, partial }, result) => {
                 let marker = result
                     .err()
                     .unwrap_or_else(|| "tool returned no item".into());
                 let error = with_partial(marker, &partial);
-                self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
+                self.handle_history_update(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
             (Task::Compact { n_drop }, Ok(TaskOutput::Summary(summary))) => {
                 self.compaction = Some(Compaction { n_drop, summary });
@@ -274,7 +274,7 @@ impl Agent {
         }
         if let Some(compaction) = self.compaction.take() {
             let g = self.history().generation();
-            self.handle_history(g, HistoryUpdate::Compact(compaction))?;
+            self.handle_history_update(g, HistoryUpdate::Compact(compaction))?;
         }
         if !self.needs_turn {
             return Ok(());
@@ -306,7 +306,7 @@ impl Agent {
     fn flush_pending(&mut self) -> Result<()> {
         for msg in std::mem::take(&mut self.state.pending_messages) {
             let generation = self.history().generation();
-            self.handle_history(generation, msg.into())?;
+            self.handle_history_update(generation, msg.into())?;
         }
         Ok(())
     }
@@ -356,12 +356,12 @@ impl Agent {
                 message: ABORTED_BY_USER.into(),
                 ended_at: now,
             };
-            self.handle_history(g, HistoryUpdate::TurnResponse(failed))?;
+            self.handle_history_update(g, HistoryUpdate::TurnResponse(failed))?;
         }
         for task in tasks {
             if let Task::Tool { call_id, partial } = task {
                 let error = with_partial(ABORTED_BY_USER.into(), &partial);
-                self.handle_history(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
+                self.handle_history_update(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
         }
         Ok(())
@@ -450,7 +450,7 @@ impl Agent {
         let generation = self.history().generation();
         let instructions = self.history().instructions().to_string();
         let created = AssistantEvent::Created { created_at: now };
-        self.handle_history(generation, HistoryUpdate::TurnResponse(created))?;
+        self.handle_history_update(generation, HistoryUpdate::TurnResponse(created))?;
         self.tasks
             .spawn(Task::Turn { generation }, |sink| async move {
                 Self::turn(
