@@ -1,6 +1,5 @@
 use anyhow::Result;
 use futures::TryStreamExt;
-use futures::future::ready;
 use tracing::instrument;
 use tracing::trace;
 
@@ -22,13 +21,12 @@ impl Agent {
         instructions: String,
         messages: Vec<Message>,
     ) -> Result<()> {
-        let stream = assistant.stream_turn(instructions, messages, tools).await?;
-        stream
-            .try_for_each(|event| {
-                trace!(event = ?event, "Stream chunk received");
-                ready(sink.stream(event))
-            })
-            .await
+        let mut stream = assistant.stream_turn(instructions, messages, tools).await?;
+        while let Some(event) = stream.try_next().await? {
+            trace!(event = ?event, "Stream chunk received");
+            sink.stream(event)?;
+        }
+        Ok(())
     }
 
     #[instrument(skip(instructions, messages, assistant))]
@@ -38,12 +36,12 @@ impl Agent {
         messages: Vec<Message>,
     ) -> Result<CompactMessage> {
         let mut summary = Summary::new(now());
-        let stream = assistant
+        let mut stream = assistant
             .stream_turn(instructions, messages, ToolRegistry::empty())
             .await?;
-        stream
-            .try_for_each(|event| ready(summary.handle(event)))
-            .await?;
+        while let Some(event) = stream.try_next().await? {
+            summary.handle(event)?;
+        }
         summary.finish()
     }
 }
