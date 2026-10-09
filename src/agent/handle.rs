@@ -113,10 +113,7 @@ impl Agent {
         generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        // one clone: history takes a copy, then the event moves into the
-        // emit -- payloads (resolved tool calls) can embed a full workdir diff
         self.history_mut().handle(generation, event.clone())?;
-        // TODO save on errors
         self.dirty |= !matches!(
             event,
             HistoryUpdate::GenerationIncremented
