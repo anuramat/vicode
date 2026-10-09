@@ -234,8 +234,6 @@ impl Agent {
                 self.compaction = Some(Ok(Compaction { n_drop, summary }));
                 return self.advance(now);
             }
-            // the failure stays until a manual compaction: autocompact
-            // retrying on its own could loop on a persistent error
             (Task::Compact { .. }, result) => {
                 let error = result
                     .err()
