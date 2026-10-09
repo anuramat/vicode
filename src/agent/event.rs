@@ -71,6 +71,5 @@ pub enum UserCommand {
 #[derive(Debug)]
 pub struct UserPrompt {
     pub text: String,
-    /// None = the receiving agent uses its current one
-    pub generation: Option<HistoryGeneration>,
+    pub generation: HistoryGeneration,
 }

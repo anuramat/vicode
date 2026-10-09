@@ -332,7 +332,7 @@ impl Agent {
             // a stale submit is rejected *before* the flush: pending
             // messages carry no generation and must never be dropped as stale
             anyhow::ensure!(
-                generation.is_none_or(|g| g == current),
+                generation == current,
                 "history generation mismatch: expected {current}",
             );
             self.increment_generation()?;
@@ -612,7 +612,7 @@ mod tests {
     ) -> AgentEvent {
         user(UserCommand::Submit(UserPrompt {
             text: text.into(),
-            generation: Some(generation),
+            generation,
         }))
     }
 

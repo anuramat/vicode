@@ -79,7 +79,7 @@ impl Tab<'_> {
         }
         let prompt = UserPrompt {
             text,
-            generation: Some(self.history().generation()),
+            generation: self.history().generation(),
         };
 
         let result = self.send(UserCommand::Submit(prompt));

@@ -182,14 +182,18 @@ fn todo_call(call_id: &str) -> AssistantEvent {
 fn submit() -> AgentEvent {
     AgentEvent::User(UserCommand::Submit(UserPrompt {
         text: "hi".into(),
-        generation: Some(0),
+        generation: 0,
     }))
 }
 
-fn submit_text(text: &str) -> AgentEvent {
+/// submit at the agent's current generation
+fn submit_text(
+    agent: &Agent,
+    text: &str,
+) -> AgentEvent {
     AgentEvent::User(UserCommand::Submit(UserPrompt {
         text: text.into(),
-        generation: None,
+        generation: agent.history().generation(),
     }))
 }
 
@@ -822,7 +826,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-2", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(now(), submit_text("collect")).await.unwrap();
+    let _ = agent.handle(now(), submit_text(&agent, "collect")).await.unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-3").is_some()).await;
     let list_out = slot_output(&agent, "call-3").unwrap();
     assert!(
@@ -847,7 +851,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-3", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(now(), submit_text("cleanup")).await.unwrap();
+    let _ = agent.handle(now(), submit_text(&agent, "cleanup")).await.unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-4").is_some()).await;
     similar_asserts::assert_eq!(slot_output(&agent, "call-4").unwrap(), "null");
     similar_asserts::assert_eq!(
@@ -889,7 +893,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent
-        .handle(now(), submit_text("the marker is PRE-SPAWN"))
+        .handle(now(), submit_text(&agent, "the marker is PRE-SPAWN"))
         .await
         .unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
@@ -946,7 +950,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent
-        .handle(now(), submit_text("PARENT-ONLY"))
+        .handle(now(), submit_text(&agent, "PARENT-ONLY"))
         .await
         .unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
