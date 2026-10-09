@@ -104,8 +104,9 @@ impl Agent {
         Ok(())
     }
 
+    /// a summary is coming, or ready to apply
     fn compacting(&self) -> bool {
-        self.tasks.compacting() || self.compaction.is_some()
+        self.tasks.compacting() || matches!(self.compaction, Some(Ok(_)))
     }
 
     fn handle_history_update(
@@ -230,18 +231,18 @@ impl Agent {
                 self.handle_history_update(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
             (Task::Compact { n_drop }, Ok(TaskOutput::Summary(summary))) => {
-                self.compaction = Some(Compaction { n_drop, summary });
+                self.compaction = Some(Ok(Compaction { n_drop, summary }));
                 return self.advance(now);
             }
-            // a failed summary stops a held turn: retrying on our own could
-            // loop on a persistent error; a turn in flight carries on
+            // the failure stays until a manual compaction: autocompact
+            // retrying on its own could loop on a persistent error
             (Task::Compact { .. }, result) => {
                 let error = result
                     .err()
                     .unwrap_or_else(|| "compaction returned no summary".into());
-                self.emit(UiEvent::Error(error));
-                self.needs_turn &= self.tasks.in_turn();
-                return Ok(());
+                self.emit(UiEvent::Error(error.clone()));
+                self.compaction = Some(Err(error));
+                return self.advance(now);
             }
         }
         if !self.tasks.in_turn() {
@@ -251,8 +252,8 @@ impl Agent {
     }
 
     /// the turn boundary, a no-op while a turn is in flight: apply the
-    /// ready summary, then start the due turn -- unless that would go past
-    /// the hard limit while a summary is still coming
+    /// ready summary, then start the due turn -- unless the history is past
+    /// the hard limit
     fn advance(
         &mut self,
         now: u64,
@@ -260,7 +261,7 @@ impl Agent {
         if self.tasks.in_turn() {
             return Ok(());
         }
-        if let Some(compaction) = self.compaction.take() {
+        if let Some(Ok(compaction)) = self.compaction.take_if(|c| c.is_ok()) {
             let g = self.history().generation();
             self.handle_history_update(g, HistoryUpdate::Compact(compaction))?;
         }
@@ -269,10 +270,18 @@ impl Agent {
         }
         self.flush_pending()?;
         self.autocompact(now)?;
-        self.needs_turn = self.compacting() && self.past(self.project.config().compact.hard_limit);
-        if self.needs_turn {
-            return Ok(());
+        if self.past(self.project.config().compact.hard_limit) {
+            // the turn stays due: held for the summary, or, with none
+            // coming, until a manual compaction
+            return match &self.compaction {
+                _ if self.compacting() => Ok(()),
+                Some(Err(e)) => Err(anyhow::anyhow!(
+                    "past the hard limit, compaction failed: {e}"
+                )),
+                _ => Err(anyhow::anyhow!("past the hard limit, nothing to compact")),
+            };
         }
+        self.needs_turn = false;
         self.start_turn(now)
     }
 
@@ -331,7 +340,8 @@ impl Agent {
         now: u64,
     ) -> Result<()> {
         let tasks = self.tasks.abort_all();
-        self.compaction = None;
+        // a failure stays: only a manual compaction turns autocompact back on
+        self.compaction.take_if(|c| c.is_ok());
         self.needs_turn = false;
         let g = self.increment_generation()?;
         if self
@@ -383,7 +393,8 @@ impl Agent {
             return Ok(());
         };
         let config = self.project.config().compact;
-        if self.compacting() || !self.past(config.threshold) {
+        // a failure in `compaction` turns autocompact off
+        if self.tasks.compacting() || self.compaction.is_some() || !self.past(config.threshold) {
             return Ok(());
         }
         match self
@@ -414,6 +425,8 @@ impl Agent {
             .assistant(&self.state.assistant_id)?;
         let instructions = self.history().instructions().to_string();
         let messages = self.history().compact_input(n_drop, now);
+        // clears a failure, turning autocompact back on
+        self.compaction = None;
         self.tasks.spawn(Task::Compact { n_drop }, |_| async move {
             Self::summarize(&assistant, instructions, messages)
                 .await
@@ -1669,23 +1682,94 @@ mod tests {
         );
     }
 
+    /// a failed summary blocks the held turn, through aborts and retries,
+    /// until a manual compaction brings the history back under the limit
     #[tokio::test]
-    async fn failed_summary_stops_held_turn() {
+    async fn failed_summary_blocks_held_turn_until_manual_compaction() {
         let mut h = near_full(50).await;
         let compact = h.step(1, submit("hi", 0)).await.1.summary();
 
-        assert_handled!(h, 2, AgentEvent::Done(compact, Err("rate limited".into())), @"
-        busy: false
-        ui:
-          - Error: rate limited
-        tasks: []
-        ");
+        assert_rejected!(h, 2, AgentEvent::Done(compact, Err("rate limited".into())), @r#"
+        - "past the hard limit, compaction failed: rate limited"
+        - busy: false
+          ui:
+            - Error: rate limited
+          tasks: []
+        "#);
+        h.step(3, user(UserCommand::Abort)).await.0.unwrap();
+        assert_rejected!(h, 4, user(UserCommand::Retry), @r#"
+        - "past the hard limit, compaction failed: rate limited"
+        - busy: false
+          ui:
+            - HistoryUpdate:
+                - 2
+                - GenerationIncremented
+          tasks: []
+        "#);
 
-        // retry asks for a fresh summary, and holds the turn again
-        let (result, step) = h.step(3, user(UserCommand::Retry)).await;
+        let compact = h.step(5, user(UserCommand::Compact(1))).await.1.summary();
+        assert!(h.compaction.is_none());
+        let (result, step) = h.step(6, AgentEvent::Done(compact, summary("gist"))).await;
         result.unwrap();
-        step.summary();
-        assert!(!step.starts_turn());
+        assert!(step.starts_turn());
+    }
+
+    /// a summary failing alongside a turn turns autocompact off: later
+    /// turns start without one, until a manual compaction
+    #[tokio::test]
+    async fn failed_autocompact_stays_off_until_manual_compaction() {
+        let mut h = near_full(100).await;
+        let step = h.step(1, submit("hi", 0)).await.1;
+        let turn = step.tasks.iter().find(|t| t.1 == "turn").unwrap().0;
+        h.step(
+            2,
+            AgentEvent::Done(step.summary(), Err("rate limited".into())),
+        )
+        .await
+        .0
+        .unwrap();
+        h.step(
+            3,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
+        )
+        .await
+        .0
+        .unwrap();
+        h.step(4, AgentEvent::Done(turn, Ok(TaskOutput::Turn)))
+            .await
+            .0
+            .unwrap();
+
+        let step = h.step(5, submit("again", 1)).await.1;
+        insta::assert_yaml_snapshot!(step.tasks, @"
+        - - 2
+          - turn
+        ");
+        h.step(6, user(UserCommand::Compact(1))).await.1.summary();
+        assert!(h.compaction.is_none());
+    }
+
+    #[tokio::test]
+    async fn past_hard_limit_with_nothing_to_compact_blocks() {
+        let mut h = near_full(50).await;
+        // already under the target: autocompact drops nothing
+        h.project.config_mut().compact.target = 100;
+        assert_rejected!(h, 1, submit("hi", 0), @r#"
+        - "past the hard limit, nothing to compact"
+        - busy: false
+          ui:
+            - HistoryUpdate:
+                - 0
+                - GenerationIncremented
+            - HistoryUpdate:
+                - 1
+                - UserMessage:
+                    text: hi
+                    token_count: 1
+                    created_at: 1
+          tasks: []
+        "#);
+        assert!(!h.busy());
     }
 
     /// a summary failing alongside a turn keeps the turn a mid-turn message
