@@ -120,7 +120,7 @@ mod tests {
             .await
             .unwrap();
         // the copy registered in-handler: nothing reported a failure before
-        // its Started, which carries the state before resume flushes the buffer
+        // its Started
         let copy_state = loop {
             match app_rx.recv().await.unwrap() {
                 crate::tui::app::AppEvent::Agent(

@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 
-use super::peer_message;
 use crate::agent::AgentId;
 use crate::agent::AgentState;
 use crate::agent::router::Router;
@@ -15,7 +14,7 @@ use crate::llm::history::History;
 
 impl Router {
     /// resolves once the child's {state, workdir at `commit`, graph record}
-    /// are durable and its runtime started
+    /// are durable, its runtime started, and `prompt` sent to it
     pub async fn spawn_agent(
         &self,
         parent: &AgentId,
@@ -29,7 +28,6 @@ impl Router {
             s.child_root(parent)?;
             s.allocate()
         };
-        let seed = peer_message(parent, prompt);
         let project = self.project.clone();
         let (parent_id, child) = (parent.clone(), aid.clone());
         let commit = commit.to_string();
@@ -53,13 +51,13 @@ impl Router {
                 assistant_id,
                 commit: snapshot,
                 history,
-                // the seed rides the saved state: the child's startup
-                // `resume` turns on it, and a crash before that can't lose it
-                pending_messages: vec![seed.into()],
+                pending_messages: Vec::new(),
             })
         };
         self.create(aid.clone(), Some(parent.clone()), setup)
             .await?;
+        // the seed is ordinary mail: startup never wakes an agent, delivery does
+        self.send_message(parent, &aid, prompt)?;
         Ok(aid)
     }
 }

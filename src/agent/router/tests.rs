@@ -402,6 +402,8 @@ async fn archive_tab_reaps_every_member() {
     assert!(records[&child].archived);
 }
 
+/// a restart never wakes an agent: mail buffered before it waits for the
+/// next delivery, and flushes with it into one turn
 #[tokio::test]
 async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let rig = Rig::new("prime").await;
@@ -415,17 +417,32 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let mut kept_state = rig.project.store().load_state(&kept).await.unwrap();
     kept_state
         .pending_messages
-        .push(crate::llm::history::message::PeerMessage::new("prime", "resume", 10).into());
+        .push(crate::llm::history::message::PeerMessage::new("prime", "buffered", 10).into());
     rig.project
         .store()
         .save_state(&kept, &kept_state)
         .await
         .unwrap();
-    rig.script("resumed", "resumed");
+    rig.script("woken", "woken");
 
     let router2 = reboot(&rig.project).await;
 
-    router2.completed_output(&kept, "resumed").await;
+    router2.send_message(&rig.primary, &kept, "poke").unwrap();
+    router2.completed_output(&kept, "woken").await;
+    let history = rig.project.store().load_state(&kept).await.unwrap().history;
+    let tail: Vec<String> = history.state().messages[history.state().messages.len() - 3..]
+        .iter()
+        .map(|m| match m {
+            Message::Developer(DeveloperMessage::Peer(p)) => p.text.clone(),
+            Message::Assistant(a) => a.text_output().to_string(),
+            m => panic!("unexpected {m:?}"),
+        })
+        .collect();
+    insta::assert_yaml_snapshot!(tail, @r#"
+    - "[from: prime]\nbuffered"
+    - "[from: prime]\npoke"
+    - woken
+    "#);
     assert_eq!(
         router2.send_message(&rig.primary, &archived, "hi"),
         Err(RouterError::Unreachable)

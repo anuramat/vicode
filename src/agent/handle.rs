@@ -50,17 +50,6 @@ impl Agent {
         result.and(self.save().await)
     }
 
-    /// startup wake: an idle agent flushes its saved buffer — a spawn
-    /// seed, or messages buffered before a restart — and starts their turn;
-    /// otherwise they sit unread until an unrelated event pokes the agent
-    pub async fn resume(
-        &mut self,
-        now: u64,
-    ) -> Result<()> {
-        self.needs_turn = !self.state.pending_messages.is_empty();
-        self.advance(now).and(self.save().await)
-    }
-
     async fn save(&mut self) -> Result<()> {
         if !std::mem::take(&mut self.dirty) {
             return Ok(());
@@ -1295,30 +1284,6 @@ mod tests {
             "peer message must precede the user message"
         );
         assert!(h.state.pending_messages.is_empty());
-    }
-
-    #[tokio::test]
-    async fn resume_flushes_buffered_messages_and_starts_turn() {
-        let mut h = Harness::with(&[]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("persisted")).await.0.unwrap();
-        h.step(3, user(UserCommand::Abort)).await.0.unwrap();
-
-        // simulated restart: rebuild the agent from the persisted state
-        let mut restored = h.restart().await;
-        assert_eq!(restored.state.pending_messages.len(), 1);
-
-        // resume (the startup wake) delivers the buffered message and starts
-        // its turn — no submit or other poke needed
-        restored.resume(5).await.unwrap();
-        let step = restored.drain();
-        assert!(restored.state.pending_messages.is_empty());
-        assert!(
-            serde_json::to_string(&step.ui)
-                .unwrap()
-                .contains("persisted")
-        );
-        assert!(step.starts_turn());
     }
 
     #[tokio::test]
