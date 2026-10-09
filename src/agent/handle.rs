@@ -243,9 +243,7 @@ impl Agent {
                 return self.advance(now);
             }
         }
-        if !self.tasks.in_turn() {
-            self.needs_turn |= self.history().state().ends_with_tool_calls();
-        }
+        self.needs_turn |= self.history().state().ends_with_tool_calls();
         self.advance(now)
     }
 
