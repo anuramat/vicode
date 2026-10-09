@@ -233,14 +233,14 @@ impl Agent {
                 self.compaction = Some(Compaction { n_drop, summary });
                 return self.advance(now);
             }
-            // the agent stops on a failed summary: retrying on our own could
-            // loop on a persistent error
+            // a failed summary stops a held turn: retrying on our own could
+            // loop on a persistent error; a turn in flight carries on
             (Task::Compact { .. }, result) => {
                 let error = result
                     .err()
                     .unwrap_or_else(|| "compaction returned no summary".into());
                 self.emit(UiEvent::Error(error));
-                self.needs_turn = false;
+                self.needs_turn &= self.tasks.in_turn();
                 return Ok(());
             }
         }
@@ -1686,5 +1686,49 @@ mod tests {
         result.unwrap();
         step.summary();
         assert!(!step.starts_turn());
+    }
+
+    /// a summary failing alongside a turn keeps the turn a mid-turn message
+    /// made due: the message flushes into it at turn end
+    #[tokio::test]
+    async fn failed_summary_mid_turn_keeps_due_turn() {
+        let mut h = Harness::with(&["first"]).await;
+        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let compact = h.step(2, user(UserCommand::Compact(1))).await.1.summary();
+        h.step(3, message("report")).await.0.unwrap();
+        assert_handled!(h, 4, AgentEvent::Done(compact, Err("rate limited".into())), @"
+        busy: true
+        ui:
+          - Error: rate limited
+        tasks: []
+        ");
+
+        h.step(
+            5,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 5 }),
+        )
+        .await
+        .0
+        .unwrap();
+        assert_handled!(h, 6, AgentEvent::Done(turn, Ok(TaskOutput::Turn)), @r#"
+        busy: true
+        ui:
+          - HistoryUpdate:
+              - 1
+              - DeveloperMessage:
+                  Peer:
+                    text: "[from: kid]\nreport"
+                    token_count: 5
+                    created_at: 5
+          - HistoryUpdate:
+              - 1
+              - TurnResponse:
+                  Created:
+                    created_at: 6
+        tasks:
+          - - 2
+            - turn
+        "#);
+        assert!(h.state.pending_messages.is_empty());
     }
 }
