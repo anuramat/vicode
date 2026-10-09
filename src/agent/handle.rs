@@ -181,8 +181,7 @@ impl Agent {
                 let call_id = call_id.clone();
                 self.emit(UiEvent::ToolOutput { call_id, chunk });
             }
-            Some(task) => unreachable!("output chunk from {task:?}"),
-            // stale: the tool was aborted
+            Some(task) => unreachable!("appending tool output chunk to a non-tool task: {task:?}"),
             None => {}
         }
     }
