@@ -31,7 +31,6 @@
 
 - question tool
 - abort individual tool calls (without aborting the turn)
-- when bash tool is aborted, it should send partial results to the assistant
 - let user execute bash commands in current tab with `!...`
   - append a developer message equivalent to bash tool output, with equivalent rendering
 - alternative argument schemas for user compact command
