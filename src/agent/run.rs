@@ -24,8 +24,6 @@ impl Agent {
             state: Box::new(self.state.clone()),
             control: self.tx.clone(),
         });
-        // no startup wake: a buffer saved across a restart waits for the
-        // next delivery, like one stranded by abort
         while let Some(event) = self.rx.recv().await {
             if let Err(e) = self.handle(now(), event).await {
                 tracing::error!("error in agent {}: {:?}", self.id, e);
