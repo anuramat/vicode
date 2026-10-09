@@ -199,10 +199,6 @@ impl Agent {
         result: TaskResult,
     ) -> Result<()> {
         let Some(task) = self.tasks.finish(tid) else {
-            // stale (aborted) failures still surface
-            if let Err(err) = result {
-                self.emit(UiEvent::Error(err));
-            }
             return Ok(());
         };
         let g = self.history().generation();
