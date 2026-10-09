@@ -284,7 +284,6 @@ impl Agent {
         self.advance(now)
     }
 
-    /// deliver buffered inbound messages at the current generation
     fn flush_pending(&mut self) -> Result<()> {
         for msg in std::mem::take(&mut self.state.pending_messages) {
             let generation = self.history().generation();
