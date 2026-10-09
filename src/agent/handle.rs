@@ -95,8 +95,6 @@ impl Agent {
         }
     }
 
-    /// a task is in flight; this covers held work too: a turn held for a
-    /// summary waits on the summary task, a parked summary on the turn
     pub fn busy(&self) -> bool {
         !self.tasks.idle()
     }
@@ -118,7 +116,7 @@ impl Agent {
         // one clone: history takes a copy, then the event moves into the
         // emit -- payloads (resolved tool calls) can embed a full workdir diff
         self.history_mut().handle(generation, event.clone())?;
-        // TODO save less often; save on errors
+        // TODO save on errors
         self.dirty |= !matches!(
             event,
             HistoryUpdate::GenerationIncremented
