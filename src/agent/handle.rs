@@ -273,14 +273,11 @@ impl Agent {
         self.start_turn(now)
     }
 
-    /// the single inbound delivery path: buffered, then flushed at the
-    /// turn boundary
     fn deliver(
         &mut self,
         now: u64,
         msg: PendingMessage,
     ) -> Result<()> {
-        // buffered and saved: survives restart
         self.state.pending_messages.push(msg);
         self.dirty = true;
         self.needs_turn = true;
