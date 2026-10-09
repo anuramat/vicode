@@ -243,9 +243,7 @@ impl Agent {
         self.advance(now)
     }
 
-    /// the turn boundary, a no-op while a turn is in flight: apply the
-    /// ready summary, then start the due turn -- unless the history is past
-    /// the hard limit
+    /// turn boundary, a no-op while a turn is in flight
     fn advance(
         &mut self,
         now: u64,
