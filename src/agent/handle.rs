@@ -146,8 +146,6 @@ impl Agent {
         &mut self,
         mut call: ToolCallItem,
     ) {
-        // the one capture hook: the agent is the only holder of the
-        // live history, so `spawn` snapshots it here, at dispatch
         let inherited_history = call
             .task
             .inherit_history()
