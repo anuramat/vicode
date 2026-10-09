@@ -261,8 +261,6 @@ impl Agent {
         self.flush_pending()?;
         self.autocompact(now)?;
         if self.past(self.project.config().compact.hard_limit) {
-            // the turn stays due: held for the summary, or, with none
-            // coming, until a manual compaction
             return match &self.compaction {
                 _ if self.compacting() => Ok(()),
                 Some(Err(e)) => Err(anyhow::anyhow!(
