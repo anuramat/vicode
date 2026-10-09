@@ -205,8 +205,6 @@ impl Agent {
         let g = self.history().generation();
         match (task, result) {
             (Task::Turn { .. }, Ok(_)) => {}
-            // an erroring or panicking turn terminates its response, so the
-            // next flush can't stack a turn on an orphaned InProgress one
             (Task::Turn { generation }, Err(message)) => {
                 tracing::error!("turn error in agent {}: {message}", self.id);
                 self.emit(UiEvent::Error(message.clone()));
@@ -216,8 +214,6 @@ impl Agent {
                 };
                 self.handle_history_update(generation, HistoryUpdate::TurnResponse(failed))?;
             }
-            // a streaming tool's authoritative text is the partial; its
-            // return carries only metadata
             (Task::Tool { partial, .. }, Ok(TaskOutput::Tool(mut item))) => {
                 item.task.compose(partial);
                 let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
