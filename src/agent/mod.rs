@@ -43,7 +43,7 @@ pub struct Agent {
 
     pub needs_turn: bool,
     pub tasks: Tasks,
-    pub compaction: Option<Compaction>,
+    pub compaction: Option<Result<Compaction, String>>,
 
     /// other agents
     pub router: Router,
