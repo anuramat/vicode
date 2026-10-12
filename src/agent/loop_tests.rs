@@ -671,6 +671,42 @@ async fn panicking_turn_finalizes_the_history_turn() {
     assert!(msg.text_output().contains("partial"));
 }
 
+/// a stream that ends without completing fails the turn, instead of leaving
+/// the response in flight with nothing left to end it
+#[tokio::test]
+async fn stream_ending_early_fails_the_turn() {
+    let (mut agent, fake, _parent_rx) = Agent::fake("loop-stream-early-end").await;
+    register(&agent);
+    fake.script_turn(vec![output("out-1", 1), delta("out-1", "partial", 2)]);
+
+    agent.handle(now(), submit()).await.unwrap();
+    pump_until(&mut agent, |a| a.tasks.idle()).await;
+
+    assert_messages_snapshot!(&agent.history().state().messages, @r#"
+    - role: user
+      text: hi
+      token_count: 1
+      created_at: "[ts]"
+    - role: assistant
+      status:
+        Error: stream ended without completing
+      content:
+        - - out-1
+          - Output:
+              id: out-1
+              content:
+                - Text: partial
+              token_count: 1
+              started_at: "[ts]"
+              ended_at: "[ts]"
+      token_count: 1
+      created_at: "[ts]"
+      started_at: "[ts]"
+      ended_at: "[ts]"
+      ready_at: "[ts]"
+    "#);
+}
+
 /// give the agent a real worktree at its snapshot, so spawn can resolve
 /// revisions in it
 async fn checkout(agent: &Agent) -> std::path::PathBuf {

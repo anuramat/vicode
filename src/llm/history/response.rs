@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::bail;
 
 use crate::llm::history::HistoryState;
 use crate::llm::history::event::AssistantEvent;
@@ -32,7 +31,7 @@ impl HistoryState {
                 self.complete_response(ended_at)?;
             }
             AssistantEvent::Failed { message, ended_at } => {
-                self.fail_response(message, ended_at)?;
+                self.fail_response(message, ended_at);
             }
         }
         Ok(())
@@ -80,23 +79,22 @@ impl HistoryState {
         Ok(())
     }
 
+    /// fail the last response if it's still in flight, a no-op otherwise:
+    /// a finished response keeps its outcome, a failed one its first error
     pub fn fail_response(
         &mut self,
         error_msg: String,
         ended_at: u64,
-    ) -> Result<()> {
-        let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(ended_at);
-        match msg.status {
-            AssistantStatus::Error(_) => return Ok(()), // keep the first error
-            AssistantStatus::Success => {
-                bail!("cannot fail a successful response");
-            }
-            AssistantStatus::Queued | AssistantStatus::InProgress => {
-                msg.status = AssistantStatus::Error(error_msg);
-            }
+    ) {
+        if let Some(msg) = self.last_mut().and_then(|v| v.try_as_assistant_mut())
+            && matches!(
+                msg.status,
+                AssistantStatus::Queued | AssistantStatus::InProgress
+            )
+        {
+            msg.touch_ended_at(ended_at);
+            msg.status = AssistantStatus::Error(error_msg);
         }
-        Ok(())
     }
 
     pub fn status(&self) -> Option<AssistantStatus> {
@@ -348,5 +346,50 @@ mod tests {
             AssistantStatus::Error(ref text) if text == "aborted by user"
         ));
         assert_eq!(msg.ended_at, Some(9));
+    }
+
+    /// only a response still in flight fails: anything else is a no-op
+    #[test]
+    fn response_failed_only_fails_inflight() {
+        let mut history = History::new(String::new());
+        history.handle(response(failed("no response"))).unwrap();
+        for event in [
+            AssistantEvent::Created { created_at: 1 },
+            AssistantEvent::Completed { ended_at: 2 },
+            AssistantEvent::Failed {
+                message: "after success".into(),
+                ended_at: 3,
+            },
+            AssistantEvent::Created { created_at: 4 },
+            AssistantEvent::Failed {
+                message: "first".into(),
+                ended_at: 5,
+            },
+            AssistantEvent::Failed {
+                message: "second".into(),
+                ended_at: 6,
+            },
+        ] {
+            history.handle(response(event)).unwrap();
+        }
+        insta::assert_yaml_snapshot!(history.state().messages, @"
+        - role: assistant
+          status: Success
+          content: []
+          token_count: 0
+          created_at: 1
+          started_at: ~
+          ended_at: 2
+          ready_at: ~
+        - role: assistant
+          status:
+            Error: first
+          content: []
+          token_count: 0
+          created_at: 4
+          started_at: ~
+          ended_at: 5
+          ready_at: ~
+        ");
     }
 }

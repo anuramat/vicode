@@ -81,11 +81,15 @@ impl History {
         self.instructions.token_count() + self.state().token_count() + TOOL_REGISTRY.token_count()
     }
 
-    pub fn fail_unresolved_tool_calls(
+    /// fail whatever was left in flight: the last response and every
+    /// unresolved tool call
+    pub fn fail_unresolved(
         &mut self,
         msg: &str,
+        ended_at: u64,
     ) {
-        self.state_mut().fail_tool_calls(None, msg);
+        self.state.fail_response(msg.into(), ended_at);
+        self.state.fail_tool_calls(None, msg);
     }
 
     #[instrument(skip(self))]

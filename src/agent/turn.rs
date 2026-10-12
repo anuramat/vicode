@@ -7,6 +7,7 @@ use super::Agent;
 use super::Assistant;
 use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::registry::ToolRegistry;
+use crate::llm::history::AssistantEvent;
 use crate::llm::history::Summary;
 use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::Message;
@@ -22,10 +23,14 @@ impl Agent {
         messages: Vec<Message>,
     ) -> Result<()> {
         let mut stream = assistant.stream_turn(instructions, messages, tools).await?;
+        let mut completed = false;
         while let Some(event) = stream.try_next().await? {
             trace!(event = ?event, "Stream chunk received");
+            completed = matches!(event, AssistantEvent::Completed { .. });
             sink.stream(event)?;
         }
+        // otherwise the response would be left in flight with no turn to end it
+        anyhow::ensure!(completed, "stream ended without completing");
         Ok(())
     }
 

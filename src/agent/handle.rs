@@ -276,35 +276,26 @@ impl Agent {
         Ok(())
     }
 
-    /// cancel everything in flight, then resolve it right here -- the failed
-    /// turn, and each tool call with what it streamed so far: everything
-    /// sent before the abort was handled before it; the cancelled futures'
-    /// late events are stale, and a summary is dropped with them
     fn abort(
         &mut self,
         now: u64,
     ) -> Result<()> {
         let tasks = self.tasks.abort_all();
-        // a failure stays: only a manual compaction turns autocompact back on
         self.compaction.take_if(|c| c.is_ok());
         self.needs_turn = false;
-        if self
-            .history()
-            .state()
-            .status()
-            .is_some_and(|s| s.failable())
-        {
-            let failed = AssistantEvent::Failed {
-                message: ABORTED_BY_USER.into(),
-                ended_at: now,
-            };
-            self.handle_history_update(HistoryUpdate::TurnResponse(failed))?;
-        }
         for task in tasks {
-            if let Task::Tool { call_id, partial } = task {
-                let error = with_partial(ABORTED_BY_USER.into(), &partial);
-                self.handle_history_update(HistoryUpdate::ToolCallFailed { call_id, error })?;
-            }
+            let update = match task {
+                Task::Turn => HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                    message: ABORTED_BY_USER.into(),
+                    ended_at: now,
+                }),
+                Task::Tool { call_id, partial } => HistoryUpdate::ToolCallFailed {
+                    call_id,
+                    error: with_partial(ABORTED_BY_USER.into(), &partial),
+                },
+                Task::Compact { .. } => continue,
+            };
+            self.handle_history_update(update)?;
         }
         Ok(())
     }
@@ -771,6 +762,114 @@ mod tests {
                 error: "aborted by user; partial output:\nearly"
         tasks: []
         "#);
+    }
+
+    /// a turn aborted after its stream completed keeps the success: the
+    /// failure is a no-op, for the app mirror too
+    #[tokio::test]
+    async fn abort_after_completed_stream_keeps_success() {
+        let mut h = Harness::with(&[]).await;
+        let turn = h.step(1, submit("hi")).await.1.task();
+        h.step(2, AgentEvent::Stream(turn, text_output("out", "done")))
+            .await
+            .0
+            .unwrap();
+        h.step(
+            3,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 3 }),
+        )
+        .await
+        .0
+        .unwrap();
+        assert_handled!(h, 4, user(UserCommand::Abort), @"
+        busy: false
+        ui:
+          - HistoryUpdate:
+              TurnResponse:
+                Failed:
+                  message: aborted by user
+                  ended_at: 4
+        tasks: []
+        ");
+        insta::assert_yaml_snapshot!(h.history().state().status(), @"Success");
+    }
+
+    /// a turn error after its stream completed is surfaced, and the
+    /// response keeps its success
+    #[tokio::test]
+    async fn turn_error_after_completed_stream_keeps_success() {
+        let mut h = Harness::with(&[]).await;
+        let turn = h.step(1, submit("hi")).await.1.task();
+        h.step(
+            2,
+            AgentEvent::Stream(turn, AssistantEvent::Completed { ended_at: 2 }),
+        )
+        .await
+        .0
+        .unwrap();
+        assert_handled!(h, 3, AgentEvent::Done(turn, Err("stream closed".into())), @"
+        busy: false
+        ui:
+          - Error: stream closed
+          - HistoryUpdate:
+              TurnResponse:
+                Failed:
+                  message: stream closed
+                  ended_at: 3
+        tasks: []
+        ");
+        insta::assert_yaml_snapshot!(h.history().state().status(), @"Success");
+    }
+
+    /// a restart fails whatever was in flight, so the restored agent takes
+    /// the next prompt as usual
+    #[tokio::test]
+    async fn restart_fails_inflight_response_and_tool_calls() {
+        let mut h = Harness::with(&[]).await;
+        let turn = h.step(1, submit("hi")).await.1.task();
+        h.step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .await
+            .0
+            .unwrap();
+
+        let mut restored = h.restart().await;
+        insta::assert_yaml_snapshot!(
+            restored.history().state().messages,
+            { "[1].ended_at" => "[now]" },
+            @r#"
+        - role: user
+          text: hi
+          token_count: 1
+          created_at: 1
+        - role: assistant
+          status:
+            Error: lost on restart
+          content:
+            - - call-1
+              - ToolCall:
+                  id: call-1
+                  call_id: call-1
+                  name: todo
+                  arguments:
+                    current: ""
+                    entries: []
+                  meta: ~
+                  output:
+                    Err: lost on restart
+                  token_count: 23
+                  started_at: 2
+                  ended_at: 3
+                  ready_at: ~
+          token_count: 23
+          created_at: 1
+          started_at: ~
+          ended_at: "[now]"
+          ready_at: ~
+        "#
+        );
+        let (result, step) = restored.step(5, submit("again")).await;
+        result.unwrap();
+        assert!(step.starts_turn());
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ use crate::llm::history::History;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::DeveloperMessage;
 use crate::project::Project;
+use crate::utils::now;
 
 pub const DUPLICATED_NOTE: &str = "this tab was duplicated from another agent; the original's subagents belong to the original and are unreachable from here";
 
@@ -20,8 +21,9 @@ impl Agent {
         id: AgentId,
         mut state: AgentState,
     ) -> Self {
-        // restore repair: a dangling function_call in history would 400 every later turn
-        state.history.fail_unresolved_tool_calls(LOST_ON_RESTART);
+        // restore repair: a dangling function_call in history would 400 every
+        // later turn, and a dangling response would never resolve
+        state.history.fail_unresolved(LOST_ON_RESTART, now());
         let (tx, rx) = unbounded_channel();
         Self {
             project: router.project.clone(),
