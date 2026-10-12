@@ -33,7 +33,7 @@ impl Agent {
         debug!(event = ?event, "handling agent event");
         let result = match event {
             AgentEvent::User(command) => self.handle_command(now, command).await,
-            AgentEvent::Message(msg) => self.deliver(now, msg.into()),
+            AgentEvent::Message(msg) => self.enqueue(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.tasks.get(tid) {
                 Some(Task::Turn) => self.handle_turn_event(event),
                 Some(task) => unreachable!("stream event from {task:?}"),
@@ -61,7 +61,7 @@ impl Agent {
             // queued while busy, so it doubles as steering; flushes after
             // any messages stranded by abort -- abort itself never flushes:
             // a naive flush would auto-start a turn on user abort
-            UserCommand::Submit(text) => self.deliver(now, UserMessage::new(text, now).into()),
+            UserCommand::Submit(text) => self.enqueue(now, UserMessage::new(text, now).into()),
             UserCommand::Compact(n) => self.compact(now, n),
             UserCommand::Retry => {
                 self.ensure_idle()?;
@@ -255,7 +255,7 @@ impl Agent {
         self.start_turn(now)
     }
 
-    fn deliver(
+    fn enqueue(
         &mut self,
         now: u64,
         msg: PendingMessage,
