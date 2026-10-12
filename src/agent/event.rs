@@ -12,22 +12,20 @@ use crate::llm::history::message::ToolCallItem;
 pub enum AgentEvent {
     /// from the agent's tab
     User(UserCommand),
-    /// inter-agent message, sent by the router into the agent's channel
+    /// inter-agent message
     Message(PeerMessage),
-    /// a turn's provider stream
+    /// provider stream
     Stream(TaskId, AssistantEvent),
-    /// a streaming tool's output chunk
+    /// tool output chunk
     Output(TaskId, String),
-    /// a task's terminal: return, error or panic
+    /// task completed
     Done(TaskId, TaskResult),
 }
 
-/// `Err` = task error or panic
 pub type TaskResult = Result<TaskOutput, String>;
 
 #[derive(Debug)]
 pub enum TaskOutput {
-    /// a turn's stream already landed in history
     Turn,
     Tool(Box<ToolCallItem>),
     Summary(CompactMessage),

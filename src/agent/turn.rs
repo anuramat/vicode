@@ -29,7 +29,6 @@ impl Agent {
             completed = matches!(event, AssistantEvent::Completed { .. });
             sink.stream(event)?;
         }
-        // otherwise the response would be left in flight with no turn to end it
         anyhow::ensure!(completed, "stream ended without completing");
         Ok(())
     }

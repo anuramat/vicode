@@ -21,8 +21,6 @@ impl Agent {
         id: AgentId,
         mut state: AgentState,
     ) -> Self {
-        // restore repair: a dangling function_call in history would 400 every
-        // later turn, and a dangling response would never resolve
         state.history.fail_unresolved(LOST_ON_RESTART, now());
         let (tx, rx) = unbounded_channel();
         Self {
