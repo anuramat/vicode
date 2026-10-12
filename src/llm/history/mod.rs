@@ -101,6 +101,12 @@ impl History {
             HistoryUpdate::ToolCallFailed { call_id, error } => {
                 self.state_mut().fail_tool_calls(Some(&call_id), &error);
             }
+            HistoryUpdate::ToolOutput { call_id, chunk } => {
+                self.state.push_tool_output(&call_id, &chunk)?;
+            }
+            HistoryUpdate::FailUnresolved { message, ended_at } => {
+                self.fail_unresolved(&message, ended_at);
+            }
             HistoryUpdate::DeveloperMessage(msg) => {
                 self.state.push(Message::Developer(msg));
             }

@@ -81,6 +81,7 @@ mod tests {
             started_at: 1,
             ended_at: None,
             ready_at: None,
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(BashCall {
                 arguments: Some(BashArguments {

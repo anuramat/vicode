@@ -1,7 +1,6 @@
 pub mod input;
 pub mod update;
 
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 use anyhow::Result;
@@ -21,28 +20,9 @@ use crate::tui::widgets::info::InfoWidget;
 use crate::tui::widgets::input::CompletionSource;
 use crate::tui::widgets::input::Input;
 use crate::tui::widgets::input::InputOpts;
-use crate::tui::widgets::message::MessageView;
 use crate::tui::widgets::tab::input::MessageInput;
 
 const FILE_COMPLETION_MAX_HEIGHT: u16 = 5;
-
-/// the scroll's render data: each message paired with the live tool-output
-/// buffers (only pending calls consult them)
-pub fn message_views<'s>(
-    state: &'s AgentState,
-    live_output: &'s HashMap<String, String>,
-) -> Vec<MessageView<'s>> {
-    state
-        .history
-        .state()
-        .messages
-        .iter()
-        .map(|msg| MessageView {
-            msg,
-            live: live_output,
-        })
-        .collect()
-}
 
 #[derive(Debug)]
 pub struct Tab<'a> {
@@ -57,9 +37,6 @@ pub struct Tab<'a> {
     pub scroll: ScrollElements,
     pub input: MessageInput<'a>,
     pub info: InfoWidget,
-    /// streamed-so-far output per in-flight tool call, rendered live into
-    /// the pending call's widget; the finalized item replaces it
-    pub live_output: HashMap<String, String>,
 }
 
 impl Tab<'_> {
@@ -89,7 +66,6 @@ impl Tab<'_> {
                 }),
             },
             info: InfoWidget::default(),
-            live_output: HashMap::new(),
         };
         tab.refresh_assistant_config();
         tab
@@ -113,8 +89,7 @@ impl Tab<'_> {
         &mut self,
         op: ScrollOp,
     ) {
-        let views = message_views(&self.state, &self.live_output);
-        self.scroll.scroll(&views, op);
+        self.scroll.scroll(&self.state.history.state().messages, op);
     }
 
     /// straight to the agent; a closed channel means its runtime is gone

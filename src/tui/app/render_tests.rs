@@ -13,8 +13,11 @@ use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::OutputItem;
+use crate::llm::history::message::ToolCallItem;
 use crate::llm::history::message::UserMessage;
 use crate::project::Project;
+use crate::tools::bash::BashArguments;
+use crate::tools::bash::BashCall;
 use crate::tui::app::App;
 use crate::tui::tab::Tab;
 
@@ -164,5 +167,55 @@ async fn renders_failed_turn_with_tablist_overlay() {
     "│                      │                                                                            "
     "└──────────────────────┘                                                                            "
     "demo/tab-1                                                                      1.2 / 32.0 kT | test"
+    "#);
+}
+
+#[tokio::test]
+async fn renders_streamed_output_of_inflight_tool_call() {
+    let call = ToolCallItem {
+        id: Some("call-1".into()),
+        call_id: "call-1".into(),
+        task: Box::new(BashCall {
+            arguments: Some(BashArguments {
+                command: "make".into(),
+            }),
+            meta: None,
+            output: None,
+        }),
+        streamed: String::new(),
+        token_count: 0,
+        started_at: 2,
+        ended_at: Some(3),
+        ready_at: None,
+    };
+    let mut app = app_with_tab(history([
+        HistoryUpdate::UserMessage(UserMessage::new("build it".into(), 0)),
+        HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 1 }),
+        HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
+            call,
+        )))),
+        HistoryUpdate::ToolOutput {
+            call_id: "call-1".into(),
+            chunk: "compiling\n".into(),
+        },
+        HistoryUpdate::ToolOutput {
+            call_id: "call-1".into(),
+            chunk: "linking".into(),
+        },
+    ]));
+    app.focus = super::AppFocus::Body;
+    app.ctx.hide_tools = false;
+
+    insta::assert_snapshot!(render(&mut app, 60, 10), @r#"
+    "                                                            "
+    "                                                            "
+    "                                                            "
+    "                                                            "
+    "build it                                                    "
+    "┌ make ────────────────────────────────────────────────────┐"
+    "└──────────────────────────────────────────────────────────┘"
+    "compiling                                                   "
+    "linking                                                     "
+    "demo/tab-1                              1.2 / 32.0 kT | test"
     "#);
 }

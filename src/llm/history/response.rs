@@ -41,19 +41,25 @@ impl HistoryState {
         &mut self,
         mut new_item: AssistantItem,
     ) -> Result<()> {
-        // HACK ideally we would somehow make sure that we initialize token count properly
-        new_item.recount();
         let msg = self.last_assistant_msg_mut()?;
 
         // if item already exists -- preserve started_at, keep the latest ended_at
-        if let Some(existing_item) = msg.content.get(&new_item.id()) {
+        if let Some(existing_item) = msg.content.get_mut(&new_item.id()) {
             if let Some(started_at) = existing_item.started_at() {
                 new_item.set_started_at(started_at);
             }
             if let Some(ended_at) = existing_item.ended_at() {
                 new_item.touch_ended_at(ended_at);
             }
+            // a resolved tool call folds in what it streamed
+            if let (AssistantItem::ToolCall(existing), AssistantItem::ToolCall(new)) =
+                (existing_item, &mut new_item)
+            {
+                new.task.compose(std::mem::take(&mut existing.streamed));
+            }
         }
+        // HACK ideally we would somehow make sure that we initialize token count properly
+        new_item.recount();
 
         // touch the message
         if let Some(ended_at) = new_item.ended_at() {

@@ -6,6 +6,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::llm::history::message::ToolCallItem;
 use crate::tui::colors::TOOLCALL_COLOR;
+use crate::tui::widgets::container::composite::CompositeElement;
 use crate::tui::widgets::container::element::Element;
 use crate::tui::widgets::container::element::HeightComputable;
 use crate::tui::widgets::container::element::RenderContext;
@@ -24,7 +25,11 @@ where T: HeightComputable + Clone
 
 impl From<&ToolCallItem> for Element {
     fn from(call: &ToolCallItem) -> Self {
-        call.task.to_element()
+        let widget = call.task.to_element();
+        if call.streamed.is_empty() {
+            return widget;
+        }
+        CompositeElement(vec![widget, LiveToolOutput(call.streamed.clone()).into()]).into()
     }
 }
 

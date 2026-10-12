@@ -26,10 +26,21 @@ pub enum HistoryUpdate {
     DeveloperMessage(DeveloperMessage),
     Pop(usize),
     // TODO expand etc
-    /// abort etc
+    /// a tool task failed
     ToolCallFailed {
         call_id: String,
         error: String,
+    },
+    /// a chunk of an in-flight tool call's output
+    ToolOutput {
+        call_id: String,
+        chunk: String,
+    },
+    /// everything in flight is gone: fail the response and every unresolved
+    /// tool call
+    FailUnresolved {
+        message: String,
+        ended_at: u64,
     },
 }
 

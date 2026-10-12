@@ -128,6 +128,7 @@ fn tool_call(
         id: Some(call_id.into()),
         call_id: call_id.into(),
         task,
+        streamed: String::new(),
         token_count: 0,
         started_at: 2,
         ended_at: Some(3),
@@ -159,7 +160,11 @@ fn drain_chunks(
 ) -> Vec<String> {
     let mut chunks = Vec::new();
     while let Ok(event) = app_rx.try_recv() {
-        if let AppEvent::Agent(_, UiEvent::ToolOutput { call_id: id, chunk }) = event {
+        if let AppEvent::Agent(
+            _,
+            UiEvent::HistoryUpdate(HistoryUpdate::ToolOutput { call_id: id, chunk }),
+        ) = event
+        {
             assert_eq!(id, call_id);
             chunks.push(chunk);
         }
@@ -453,7 +458,11 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
                     let _ = agent.handle(now(), event).await.unwrap();
                 }
                 Some(app_event) = app_rx.recv() => {
-                    if let AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) = app_event {
+                    if let AppEvent::Agent(
+                        _,
+                        UiEvent::HistoryUpdate(HistoryUpdate::ToolOutput { chunk, .. }),
+                    ) = app_event
+                    {
                         chunks.push(chunk);
                     }
                 }
@@ -568,9 +577,11 @@ fn apply_emitted_updates(
     while let Ok(event) = app_rx.try_recv() {
         match event {
             AppEvent::Agent(_, UiEvent::HistoryUpdate(u)) => {
+                if let HistoryUpdate::ToolOutput { chunk, .. } = &u {
+                    chunks.push(chunk.clone());
+                }
                 mirror.handle(u).expect("mirror rejected an emitted update")
             }
-            AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) => chunks.push(chunk),
             _ => {}
         }
     }

@@ -65,9 +65,6 @@ impl App<'_> {
                 tab.refresh_assistant_config();
                 self.rebuild_tablist();
             }
-            ToolOutput { call_id, chunk } => {
-                tab.stream_tool_output(call_id, &chunk);
-            }
             // the failed copy's preview tab must not linger
             DuplicateFailed { copy, error } => {
                 self.tabs.shift_remove(&copy);
@@ -167,32 +164,6 @@ mod tests {
 
         assert!(!app.tabs.contains_key(&copy));
         assert_eq!(app.tabs.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn tool_output_streams_into_tab_live_buffer() {
-        let project = crate::project::Project::new_test().unwrap().0;
-        let mut app = App::new(project.clone());
-        let aid = AgentId::from("streamer".to_string());
-        app.tabs.insert(
-            aid.clone(),
-            Tab::new(None, aid.clone(), AgentState::fake(), &project),
-        );
-
-        for chunk in ["one", " two"] {
-            app.handle_agent_event(
-                aid.clone(),
-                UiEvent::ToolOutput {
-                    call_id: "c1".into(),
-                    chunk: chunk.into(),
-                },
-            )
-            .await
-            .unwrap();
-        }
-
-        let tab = app.tab_mut_by_aid(&aid).unwrap();
-        assert_eq!(tab.live_output["c1"], "one two");
     }
 
     #[tokio::test]

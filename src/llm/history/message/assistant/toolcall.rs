@@ -16,6 +16,10 @@ pub struct ToolCallItem {
     pub call_id: String,
     #[serde(flatten)]
     pub task: Box<dyn ToolCallSerializable>,
+    /// output streamed so far while in flight; resolving the call folds it
+    /// in
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub streamed: String,
 
     pub token_count: usize,
 

@@ -26,9 +26,6 @@ pub enum Task {
     Turn,
     Tool {
         call_id: String,
-        /// streamed output so far: the authoritative text of a streaming
-        /// tool, and what an abort or a panic keeps
-        partial: String,
     },
     /// a summary of the first `n_drop` messages, generated alongside the
     /// turns
@@ -162,13 +159,13 @@ impl Tasks {
 
     /// forget every task and cancel its future: whatever a cancelled task
     /// still sends is stale
-    pub fn abort_all(&mut self) -> Vec<Task> {
+    pub fn abort_all(&mut self) {
         match &mut self.executor {
             Executor::Live(set) => set.abort_all(),
             #[cfg(test)]
             Executor::Held(_) => {}
         }
-        std::mem::take(&mut self.by_id).into_values().collect()
+        self.by_id.clear();
     }
 }
 
@@ -254,7 +251,7 @@ mod tests {
     fn abort_all_keeps_next_so_ids_are_never_reused() {
         let mut tasks = Tasks::held();
         let a = tasks.register(Task::Turn);
-        assert_eq!(tasks.abort_all().len(), 1);
+        tasks.abort_all();
         assert!(tasks.idle());
         assert!(tasks.get(a).is_none());
 
@@ -280,7 +277,6 @@ mod tests {
 
         let tool = Task::Tool {
             call_id: "call".into(),
-            partial: String::new(),
         };
         let boom = tasks.spawn(tool, |_| async { panic!("boom") });
         assert!(matches!(

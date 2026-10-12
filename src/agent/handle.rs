@@ -39,10 +39,7 @@ impl Agent {
                 Some(task) => unreachable!("stream event from {task:?}"),
                 None => Ok(()),
             },
-            AgentEvent::Output(tid, chunk) => {
-                self.handle_tool_output(tid, chunk);
-                Ok(())
-            }
+            AgentEvent::Output(tid, chunk) => self.handle_tool_output(tid, chunk),
             AgentEvent::Done(tid, result) => self.handle_task_done(now, tid, result),
         };
         result.and(self.save().await)
@@ -113,7 +110,11 @@ impl Agent {
         event: HistoryUpdate,
     ) -> Result<()> {
         self.history_mut().handle(event.clone())?;
-        self.dirty |= !matches!(event, HistoryUpdate::TurnResponse(AssistantEvent::Delta(_)));
+        self.dirty |= !matches!(
+            event,
+            HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
+                | HistoryUpdate::ToolOutput { .. }
+        );
         self.emit(UiEvent::HistoryUpdate(event));
         Ok(())
     }
@@ -146,7 +147,6 @@ impl Agent {
             .then(|| self.history().subagent());
         let task = Task::Tool {
             call_id: call.call_id.clone(),
-            partial: String::new(),
         };
         self.tasks.spawn(task, |sink| {
             let ctx = ToolRuntimeContext::new(
@@ -168,15 +168,14 @@ impl Agent {
         &mut self,
         tid: TaskId,
         chunk: String,
-    ) {
-        match self.tasks.get_mut(tid) {
-            Some(Task::Tool { call_id, partial }) => {
-                partial.push_str(&chunk);
+    ) -> Result<()> {
+        match self.tasks.get(tid) {
+            Some(Task::Tool { call_id }) => {
                 let call_id = call_id.clone();
-                self.emit(UiEvent::ToolOutput { call_id, chunk });
+                self.handle_history_update(HistoryUpdate::ToolOutput { call_id, chunk })
             }
             Some(task) => unreachable!("appending tool output chunk to a non-tool task: {task:?}"),
-            None => {}
+            None => Ok(()),
         }
     }
 
@@ -200,16 +199,14 @@ impl Agent {
                 };
                 self.handle_history_update(HistoryUpdate::TurnResponse(failed))?;
             }
-            (Task::Tool { partial, .. }, Ok(TaskOutput::Tool(mut item))) => {
-                item.task.compose(partial);
+            (Task::Tool { .. }, Ok(TaskOutput::Tool(item))) => {
                 let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
                 self.handle_history_update(HistoryUpdate::TurnResponse(item))?;
             }
-            (Task::Tool { call_id, partial }, result) => {
-                let marker = result
+            (Task::Tool { call_id }, result) => {
+                let error = result
                     .err()
                     .unwrap_or_else(|| "tool returned no item".into());
-                let error = with_partial(marker, &partial);
                 self.handle_history_update(HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
             (Task::Compact { n_drop }, Ok(TaskOutput::Summary(summary))) => {
@@ -280,24 +277,17 @@ impl Agent {
         &mut self,
         now: u64,
     ) -> Result<()> {
-        let tasks = self.tasks.abort_all();
+        let in_turn = self.tasks.in_turn();
+        self.tasks.abort_all();
         self.compaction.take_if(|c| c.is_ok());
         self.needs_turn = false;
-        for task in tasks {
-            let update = match task {
-                Task::Turn => HistoryUpdate::TurnResponse(AssistantEvent::Failed {
-                    message: ABORTED_BY_USER.into(),
-                    ended_at: now,
-                }),
-                Task::Tool { call_id, partial } => HistoryUpdate::ToolCallFailed {
-                    call_id,
-                    error: with_partial(ABORTED_BY_USER.into(), &partial),
-                },
-                Task::Compact { .. } => continue,
-            };
-            self.handle_history_update(update)?;
+        if !in_turn {
+            return Ok(());
         }
-        Ok(())
+        self.handle_history_update(HistoryUpdate::FailUnresolved {
+            message: ABORTED_BY_USER.into(),
+            ended_at: now,
+        })
     }
 
     fn window(&self) -> Option<usize> {
@@ -399,18 +389,6 @@ impl Agent {
             .map_err(|e| e.to_string())
         });
         Ok(())
-    }
-}
-
-/// a failed tool's error: the marker plus whatever it streamed first
-fn with_partial(
-    marker: String,
-    partial: &str,
-) -> String {
-    if partial.is_empty() {
-        marker
-    } else {
-        format!("{marker}; partial output:\n{partial}")
     }
 }
 
@@ -549,6 +527,7 @@ mod tests {
                 meta: None,
                 output,
             }),
+            streamed: String::new(),
             token_count: 0,
             started_at: 2,
             ended_at: Some(3),
@@ -571,6 +550,20 @@ mod tests {
             started_at: 1,
             ended_at: None,
         })))
+    }
+
+    /// the first tool call's output
+    fn call_output(agent: &Agent) -> Option<String> {
+        agent
+            .history()
+            .state()
+            .iter()
+            .filter_map(|m| m.try_as_assistant_ref())
+            .flat_map(|m| m.content.values())
+            .find_map(|item| match item {
+                AssistantItem::ToolCall(call) => call.task.output(),
+                _ => None,
+            })
     }
 
     fn user_message(text: &str) -> HistoryUpdate {
@@ -709,10 +702,9 @@ mod tests {
         busy: false
         ui:
           - HistoryUpdate:
-              TurnResponse:
-                Failed:
-                  message: aborted by user
-                  ended_at: 9
+              FailUnresolved:
+                message: aborted by user
+                ended_at: 9
         tasks: []
         ");
         assert!(matches!(
@@ -745,23 +737,20 @@ mod tests {
         while let Ok(event) = h.rx.try_recv() {
             h.agent.handle(3, event).await.unwrap();
         }
-        insta::assert_yaml_snapshot!(h.drain(), @r#"
+        insta::assert_yaml_snapshot!(h.drain(), @"
         busy: false
         ui:
-          - ToolOutput:
-              call_id: call-1
-              chunk: early
           - HistoryUpdate:
-              TurnResponse:
-                Failed:
-                  message: aborted by user
-                  ended_at: 3
-          - HistoryUpdate:
-              ToolCallFailed:
+              ToolOutput:
                 call_id: call-1
-                error: "aborted by user; partial output:\nearly"
+                chunk: early
+          - HistoryUpdate:
+              FailUnresolved:
+                message: aborted by user
+                ended_at: 3
         tasks: []
-        "#);
+        ");
+        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"aborted by user; partial output:\nearly"}"#);
     }
 
     /// a turn aborted after its stream completed keeps the success: the
@@ -785,10 +774,9 @@ mod tests {
         busy: false
         ui:
           - HistoryUpdate:
-              TurnResponse:
-                Failed:
-                  message: aborted by user
-                  ended_at: 4
+              FailUnresolved:
+                message: aborted by user
+                ended_at: 4
         tasks: []
         ");
         insta::assert_yaml_snapshot!(h.history().state().status(), @"Success");
@@ -821,16 +809,23 @@ mod tests {
         insta::assert_yaml_snapshot!(h.history().state().status(), @"Success");
     }
 
-    /// a restart fails whatever was in flight, so the restored agent takes
-    /// the next prompt as usual
+    /// a restart fails whatever was in flight, keeping the output saved so
+    /// far, so the restored agent takes the next prompt as usual
     #[tokio::test]
     async fn restart_fails_inflight_response_and_tool_calls() {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi")).await.1.task();
-        h.step(2, AgentEvent::Stream(turn, todo_call(None)))
+        let tool = h
+            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .await
+            .1
+            .task();
+        h.step(3, AgentEvent::Output(tool, "early".into()))
             .await
             .0
             .unwrap();
+        // output alone isn't saved: the next save takes it along
+        h.step(4, message("ping")).await.0.unwrap();
 
         let mut restored = h.restart().await;
         insta::assert_yaml_snapshot!(
@@ -855,12 +850,12 @@ mod tests {
                     entries: []
                   meta: ~
                   output:
-                    Err: lost on restart
-                  token_count: 23
+                    Err: "lost on restart; partial output:\nearly"
+                  token_count: 29
                   started_at: 2
                   ended_at: 3
                   ready_at: ~
-          token_count: 23
+          token_count: 29
           created_at: 1
           started_at: ~
           ended_at: "[now]"
@@ -1110,7 +1105,7 @@ mod tests {
           - HistoryUpdate:
               ToolCallFailed:
                 call_id: call-1
-                error: "tool panicked: boom; partial output:\nabc"
+                error: "tool panicked: boom"
           - HistoryUpdate:
               TurnResponse:
                 Created:
@@ -1122,18 +1117,7 @@ mod tests {
         );
         // the slot itself holds the error (the follow-up Created appended a
         // fresh assistant message after it)
-        assert!(
-            h.history()
-                .state()
-                .iter()
-                .filter_map(|m| m.try_as_assistant_ref())
-                .flat_map(|m| m.content.values())
-                .any(|item| matches!(
-                    item,
-                    AssistantItem::ToolCall(call)
-                        if call.task.output().is_some_and(|o| o.contains("boom"))
-                ))
-        );
+        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"tool panicked: boom; partial output:\nabc"}"#);
     }
 
     #[tokio::test]

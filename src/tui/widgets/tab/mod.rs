@@ -33,8 +33,12 @@ impl Tab<'_> {
             unreachable!()
         };
 
-        let views = crate::tui::tab::message_views(&self.state, &self.live_output);
-        self.scroll.render(&views, messages_area, buf, ctx);
+        self.scroll.render(
+            &self.state.history.state().messages,
+            messages_area,
+            buf,
+            ctx,
+        );
         self.input.render(input_area, buf);
     }
 }

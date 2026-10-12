@@ -44,10 +44,6 @@ pub enum UiEvent {
     HistoryUpdate(HistoryUpdate),
     AssistantSet(String),
     Error(String),
-    ToolOutput {
-        call_id: String,
-        chunk: String,
-    },
     DuplicateFailed {
         copy: AgentId,
         error: String,

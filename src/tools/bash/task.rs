@@ -33,7 +33,7 @@ impl Function<(), BashResult> for BashArguments {
 }
 
 /// incremental exec: chunks stream through the sink as they arrive (stdout
-/// and stderr interleaved); the partial the agent accumulates is the
+/// and stderr interleaved); the output the call streams into history is the
 /// authoritative text, the return carries only the exit status
 pub async fn exec_streaming(
     runner: &SandboxRunner,
