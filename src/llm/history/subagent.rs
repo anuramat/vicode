@@ -42,7 +42,6 @@ impl History {
     pub fn subagent(&self) -> Self {
         Self {
             instructions: self.instructions.clone(),
-            generation: 0,
             state: self.subagent_messages().into(),
             archive: Vec::new(),
         }
@@ -94,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_history_resets_generation_and_drops_last_tool_calls() {
+    fn subagent_history_drops_last_tool_calls() {
         let mut history = History::new("be precise".into());
         history.state = vec![
             Message::User(UserMessage {
@@ -122,12 +121,10 @@ mod tests {
             }),
         ]
         .into();
-        history.generation = 2;
         history.state.recount();
 
         let child = history.subagent();
 
-        assert_eq!(child.generation(), 0);
         insta::assert_yaml_snapshot!(
             child,
             { ".**.Misc.created_at" => "[created_at]" },

@@ -5,8 +5,6 @@ use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::UserMessage;
 use crate::llm::history::timing::now;
 
-pub type HistoryGeneration = u64;
-
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum AssistantEvent {
@@ -23,7 +21,6 @@ pub enum AssistantEvent {
 pub enum HistoryUpdate {
     /// replace the oldest messages with their summary
     Compact(Compaction),
-    GenerationIncremented,
     TurnResponse(AssistantEvent),
     UserMessage(UserMessage),
     DeveloperMessage(DeveloperMessage),

@@ -17,7 +17,6 @@ use archive::ArchivedHistoryReason;
 pub use compact::Compaction;
 pub use compact::Summary;
 pub use event::AssistantEvent;
-pub use event::HistoryGeneration;
 pub use event::HistoryUpdate;
 use instructions::Instructions;
 pub use message::*;
@@ -34,8 +33,6 @@ use crate::agent::tool::registry::TOOL_REGISTRY;
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct History {
     instructions: Instructions,
-    #[serde(skip)]
-    generation: HistoryGeneration,
     state: HistoryState,
     #[serde(default)]
     archive: Vec<ArchivedHistory>,
@@ -45,7 +42,6 @@ impl History {
     pub fn new(instructions: String) -> Self {
         Self {
             instructions: Instructions::new(instructions),
-            generation: 0,
             state: HistoryState::default(),
             archive: Vec::new(),
         }
@@ -92,30 +88,15 @@ impl History {
         self.state_mut().fail_tool_calls(None, msg);
     }
 
-    fn increment(&mut self) {
-        self.generation += 1;
-    }
-
-    pub fn generation(&self) -> HistoryGeneration {
-        self.generation
-    }
-
     #[instrument(skip(self))]
     pub fn handle(
         &mut self,
-        generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        anyhow::ensure!(
-            generation == self.generation,
-            "history generation mismatch: expected {}",
-            self.generation,
-        );
         match event {
             HistoryUpdate::ToolCallFailed { call_id, error } => {
                 self.state_mut().fail_tool_calls(Some(&call_id), &error);
             }
-            HistoryUpdate::GenerationIncremented => self.increment(),
             HistoryUpdate::DeveloperMessage(msg) => {
                 self.state.push(Message::Developer(msg));
             }
@@ -170,9 +151,6 @@ mod tests {
 
     use super::*;
     use crate::llm::history::delta::Delta;
-    use crate::llm::history::message::AssistantItem;
-    use crate::llm::history::message::DeveloperMessage;
-    use crate::llm::history::message::OutputItem;
 
     fn response(event: AssistantEvent) -> HistoryUpdate {
         HistoryUpdate::TurnResponse(event)
@@ -190,59 +168,11 @@ mod tests {
     }
 
     #[test]
-    fn generation_changes_only_when_message_count_changes() {
-        let mut history = History::new(String::new());
-        history
-            .handle(0, response(AssistantEvent::Created { created_at: 1 }))
-            .unwrap();
-        assert_eq!(history.generation(), 0);
-        history
-            .handle(
-                0,
-                response(AssistantEvent::Item(Box::new(AssistantItem::Output(
-                    OutputItem {
-                        id: "out".into(),
-                        started_at: 2,
-                        ended_at: None,
-                        token_count: 0,
-                        content: vec![],
-                    },
-                )))),
-            )
-            .unwrap();
-        assert_eq!(history.generation(), 0);
-        history
-            .handle(
-                0,
-                response(AssistantEvent::Delta(Delta {
-                    id: "out".into(),
-                    delta: crate::llm::history::delta::DeltaContent::Output("hello".into()),
-                    timestamp: 3,
-                })),
-            )
-            .unwrap();
-        assert_eq!(history.generation(), 0);
-        history.handle(0, user("hi")).unwrap();
-        assert_eq!(history.generation(), 0);
-        history.increment();
-        assert_eq!(history.generation(), 1);
-    }
-
-    #[test]
-    fn stale_generation_is_rejected() {
-        let mut history = History::new(String::new());
-        history.handle(0, user("hello")).unwrap();
-        history.increment();
-        assert!(history.handle(0, HistoryUpdate::Pop(1)).is_err());
-        assert_eq!(history.state().messages.len(), 1);
-    }
-
-    #[test]
     fn pop_snapshots_pre_pop_state_for_undo() {
         let mut history = History::new(String::new());
-        history.handle(0, user("first")).unwrap();
-        history.handle(0, user("second")).unwrap();
-        history.handle(0, HistoryUpdate::Pop(1)).unwrap();
+        history.handle(user("first")).unwrap();
+        history.handle(user("second")).unwrap();
+        history.handle(HistoryUpdate::Pop(1)).unwrap();
 
         assert_eq!(history.state().messages.len(), 1);
         assert_eq!(history.archive.len(), 1);
@@ -260,49 +190,9 @@ mod tests {
     #[test]
     fn pop_zero_does_not_archive() {
         let mut history = History::new(String::new());
-        history.handle(0, user("only")).unwrap();
-        history.handle(0, HistoryUpdate::Pop(0)).unwrap();
+        history.handle(user("only")).unwrap();
+        history.handle(HistoryUpdate::Pop(0)).unwrap();
         assert!(history.archive.is_empty());
-    }
-
-    #[test]
-    fn generation_increment_event_updates_generation() {
-        let mut history = History::new(String::new());
-        history
-            .handle(0, HistoryUpdate::GenerationIncremented)
-            .unwrap();
-        assert_eq!(history.generation(), 1);
-        assert_eq!(history.state().messages.len(), 0);
-    }
-
-    #[test]
-    fn response_can_follow_generation_increment() {
-        let mut history = History::new(String::new());
-        history.handle(0, user("hello")).unwrap();
-        history
-            .handle(0, HistoryUpdate::GenerationIncremented)
-            .unwrap();
-        history
-            .handle(1, response(AssistantEvent::Created { created_at: 7 }))
-            .unwrap();
-        assert_eq!(history.generation(), 1);
-        assert_eq!(history.state().messages.len(), 2);
-    }
-
-    #[test]
-    fn generation_changes_for_external_history_edits() {
-        let mut history = History::new(String::new());
-        history
-            .handle(
-                0,
-                HistoryUpdate::DeveloperMessage(DeveloperMessage::misc("note".into())),
-            )
-            .unwrap();
-        assert_eq!(history.generation(), 0);
-        history.increment();
-        assert_eq!(history.generation(), 1);
-        history.handle(1, HistoryUpdate::Pop(1)).unwrap();
-        assert_eq!(history.generation(), 1);
     }
 
     #[test]
@@ -316,7 +206,6 @@ mod tests {
     fn replayed_history_updates_are_serialized_identically() {
         let events = vec![
             user_at("hi", 1),
-            HistoryUpdate::GenerationIncremented,
             response(AssistantEvent::Created { created_at: 2 }),
             response(AssistantEvent::Started { started_at: 3 }),
             response(AssistantEvent::Delta(Delta {
@@ -329,12 +218,10 @@ mod tests {
         let mut left = History::new("instructions".into());
         let mut right = History::new("instructions".into());
         for event in events {
-            let generation = left.generation();
-            left.handle(generation, event.clone()).unwrap();
-            right.handle(generation, event).unwrap();
+            left.handle(event.clone()).unwrap();
+            right.handle(event).unwrap();
         }
 
-        assert_eq!(left.generation(), right.generation());
         assert_eq!(
             serde_json::to_value(&left).unwrap(),
             serde_json::to_value(&right).unwrap()

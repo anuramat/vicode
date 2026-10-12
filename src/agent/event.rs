@@ -3,7 +3,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::agent::id::AgentId;
 use crate::agent::task::TaskId;
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::PeerMessage;
@@ -42,7 +41,7 @@ pub enum UiEvent {
         #[cfg_attr(test, serde(skip))]
         control: UnboundedSender<AgentEvent>,
     },
-    HistoryUpdate(HistoryGeneration, HistoryUpdate),
+    HistoryUpdate(HistoryUpdate),
     AssistantSet(String),
     Error(String),
     ToolOutput {
@@ -61,15 +60,9 @@ pub enum UserCommand {
     Compact(usize),
     Retry,
     Abort,
-    Undo(usize), // TODO maybe this should send generation or whatever
+    Undo(usize), // TODO guard against popping messages the user hasn't seen yet
     SetAssistant(String),
-    Submit(UserPrompt),
+    Submit(String),
     /// clone into a new root under the given (allocated) id
     Duplicate(AgentId),
-}
-
-#[derive(Debug)]
-pub struct UserPrompt {
-    pub text: String,
-    pub generation: HistoryGeneration,
 }

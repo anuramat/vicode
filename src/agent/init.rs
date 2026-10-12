@@ -45,11 +45,11 @@ impl Agent {
     ) -> Result<()> {
         self.ensure_idle()?;
         let mut state = self.state.clone();
-        let generation = state.history.generation();
-        state.history.handle(
-            generation,
-            HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(DUPLICATED_NOTE.into())),
-        )?;
+        state
+            .history
+            .handle(HistoryUpdate::DeveloperMessage(DeveloperMessage::misc(
+                DUPLICATED_NOTE.into(),
+            )))?;
         let project = self.project.clone();
         let (original, copy) = (self.id.clone(), aid.clone());
         let setup = async move {

@@ -52,7 +52,7 @@ fn app_with_tab(history: History) -> App<'static> {
 fn history(updates: impl IntoIterator<Item = HistoryUpdate>) -> History {
     let mut history = History::new("".into());
     for update in updates {
-        history.handle(0, update).unwrap();
+        history.handle(update).unwrap();
     }
     history
 }

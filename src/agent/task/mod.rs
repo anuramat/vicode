@@ -14,7 +14,6 @@ use tokio::task::JoinSet;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::TaskResult;
 use crate::agent::task::sink::TaskSink;
-use crate::llm::history::HistoryGeneration;
 
 /// loop-local task identifier
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -24,9 +23,7 @@ pub struct TaskId(u64);
 /// what the agent knows about an in-flight task
 #[derive(Debug)]
 pub enum Task {
-    Turn {
-        generation: HistoryGeneration,
-    },
+    Turn,
     Tool {
         call_id: String,
         /// streamed output so far: the authoritative text of a streaming
@@ -43,7 +40,7 @@ pub enum Task {
 impl Task {
     fn kind(&self) -> &'static str {
         match self {
-            Self::Turn { .. } => "turn",
+            Self::Turn => "turn",
             Self::Tool { .. } => "tool",
             Self::Compact { .. } => "summary",
         }
@@ -192,13 +189,6 @@ mod tests {
     use super::*;
     use crate::agent::event::TaskOutput;
 
-    impl Task {
-        /// a default turn at generation 0
-        pub fn turn() -> Self {
-            Self::Turn { generation: 0 }
-        }
-    }
-
     impl Tasks {
         /// tasks whose futures are recorded, never run, so nothing is
         /// ever sent
@@ -231,8 +221,8 @@ mod tests {
         let mut tasks = Tasks::held();
         assert!(tasks.idle());
 
-        let a = tasks.register(Task::turn());
-        let b = tasks.register(Task::turn());
+        let a = tasks.register(Task::Turn);
+        let b = tasks.register(Task::Turn);
         assert!(!tasks.idle());
         assert!(tasks.get(a).is_some() && tasks.get(b).is_some());
 
@@ -251,7 +241,7 @@ mod tests {
         let compact = tasks.register(Task::Compact { n_drop: 1 });
         assert!(!tasks.idle() && !tasks.in_turn() && tasks.compacting());
 
-        let turn = tasks.register(Task::turn());
+        let turn = tasks.register(Task::Turn);
         assert!(tasks.in_turn() && tasks.compacting());
 
         tasks.finish(compact);
@@ -263,12 +253,12 @@ mod tests {
     #[test]
     fn abort_all_keeps_next_so_ids_are_never_reused() {
         let mut tasks = Tasks::held();
-        let a = tasks.register(Task::turn());
+        let a = tasks.register(Task::Turn);
         assert_eq!(tasks.abort_all().len(), 1);
         assert!(tasks.idle());
         assert!(tasks.get(a).is_none());
 
-        let b = tasks.register(Task::turn());
+        let b = tasks.register(Task::Turn);
         assert_ne!(a, b);
     }
 
@@ -277,7 +267,7 @@ mod tests {
         let (tx, mut rx) = unbounded_channel();
         let mut tasks = Tasks::new(tx);
 
-        let ok = tasks.spawn(Task::turn(), |sink| async move {
+        let ok = tasks.spawn(Task::Turn, |sink| async move {
             sink.output("chunk".into());
             Ok(TaskOutput::Turn)
         });
@@ -300,7 +290,7 @@ mod tests {
 
         // the guard drops with the future: once it's gone, nothing can follow
         let (guard, cancelled) = oneshot::channel::<()>();
-        tasks.spawn(Task::turn(), |_| async move {
+        tasks.spawn(Task::Turn, |_| async move {
             let _guard = guard;
             std::future::pending().await
         });
@@ -312,7 +302,7 @@ mod tests {
     #[test]
     fn held_tasks_record_their_kind() {
         let mut tasks = Tasks::held();
-        let turn = tasks.spawn(Task::turn(), |_| std::future::pending());
+        let turn = tasks.spawn(Task::Turn, |_| std::future::pending());
         let summary = tasks.spawn(Task::Compact { n_drop: 1 }, |_| std::future::pending());
         assert_eq!(
             tasks.take_held(),

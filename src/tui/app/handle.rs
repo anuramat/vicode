@@ -54,8 +54,8 @@ impl App<'_> {
                 // TODO this calls tab_mut_by_aid again, which is sad
                 self.handle_started(&aid, *state, control).await?;
             }
-            HistoryUpdate(loc, event) => {
-                tab.update(loc, event)?;
+            HistoryUpdate(event) => {
+                tab.update(event)?;
             }
             Error(msg) => {
                 self.notify(NotificationKind::Error, msg);
@@ -212,7 +212,6 @@ mod tests {
         );
         let events = vec![
             HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 1)),
-            HistoryUpdate::GenerationIncremented,
             HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 2 }),
             HistoryUpdate::TurnResponse(AssistantEvent::Started { started_at: 3 }),
             HistoryUpdate::TurnResponse(AssistantEvent::Delta(Delta {
@@ -225,9 +224,8 @@ mod tests {
         let mut expected = state.history.clone();
 
         for event in events {
-            let generation = expected.generation();
-            expected.handle(generation, event.clone()).unwrap();
-            app.handle_agent_event(aid.clone(), UiEvent::HistoryUpdate(generation, event))
+            expected.handle(event.clone()).unwrap();
+            app.handle_agent_event(aid.clone(), UiEvent::HistoryUpdate(event))
                 .await
                 .unwrap();
         }

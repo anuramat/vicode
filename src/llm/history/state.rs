@@ -104,10 +104,10 @@ mod tests {
     fn user_message_updates_token_cache() {
         let mut history = History::new(String::new());
         history
-            .handle(
+            .handle(HistoryUpdate::UserMessage(UserMessage::new(
+                "hello".into(),
                 0,
-                HistoryUpdate::UserMessage(UserMessage::new("hello".into(), 0)),
-            )
+            )))
             .unwrap();
         assert_eq!(
             history.state().token_count(),

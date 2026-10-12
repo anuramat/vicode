@@ -122,7 +122,7 @@ mod tests {
     fn history(texts: &[&str]) -> History {
         let mut history = History::new(String::new());
         for text in texts {
-            history.handle(0, user(text)).unwrap();
+            history.handle(user(text)).unwrap();
         }
         history
     }
@@ -158,7 +158,7 @@ mod tests {
     fn compact_replaces_prefix_and_archives_history() {
         let mut history = history(&["first", "second", "last"]);
 
-        history.handle(0, compaction(2)).unwrap();
+        history.handle(compaction(2)).unwrap();
 
         insta::assert_yaml_snapshot!(history.state().messages, @r#"
         - role: developer
@@ -189,7 +189,7 @@ mod tests {
     fn compact_past_history_end_is_rejected() {
         let mut history = history(&["only"]);
 
-        assert!(history.handle(0, compaction(2)).is_err());
+        assert!(history.handle(compaction(2)).is_err());
 
         assert_eq!(history.state().messages.len(), 1);
         assert!(history.archive.is_empty());

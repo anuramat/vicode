@@ -11,7 +11,6 @@ use crate::agent::Agent;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
-use crate::agent::event::UserPrompt;
 use crate::agent::router::api::RouterError;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::traits::ToolCall;
@@ -180,21 +179,11 @@ fn todo_call(call_id: &str) -> AssistantEvent {
 }
 
 fn submit() -> AgentEvent {
-    AgentEvent::User(UserCommand::Submit(UserPrompt {
-        text: "hi".into(),
-        generation: 0,
-    }))
+    submit_text("hi")
 }
 
-/// submit at the agent's current generation
-fn submit_text(
-    agent: &Agent,
-    text: &str,
-) -> AgentEvent {
-    AgentEvent::User(UserCommand::Submit(UserPrompt {
-        text: text.into(),
-        generation: agent.history().generation(),
-    }))
+fn submit_text(text: &str) -> AgentEvent {
+    AgentEvent::User(UserCommand::Submit(text.into()))
 }
 
 /// serialized output of the given call's history slot, if resolved
@@ -516,14 +505,13 @@ async fn abort_mid_tool_output_finalizes_slot_with_partial_output() {
     "#);
 }
 
-/// the abort's emitted history updates must reach the app mirror in an
-/// order it accepts — the tool finalization lands at the new generation, so
-/// the mirror must learn of the bump first. A mirror seeded from the pre-abort
-/// history and fed every emitted update rejects a premature generation.
+/// the abort's emitted history updates are enough for the app mirror: a
+/// mirror seeded from the pre-abort history and fed every emitted update ends
+/// up with the agent's aborted slot.
 /// The abort comes once the agent handled both chunks, as it would after
 /// them in its channel.
 #[tokio::test]
-async fn abort_emits_updates_a_mirror_accepts() {
+async fn abort_emits_updates_the_mirror_replays() {
     let (mut agent, fake, mut app_rx) = Agent::fake("loop-abort-mirror").await;
     register(&agent);
     let mut mirror = agent.history().clone();
@@ -558,8 +546,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
         .unwrap();
     apply_emitted_updates(&mut mirror, &mut app_rx);
 
-    // the mirror reconstructed the aborted slot with its partial output —
-    // proof the finalization landed at a generation the mirror already knew
+    // the mirror reconstructed the aborted slot with its partial output
     assert_eq!(
         slot_in_history(&mirror, "call-1"),
         slot_in_history(agent.history(), "call-1"),
@@ -572,8 +559,7 @@ async fn abort_emits_updates_a_mirror_accepts() {
 }
 
 /// apply every buffered `HistoryUpdate` the agent emitted into the mirror, in
-/// emission order; a rejected update is a generation desync. Returns the
-/// tool output chunks it passed
+/// emission order. Returns the tool output chunks it passed
 fn apply_emitted_updates(
     mirror: &mut crate::llm::history::History,
     app_rx: &mut UnboundedReceiver<AppEvent>,
@@ -581,9 +567,9 @@ fn apply_emitted_updates(
     let mut chunks = Vec::new();
     while let Ok(event) = app_rx.try_recv() {
         match event {
-            AppEvent::Agent(_, UiEvent::HistoryUpdate(g, u)) => mirror
-                .handle(g, u)
-                .expect("mirror rejected an emitted update (generation desync)"),
+            AppEvent::Agent(_, UiEvent::HistoryUpdate(u)) => {
+                mirror.handle(u).expect("mirror rejected an emitted update")
+            }
             AppEvent::Agent(_, UiEvent::ToolOutput { chunk, .. }) => chunks.push(chunk),
             _ => {}
         }
@@ -826,7 +812,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-2", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(now(), submit_text(&agent, "collect")).await.unwrap();
+    let _ = agent.handle(now(), submit_text("collect")).await.unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-3").is_some()).await;
     let list_out = slot_output(&agent, "call-3").unwrap();
     assert!(
@@ -851,7 +837,7 @@ async fn spawn_commit_list_archive_lifecycle() {
         stream_call("hang-3", &[], true, false),
         AssistantEvent::Completed { ended_at: 3 },
     ]);
-    let _ = agent.handle(now(), submit_text(&agent, "cleanup")).await.unwrap();
+    let _ = agent.handle(now(), submit_text("cleanup")).await.unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-4").is_some()).await;
     similar_asserts::assert_eq!(slot_output(&agent, "call-4").unwrap(), "null");
     similar_asserts::assert_eq!(
@@ -893,7 +879,7 @@ async fn spawn_starts_at_parent_head_without_uncommitted_work() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent
-        .handle(now(), submit_text(&agent, "the marker is PRE-SPAWN"))
+        .handle(now(), submit_text("the marker is PRE-SPAWN"))
         .await
         .unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
@@ -950,7 +936,7 @@ async fn fresh_spawn_at_a_revision_reads_instructions_from_its_tree() {
         AssistantEvent::Completed { ended_at: 3 },
     ]);
     let _ = agent
-        .handle(now(), submit_text(&agent, "PARENT-ONLY"))
+        .handle(now(), submit_text("PARENT-ONLY"))
         .await
         .unwrap();
     pump_until(&mut agent, |a| slot_output(a, "call-1").is_some()).await;
@@ -974,10 +960,10 @@ async fn compaction_runs_alongside_tool_loop() {
     register(&agent);
     agent
         .history_mut()
-        .handle(
+        .handle(HistoryUpdate::UserMessage(UserMessage::new(
+            "first".into(),
             0,
-            HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
-        )
+        )))
         .unwrap();
     // one provider slot: requests run in the order they were made
     fake.script_turn(vec![
@@ -1075,10 +1061,7 @@ async fn failed_compaction_keeps_history() {
     for text in ["first", "second"] {
         agent
             .history_mut()
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0)),
-            )
+            .handle(HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0)))
             .unwrap();
     }
     fake.script_turn(vec![AssistantEvent::Failed {

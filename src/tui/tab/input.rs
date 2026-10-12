@@ -6,7 +6,6 @@ use crossterm::event::KeyEvent;
 use git2::Repository;
 
 use crate::agent::event::UserCommand;
-use crate::agent::event::UserPrompt;
 use crate::llm::history::message::Message;
 use crate::tui::tab::Tab;
 use crate::tui::widgets::input::CompletionItem;
@@ -77,12 +76,7 @@ impl Tab<'_> {
         if text.is_empty() {
             return Ok(());
         }
-        let prompt = UserPrompt {
-            text,
-            generation: self.history().generation(),
-        };
-
-        let result = self.send(UserCommand::Submit(prompt));
+        let result = self.send(UserCommand::Submit(text));
         if result.is_err() {
             self.input.textarea.insert_str(&editor_text);
             self.update_input_title();

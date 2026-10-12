@@ -1,7 +1,6 @@
 use anyhow::Result;
 
 use crate::llm::history::AssistantEvent;
-use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::Message;
@@ -17,7 +16,6 @@ impl Tab<'_> {
 
     pub fn update(
         &mut self,
-        generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
         let input = if let HistoryUpdate::Pop(n) = &event {
@@ -32,7 +30,7 @@ impl Tab<'_> {
         if matches!(event, HistoryUpdate::Compact(_)) {
             self.scroll.set_len(0);
         }
-        self.history_mut().handle(generation, event)?;
+        self.history_mut().handle(event)?;
         if let Some(input) = input {
             self.input.prepend_text(input);
             self.update_input_title();

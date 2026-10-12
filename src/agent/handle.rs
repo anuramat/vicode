@@ -9,14 +9,12 @@ use crate::agent::event::TaskOutput;
 use crate::agent::event::TaskResult;
 use crate::agent::event::UiEvent;
 use crate::agent::event::UserCommand;
-use crate::agent::event::UserPrompt;
 use crate::agent::task::Task;
 use crate::agent::task::TaskId;
 use crate::agent::tool::context::ToolRuntimeContext;
 use crate::agent::tool::registry::TOOL_REGISTRY;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::Compaction;
-use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::ToolCallItem;
@@ -37,7 +35,7 @@ impl Agent {
             AgentEvent::User(command) => self.handle_command(now, command).await,
             AgentEvent::Message(msg) => self.deliver(now, msg.into()),
             AgentEvent::Stream(tid, event) => match self.tasks.get(tid) {
-                Some(&Task::Turn { generation }) => self.handle_turn_event(generation, event),
+                Some(Task::Turn) => self.handle_turn_event(event),
                 Some(task) => unreachable!("stream event from {task:?}"),
                 None => Ok(()),
             },
@@ -63,19 +61,20 @@ impl Agent {
         command: UserCommand,
     ) -> Result<()> {
         match command {
-            UserCommand::Submit(prompt) => self.submit(now, prompt),
+            // queued while busy, so it doubles as steering; flushes after
+            // any messages stranded by abort -- abort itself never flushes:
+            // a naive flush would auto-start a turn on user abort
+            UserCommand::Submit(text) => self.deliver(now, UserMessage::new(text, now).into()),
             UserCommand::Compact(n) => self.compact(now, n),
             UserCommand::Retry => {
                 self.ensure_idle()?;
-                self.increment_generation()?;
                 self.needs_turn = true;
                 self.advance(now)
             }
             UserCommand::Abort => self.abort(now),
             UserCommand::Undo(n) => {
                 self.ensure_idle()?;
-                let g = self.increment_generation()?;
-                self.handle_history_update(g, HistoryUpdate::Pop(n))
+                self.handle_history_update(HistoryUpdate::Pop(n))
             }
             UserCommand::SetAssistant(id) => {
                 self.ensure_idle()?;
@@ -111,22 +110,16 @@ impl Agent {
 
     fn handle_history_update(
         &mut self,
-        generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
-        self.history_mut().handle(generation, event.clone())?;
-        self.dirty |= !matches!(
-            event,
-            HistoryUpdate::GenerationIncremented
-                | HistoryUpdate::TurnResponse(AssistantEvent::Delta(_))
-        );
-        self.emit(UiEvent::HistoryUpdate(generation, event));
+        self.history_mut().handle(event.clone())?;
+        self.dirty |= !matches!(event, HistoryUpdate::TurnResponse(AssistantEvent::Delta(_)));
+        self.emit(UiEvent::HistoryUpdate(event));
         Ok(())
     }
 
     fn handle_turn_event(
         &mut self,
-        generation: HistoryGeneration,
         event: AssistantEvent,
     ) -> Result<()> {
         let call = match &event {
@@ -136,7 +129,7 @@ impl Agent {
             },
             _ => None,
         };
-        self.handle_history_update(generation, HistoryUpdate::TurnResponse(event))?;
+        self.handle_history_update(HistoryUpdate::TurnResponse(event))?;
         if let Some(call) = call {
             self.run_tool_call(call);
         }
@@ -187,12 +180,6 @@ impl Agent {
         }
     }
 
-    fn increment_generation(&mut self) -> Result<HistoryGeneration> {
-        let generation = self.history().generation();
-        self.handle_history_update(generation, HistoryUpdate::GenerationIncremented)?;
-        Ok(self.history().generation())
-    }
-
     fn handle_task_done(
         &mut self,
         now: u64,
@@ -202,29 +189,28 @@ impl Agent {
         let Some(task) = self.tasks.finish(tid) else {
             return Ok(());
         };
-        let g = self.history().generation();
         match (task, result) {
-            (Task::Turn { .. }, Ok(_)) => {}
-            (Task::Turn { generation }, Err(message)) => {
+            (Task::Turn, Ok(_)) => {}
+            (Task::Turn, Err(message)) => {
                 tracing::error!("turn error in agent {}: {message}", self.id);
                 self.emit(UiEvent::Error(message.clone()));
                 let failed = AssistantEvent::Failed {
                     message,
                     ended_at: now,
                 };
-                self.handle_history_update(generation, HistoryUpdate::TurnResponse(failed))?;
+                self.handle_history_update(HistoryUpdate::TurnResponse(failed))?;
             }
             (Task::Tool { partial, .. }, Ok(TaskOutput::Tool(mut item))) => {
                 item.task.compose(partial);
                 let item = AssistantEvent::Item(Box::new(AssistantItem::ToolCall(*item)));
-                self.handle_history_update(g, HistoryUpdate::TurnResponse(item))?;
+                self.handle_history_update(HistoryUpdate::TurnResponse(item))?;
             }
             (Task::Tool { call_id, partial }, result) => {
                 let marker = result
                     .err()
                     .unwrap_or_else(|| "tool returned no item".into());
                 let error = with_partial(marker, &partial);
-                self.handle_history_update(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
+                self.handle_history_update(HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
             (Task::Compact { n_drop }, Ok(TaskOutput::Summary(summary))) => {
                 self.compaction = Some(Ok(Compaction { n_drop, summary }));
@@ -252,8 +238,7 @@ impl Agent {
             return Ok(());
         }
         if let Some(Ok(compaction)) = self.compaction.take_if(|c| c.is_ok()) {
-            let g = self.history().generation();
-            self.handle_history_update(g, HistoryUpdate::Compact(compaction))?;
+            self.handle_history_update(HistoryUpdate::Compact(compaction))?;
         }
         if !self.needs_turn {
             return Ok(());
@@ -286,33 +271,9 @@ impl Agent {
 
     fn flush_pending(&mut self) -> Result<()> {
         for msg in std::mem::take(&mut self.state.pending_messages) {
-            let generation = self.history().generation();
-            self.handle_history_update(generation, msg.into())?;
+            self.handle_history_update(msg.into())?;
         }
         Ok(())
-    }
-
-    fn submit(
-        &mut self,
-        now: u64,
-        UserPrompt { text, generation }: UserPrompt,
-    ) -> Result<()> {
-        // busy: queue instead of reject — pending messages carry no
-        // generation and flush into a fresh turn at the next turn boundary,
-        // so typed input is never destroyed and doubles as steering
-        if !self.tasks.in_turn() && !self.needs_turn {
-            let current = self.history().generation();
-            // a stale submit is rejected *before* the flush: pending
-            // messages carry no generation and must never be dropped as stale
-            anyhow::ensure!(
-                generation == current,
-                "history generation mismatch: expected {current}",
-            );
-            self.increment_generation()?;
-        }
-        // drains a buffer stranded by abort — abort itself never flushes:
-        // a naive flush would auto-start a turn on user abort
-        self.deliver(now, UserMessage::new(text, now).into())
     }
 
     /// cancel everything in flight, then resolve it right here -- the failed
@@ -327,7 +288,6 @@ impl Agent {
         // a failure stays: only a manual compaction turns autocompact back on
         self.compaction.take_if(|c| c.is_ok());
         self.needs_turn = false;
-        let g = self.increment_generation()?;
         if self
             .history()
             .state()
@@ -338,12 +298,12 @@ impl Agent {
                 message: ABORTED_BY_USER.into(),
                 ended_at: now,
             };
-            self.handle_history_update(g, HistoryUpdate::TurnResponse(failed))?;
+            self.handle_history_update(HistoryUpdate::TurnResponse(failed))?;
         }
         for task in tasks {
             if let Task::Tool { call_id, partial } = task {
                 let error = with_partial(ABORTED_BY_USER.into(), &partial);
-                self.handle_history_update(g, HistoryUpdate::ToolCallFailed { call_id, error })?;
+                self.handle_history_update(HistoryUpdate::ToolCallFailed { call_id, error })?;
             }
         }
         Ok(())
@@ -432,23 +392,21 @@ impl Agent {
             .assistant(&self.state.assistant_id)?;
         // clone before the Created event appends the queued assistant message
         let messages = self.history().state().messages.clone();
-        let generation = self.history().generation();
         let instructions = self.history().instructions().to_string();
         let created = AssistantEvent::Created { created_at: now };
-        self.handle_history_update(generation, HistoryUpdate::TurnResponse(created))?;
-        self.tasks
-            .spawn(Task::Turn { generation }, |sink| async move {
-                Self::turn(
-                    sink,
-                    &assistant,
-                    TOOL_REGISTRY.clone(),
-                    instructions,
-                    messages,
-                )
-                .await
-                .map(|()| TaskOutput::Turn)
-                .map_err(|e| e.to_string())
-            });
+        self.handle_history_update(HistoryUpdate::TurnResponse(created))?;
+        self.tasks.spawn(Task::Turn, |sink| async move {
+            Self::turn(
+                sink,
+                &assistant,
+                TOOL_REGISTRY.clone(),
+                instructions,
+                messages,
+            )
+            .await
+            .map(|()| TaskOutput::Turn)
+            .map_err(|e| e.to_string())
+        });
         Ok(())
     }
 }
@@ -514,7 +472,7 @@ mod tests {
             let (agent, _api, app_rx) = Agent::fake("handle").await;
             let mut h = Self::wrap(agent, app_rx);
             for text in texts {
-                h.history_mut().handle(0, user_message(text)).unwrap();
+                h.history_mut().handle(user_message(text)).unwrap();
             }
             h
         }
@@ -583,14 +541,8 @@ mod tests {
         AgentEvent::User(command)
     }
 
-    fn submit(
-        text: &str,
-        generation: HistoryGeneration,
-    ) -> AgentEvent {
-        user(UserCommand::Submit(UserPrompt {
-            text: text.into(),
-            generation,
-        }))
+    fn submit(text: &str) -> AgentEvent {
+        user(UserCommand::Submit(text.into()))
     }
 
     fn message(text: &str) -> AgentEvent {
@@ -680,23 +632,18 @@ mod tests {
     #[tokio::test]
     async fn submit_starts_turn() {
         let mut h = Harness::with(&[]).await;
-        assert_handled!(h, 7, submit("hi", 0), @"
+        assert_handled!(h, 7, submit("hi"), @"
         busy: true
         ui:
           - HistoryUpdate:
-              - 0
-              - GenerationIncremented
+              UserMessage:
+                text: hi
+                token_count: 1
+                created_at: 7
           - HistoryUpdate:
-              - 1
-              - UserMessage:
-                  text: hi
-                  token_count: 1
+              TurnResponse:
+                Created:
                   created_at: 7
-          - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 7
         tasks:
           - - 0
             - turn
@@ -704,21 +651,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_with_stale_generation_is_rejected() {
-        let mut h = Harness::with(&[]).await;
-        assert_rejected!(h, 7, submit("hi", 1), @r#"
-        - "history generation mismatch: expected 0"
-        - busy: false
-          ui: []
-          tasks: []
-        "#);
-    }
-
-    #[tokio::test]
     async fn submit_while_busy_queues_as_pending() {
         let mut h = Harness::with(&[]).await;
-        h.tasks.register(Task::turn());
-        assert_handled!(h, 7, submit("hi", 0), @"
+        h.tasks.register(Task::Turn);
+        assert_handled!(h, 7, submit("hi"), @"
         busy: true
         ui: []
         tasks: []
@@ -726,14 +662,13 @@ mod tests {
         assert_eq!(h.state.pending_messages.len(), 1);
     }
 
-    /// a mid-turn submit — even one stamped with a nonsense generation —
-    /// is queued and flushes into its own turn at turn end, so typed input
-    /// is never destroyed by a busy rejection
+    /// a mid-turn submit is queued and flushes into its own turn at turn
+    /// end, so typed input is never destroyed by a busy rejection
     #[tokio::test]
     async fn busy_submit_flushes_into_a_turn_at_turn_end() {
         let mut h = Harness::with(&[]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
-        h.step(2, submit("steer", 999)).await.0.unwrap();
+        let turn = h.step(1, submit("hi")).await.1.task();
+        h.step(2, submit("steer")).await.0.unwrap();
         assert_eq!(h.state.pending_messages.len(), 1);
 
         h.step(
@@ -759,7 +694,7 @@ mod tests {
     async fn submit_with_unknown_assistant_fails_without_wedging() {
         let mut h = Harness::with(&[]).await;
         h.state.assistant_id = "gone".into();
-        let (result, step) = h.step(7, submit("hi", 0)).await;
+        let (result, step) = h.step(7, submit("hi")).await;
         assert_eq!(
             result.unwrap_err().to_string(),
             "unknown assistant \"gone\"".to_string()
@@ -771,26 +706,22 @@ mod tests {
             .await
             .0
             .unwrap();
-        h.step(9, submit("retry", 1)).await.0.unwrap();
+        h.step(9, submit("retry")).await.0.unwrap();
         assert!(h.busy());
     }
 
     #[tokio::test]
     async fn abort_fails_inflight_turn() {
         let mut h = Harness::with(&[]).await;
-        h.step(7, submit("hi", 0)).await.0.unwrap();
+        h.step(7, submit("hi")).await.0.unwrap();
         assert_handled!(h, 9, user(UserCommand::Abort), @"
         busy: false
         ui:
           - HistoryUpdate:
-              - 1
-              - GenerationIncremented
-          - HistoryUpdate:
-              - 2
-              - TurnResponse:
-                  Failed:
-                    message: aborted by user
-                    ended_at: 9
+              TurnResponse:
+                Failed:
+                  message: aborted by user
+                  ended_at: 9
         tasks: []
         ");
         assert!(matches!(
@@ -807,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn abort_keeps_output_sent_before_it() {
         let mut h = Harness::with(&[]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
             .step(2, AgentEvent::Stream(turn, todo_call(None)))
             .await
@@ -830,19 +761,14 @@ mod tests {
               call_id: call-1
               chunk: early
           - HistoryUpdate:
-              - 1
-              - GenerationIncremented
+              TurnResponse:
+                Failed:
+                  message: aborted by user
+                  ended_at: 3
           - HistoryUpdate:
-              - 2
-              - TurnResponse:
-                  Failed:
-                    message: aborted by user
-                    ended_at: 3
-          - HistoryUpdate:
-              - 2
-              - ToolCallFailed:
-                  call_id: call-1
-                  error: "aborted by user; partial output:\nearly"
+              ToolCallFailed:
+                call_id: call-1
+                error: "aborted by user; partial output:\nearly"
         tasks: []
         "#);
     }
@@ -852,38 +778,33 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let history = h.history_mut();
         history
-            .handle(
+            .handle(HistoryUpdate::UserMessage(UserMessage::new(
+                "first".into(),
                 0,
-                HistoryUpdate::UserMessage(UserMessage::new("first".into(), 0)),
-            )
+            )))
             .unwrap();
         history
-            .handle(
-                0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
-            )
+            .handle(HistoryUpdate::TurnResponse(AssistantEvent::Created {
+                created_at: 0,
+            }))
             .unwrap();
         history
-            .handle(
-                0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Failed {
-                    message: "oops".into(),
-                    ended_at: 1,
-                }),
-            )
+            .handle(HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                message: "oops".into(),
+                ended_at: 1,
+            }))
             .unwrap();
-        let tid = h.tasks.register(Task::turn());
+        let tid = h.tasks.register(Task::Turn);
 
         assert_handled!(h, 7, AgentEvent::Done(tid, Err("oops".into())), @"
         busy: false
         ui:
           - Error: oops
           - HistoryUpdate:
-              - 0
-              - TurnResponse:
-                  Failed:
-                    message: oops
-                    ended_at: 7
+              TurnResponse:
+                Failed:
+                  message: oops
+                  ended_at: 7
         tasks: []
         ");
     }
@@ -891,7 +812,7 @@ mod tests {
     #[tokio::test]
     async fn set_assistant_rejected_while_busy() {
         let mut h = Harness::with(&[]).await;
-        h.tasks.register(Task::turn());
+        h.tasks.register(Task::Turn);
         assert_rejected!(h, 7, user(UserCommand::SetAssistant("test2".into())), @"
         - agent is busy
         - busy: true
@@ -931,7 +852,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_while_busy_reports_failure_for_the_copy() {
         let mut h = Harness::with(&[]).await;
-        h.tasks.register(Task::turn());
+        h.tasks.register(Task::Turn);
         let copy = AgentId::from("copy".to_string());
         assert_handled!(h, 7, user(UserCommand::Duplicate(copy)), @"
         busy: true
@@ -948,10 +869,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         assert_handled!(h, 9, user(UserCommand::Abort), @"
         busy: false
-        ui:
-          - HistoryUpdate:
-              - 0
-              - GenerationIncremented
+        ui: []
         tasks: []
         ");
     }
@@ -961,7 +879,7 @@ mod tests {
     #[tokio::test]
     async fn task_events_after_abort_are_dropped() {
         let mut h = Harness::with(&[]).await;
-        let tid = h.step(1, submit("hi", 0)).await.1.task();
+        let tid = h.step(1, submit("hi")).await.1.task();
         h.step(2, user(UserCommand::Abort)).await.0.unwrap();
 
         assert_handled!(h, 3, AgentEvent::Stream(tid, text_output("out", "late")), @"
@@ -979,7 +897,7 @@ mod tests {
     #[tokio::test]
     async fn task_done_starts_followup_turn_after_tool_resolves() {
         let mut h = Harness::with(&[]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
 
         let (result, step) = h.step(2, AgentEvent::Stream(turn, todo_call(None))).await;
         result.unwrap();
@@ -988,22 +906,21 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Item:
-                    ToolCall:
-                      id: call-1
-                      call_id: call-1
-                      name: todo
-                      arguments:
-                        current: ""
-                        entries: []
-                      meta: ~
-                      output: ~
-                      token_count: 0
-                      started_at: 2
-                      ended_at: 3
-                      ready_at: ~
+              TurnResponse:
+                Item:
+                  ToolCall:
+                    id: call-1
+                    call_id: call-1
+                    name: todo
+                    arguments:
+                      current: ""
+                      entries: []
+                    meta: ~
+                    output: ~
+                    token_count: 0
+                    started_at: 2
+                    ended_at: 3
+                    ready_at: ~
         tasks:
           - - 1
             - tool
@@ -1031,28 +948,26 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Item:
-                    ToolCall:
-                      id: call-1
-                      call_id: call-1
-                      name: todo
-                      arguments:
-                        current: ""
-                        entries: []
-                      meta: ~
-                      output:
-                        Ok: {}
-                      token_count: 0
-                      started_at: 2
-                      ended_at: 3
-                      ready_at: ~
+              TurnResponse:
+                Item:
+                  ToolCall:
+                    id: call-1
+                    call_id: call-1
+                    name: todo
+                    arguments:
+                      current: ""
+                      entries: []
+                    meta: ~
+                    output:
+                      Ok: {}
+                    token_count: 0
+                    started_at: 2
+                    ended_at: 3
+                    ready_at: ~
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 6
+              TurnResponse:
+                Created:
+                  created_at: 6
         tasks:
           - - 2
             - turn
@@ -1063,7 +978,7 @@ mod tests {
     #[tokio::test]
     async fn tool_failure_patches_slot_and_starts_followup() {
         let mut h = Harness::with(&[]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
             .step(2, AgentEvent::Stream(turn, todo_call(None)))
             .await
@@ -1094,15 +1009,13 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 1
-              - ToolCallFailed:
-                  call_id: call-1
-                  error: "tool panicked: boom; partial output:\nabc"
+              ToolCallFailed:
+                call_id: call-1
+                error: "tool panicked: boom; partial output:\nabc"
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 5
+              TurnResponse:
+                Created:
+                  created_at: 5
         tasks:
           - - 2
             - turn
@@ -1131,17 +1044,15 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 0
-              - DeveloperMessage:
-                  Peer:
-                    text: "[from: kid]\nhi"
-                    token_count: 5
-                    created_at: 5
+              DeveloperMessage:
+                Peer:
+                  text: "[from: kid]\nhi"
+                  token_count: 5
+                  created_at: 5
           - HistoryUpdate:
-              - 0
-              - TurnResponse:
-                  Created:
-                    created_at: 7
+              TurnResponse:
+                Created:
+                  created_at: 7
         tasks:
           - - 0
             - turn
@@ -1152,7 +1063,7 @@ mod tests {
     #[tokio::test]
     async fn message_while_busy_buffers_then_flushes_on_idle() {
         let mut h = Harness::with(&[]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
 
         // turn still streaming: buffered, save only
         assert_handled!(h, 2, message("early bird"), @"
@@ -1174,17 +1085,15 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 1
-              - DeveloperMessage:
-                  Peer:
-                    text: "[from: kid]\nearly bird"
-                    token_count: 6
-                    created_at: 5
+              DeveloperMessage:
+                Peer:
+                  text: "[from: kid]\nearly bird"
+                  token_count: 6
+                  created_at: 5
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 4
+              TurnResponse:
+                Created:
+                  created_at: 4
         tasks:
           - - 1
             - turn
@@ -1203,12 +1112,11 @@ mod tests {
         - busy: false
           ui:
             - HistoryUpdate:
-                - 0
-                - DeveloperMessage:
-                    Peer:
-                      text: "[from: kid]\nhi"
-                      token_count: 5
-                      created_at: 5
+                DeveloperMessage:
+                  Peer:
+                    text: "[from: kid]\nhi"
+                    token_count: 5
+                    created_at: 5
           tasks: []
         "#);
         let saved = h.project.store().load_state(&h.id).await.unwrap();
@@ -1216,29 +1124,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_submit_is_rejected_before_flush() {
-        let mut h = Harness::with(&[]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
-        h.step(2, message("stranded")).await.0.unwrap();
-        // abort clears the tasks but deliberately never flushes
-        h.step(3, user(UserCommand::Abort)).await.0.unwrap();
-        assert_eq!(h.state.pending_messages.len(), 1);
-
-        // stale generation: rejected before the flush — the buffer is intact
-        let (result, step) = h.step(4, submit("late", 1)).await;
-        assert!(result.is_err());
-        assert!(step.ui.is_empty() && step.tasks.is_empty());
-        assert_eq!(h.state.pending_messages.len(), 1);
-    }
-
-    #[tokio::test]
     async fn submit_flushes_stranded_buffer_before_user_message() {
         let mut h = Harness::with(&[]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
+        h.step(1, submit("hi")).await.0.unwrap();
         h.step(2, message("stranded")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
 
-        let (result, step) = h.step(4, submit("continue", 2)).await;
+        let (result, step) = h.step(4, submit("continue")).await;
         result.unwrap();
         let positions: Vec<usize> = ["stranded", "continue"]
             .iter()
@@ -1259,15 +1151,14 @@ mod tests {
     #[tokio::test]
     async fn buffered_message_survives_restore_and_flushes_on_submit() {
         let mut h = Harness::with(&[]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
+        h.step(1, submit("hi")).await.0.unwrap();
         h.step(2, message("persisted")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
 
         let mut restored = h.restart().await;
         assert_eq!(restored.state.pending_messages.len(), 1);
 
-        // restored generation resets to 0: it is #[serde(skip)]
-        let (result, step) = restored.step(5, submit("go", 0)).await;
+        let (result, step) = restored.step(5, submit("go")).await;
         result.unwrap();
         assert!(
             serde_json::to_string(&step.ui)
@@ -1280,7 +1171,7 @@ mod tests {
     #[tokio::test]
     async fn task_done_returns_to_idle() {
         let mut h = Harness::with(&[]).await;
-        let tid = h.step(1, submit("hi", 0)).await.1.task();
+        let tid = h.step(1, submit("hi")).await.1.task();
         h.step(2, AgentEvent::Stream(tid, text_output("out", "done")))
             .await
             .0
@@ -1303,7 +1194,7 @@ mod tests {
     #[tokio::test]
     async fn task_done_failure_surfaces_error_and_fails_turn() {
         let mut h = Harness::with(&[]).await;
-        let tid = h.step(1, submit("hi", 0)).await.1.task();
+        let tid = h.step(1, submit("hi")).await.1.task();
         h.step(
             2,
             AgentEvent::Stream(
@@ -1323,11 +1214,10 @@ mod tests {
         ui:
           - Error: boom
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Failed:
-                    message: boom
-                    ended_at: 3
+              TurnResponse:
+                Failed:
+                  message: boom
+                  ended_at: 3
         tasks: []
         ");
     }
@@ -1337,38 +1227,27 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let history = h.history_mut();
         history
-            .handle(
-                0,
-                HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 0)),
-            )
+            .handle(HistoryUpdate::UserMessage(UserMessage::new("hi".into(), 0)))
             .unwrap();
         history
-            .handle(
-                0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
-            )
+            .handle(HistoryUpdate::TurnResponse(AssistantEvent::Created {
+                created_at: 0,
+            }))
             .unwrap();
         history
-            .handle(
-                0,
-                HistoryUpdate::TurnResponse(AssistantEvent::Failed {
-                    message: "oops".into(),
-                    ended_at: 1,
-                }),
-            )
+            .handle(HistoryUpdate::TurnResponse(AssistantEvent::Failed {
+                message: "oops".into(),
+                ended_at: 1,
+            }))
             .unwrap();
 
         assert_handled!(h, 7, user(UserCommand::Retry), @"
         busy: true
         ui:
           - HistoryUpdate:
-              - 0
-              - GenerationIncremented
-          - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 7
+              TurnResponse:
+                Created:
+                  created_at: 7
         tasks:
           - - 0
             - turn
@@ -1382,11 +1261,7 @@ mod tests {
         busy: false
         ui:
           - HistoryUpdate:
-              - 0
-              - GenerationIncremented
-          - HistoryUpdate:
-              - 1
-              - Pop: 1
+              Pop: 1
         tasks: []
         ");
         assert_eq!(h.history().state().messages.len(), 1);
@@ -1395,7 +1270,7 @@ mod tests {
     #[tokio::test]
     async fn compact_runs_alongside_turn_and_applies_at_turn_end() {
         let mut h = Harness::with(&["first"]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
 
         // the in-flight assistant message is left out of the summary
         let (result, step) = h.step(2, user(UserCommand::Compact(99))).await;
@@ -1434,15 +1309,14 @@ mod tests {
         busy: false
         ui:
           - HistoryUpdate:
-              - 1
-              - Compact:
-                  n_drop: 2
-                  summary:
-                    text: gist
-                    token_count: 0
-                    created_at: 1
-                    started_at: 2
-                    ended_at: 3
+              Compact:
+                n_drop: 2
+                summary:
+                  text: gist
+                  token_count: 0
+                  created_at: 1
+                  started_at: 2
+                  ended_at: 3
         tasks: []
         ");
         insta::assert_yaml_snapshot!(h.history().state().messages, @"
@@ -1481,15 +1355,14 @@ mod tests {
         busy: false
         ui:
           - HistoryUpdate:
-              - 0
-              - Compact:
-                  n_drop: 1
-                  summary:
-                    text: gist
-                    token_count: 0
-                    created_at: 1
-                    started_at: 2
-                    ended_at: 3
+              Compact:
+                n_drop: 1
+                summary:
+                  text: gist
+                  token_count: 0
+                  created_at: 1
+                  started_at: 2
+                  ended_at: 3
         tasks: []
         ");
         assert_eq!(h.history().state().messages.len(), 2);
@@ -1500,7 +1373,7 @@ mod tests {
         let mut h = Harness::with(&["first"]).await;
         h.step(1, user(UserCommand::Compact(1))).await.0.unwrap();
 
-        let (result, step) = h.step(2, submit("hi", 0)).await;
+        let (result, step) = h.step(2, submit("hi")).await;
         result.unwrap();
         assert!(step.starts_turn());
         assert!(h.tasks.in_turn() && h.tasks.compacting());
@@ -1540,7 +1413,7 @@ mod tests {
     #[tokio::test]
     async fn abort_drops_compaction() {
         let mut h = Harness::with(&["first"]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
+        h.step(1, submit("hi")).await.0.unwrap();
         let compact = h.step(2, user(UserCommand::Compact(1))).await.1.summary();
 
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
@@ -1560,7 +1433,7 @@ mod tests {
     #[tokio::test]
     async fn summary_after_abort_keeps_stranded_buffer() {
         let mut h = Harness::with(&["first"]).await;
-        h.step(1, submit("hi", 0)).await.0.unwrap();
+        h.step(1, submit("hi")).await.0.unwrap();
         h.step(2, message("stranded")).await.0.unwrap();
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
         let compact = h.step(4, user(UserCommand::Compact(1))).await.1.summary();
@@ -1577,7 +1450,7 @@ mod tests {
     async fn autocompact_past_threshold_runs_alongside_the_turn() {
         let mut h = near_full(100).await;
 
-        let (result, step) = h.step(1, submit("hi", 0)).await;
+        let (result, step) = h.step(1, submit("hi")).await;
         result.unwrap();
 
         let compact = step.summary();
@@ -1593,7 +1466,7 @@ mod tests {
         let mut h = near_full(100).await;
         h.project.config_mut().compact.threshold = 90;
 
-        let (result, step) = h.step(1, submit("hi", 0)).await;
+        let (result, step) = h.step(1, submit("hi")).await;
         result.unwrap();
 
         assert!(!h.tasks.compacting());
@@ -1604,7 +1477,7 @@ mod tests {
     async fn hard_limit_holds_turn_until_summary_lands() {
         let mut h = near_full(50).await;
 
-        let (result, step) = h.step(1, submit("hi", 0)).await;
+        let (result, step) = h.step(1, submit("hi")).await;
         result.unwrap();
         let compact = step.summary();
         assert!(!step.starts_turn());
@@ -1616,7 +1489,7 @@ mod tests {
         assert!(h.busy() && h.compacting());
 
         // held = busy: a second prompt lands without starting a turn either
-        let (result, step) = h.step(2, submit("more", 999)).await;
+        let (result, step) = h.step(2, submit("more")).await;
         result.unwrap();
         assert!(!step.starts_turn());
 
@@ -1671,7 +1544,7 @@ mod tests {
     #[tokio::test]
     async fn failed_summary_blocks_held_turn_until_manual_compaction() {
         let mut h = near_full(50).await;
-        let compact = h.step(1, submit("hi", 0)).await.1.summary();
+        let compact = h.step(1, submit("hi")).await.1.summary();
 
         assert_rejected!(h, 2, AgentEvent::Done(compact, Err("rate limited".into())), @r#"
         - "past the hard limit, compaction failed: rate limited"
@@ -1684,10 +1557,7 @@ mod tests {
         assert_rejected!(h, 4, user(UserCommand::Retry), @r#"
         - "past the hard limit, compaction failed: rate limited"
         - busy: false
-          ui:
-            - HistoryUpdate:
-                - 2
-                - GenerationIncremented
+          ui: []
           tasks: []
         "#);
 
@@ -1703,7 +1573,7 @@ mod tests {
     #[tokio::test]
     async fn failed_autocompact_stays_off_until_manual_compaction() {
         let mut h = near_full(100).await;
-        let step = h.step(1, submit("hi", 0)).await.1;
+        let step = h.step(1, submit("hi")).await.1;
         let turn = step.tasks.iter().find(|t| t.1 == "turn").unwrap().0;
         h.step(
             2,
@@ -1724,7 +1594,7 @@ mod tests {
             .0
             .unwrap();
 
-        let step = h.step(5, submit("again", 1)).await.1;
+        let step = h.step(5, submit("again")).await.1;
         insta::assert_yaml_snapshot!(step.tasks, @"
         - - 2
           - turn
@@ -1738,19 +1608,15 @@ mod tests {
         let mut h = near_full(50).await;
         // already under the target: autocompact drops nothing
         h.project.config_mut().compact.target = 100;
-        assert_rejected!(h, 1, submit("hi", 0), @r#"
+        assert_rejected!(h, 1, submit("hi"), @r#"
         - "past the hard limit, nothing to compact"
         - busy: false
           ui:
             - HistoryUpdate:
-                - 0
-                - GenerationIncremented
-            - HistoryUpdate:
-                - 1
-                - UserMessage:
-                    text: hi
-                    token_count: 1
-                    created_at: 1
+                UserMessage:
+                  text: hi
+                  token_count: 1
+                  created_at: 1
           tasks: []
         "#);
         assert!(!h.busy());
@@ -1761,7 +1627,7 @@ mod tests {
     #[tokio::test]
     async fn failed_summary_mid_turn_keeps_due_turn() {
         let mut h = Harness::with(&["first"]).await;
-        let turn = h.step(1, submit("hi", 0)).await.1.task();
+        let turn = h.step(1, submit("hi")).await.1.task();
         let compact = h.step(2, user(UserCommand::Compact(1))).await.1.summary();
         h.step(3, message("report")).await.0.unwrap();
         assert_handled!(h, 4, AgentEvent::Done(compact, Err("rate limited".into())), @"
@@ -1782,17 +1648,15 @@ mod tests {
         busy: true
         ui:
           - HistoryUpdate:
-              - 1
-              - DeveloperMessage:
-                  Peer:
-                    text: "[from: kid]\nreport"
-                    token_count: 5
-                    created_at: 5
+              DeveloperMessage:
+                Peer:
+                  text: "[from: kid]\nreport"
+                  token_count: 5
+                  created_at: 5
           - HistoryUpdate:
-              - 1
-              - TurnResponse:
-                  Created:
-                    created_at: 6
+              TurnResponse:
+                Created:
+                  created_at: 6
         tasks:
           - - 2
             - turn
