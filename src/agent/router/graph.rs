@@ -23,12 +23,9 @@ pub struct AgentNode {
 #[derive(Debug)]
 pub enum Runtime {
     Live {
-        /// the agent's event channel: mail queues there until the runtime
-        /// drains it
         mailbox: UnboundedSender<AgentEvent>,
         abort: AbortHandle,
     },
-    /// terminal for this process, with the error that ended it
     Dead(String),
 }
 
