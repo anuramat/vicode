@@ -58,9 +58,6 @@ impl Agent {
         command: UserCommand,
     ) -> Result<()> {
         match command {
-            // queued while busy, so it doubles as steering; flushes after
-            // any messages stranded by abort -- abort itself never flushes:
-            // a naive flush would auto-start a turn on user abort
             UserCommand::Submit(text) => self.enqueue(now, UserMessage::new(text, now).into()),
             UserCommand::Compact(n) => self.compact(now, n),
             UserCommand::Retry => {
