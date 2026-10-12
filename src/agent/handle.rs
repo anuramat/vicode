@@ -362,13 +362,10 @@ impl Agent {
         &mut self,
         now: u64,
     ) -> Result<()> {
-        // resolve the fallible lookup before any history/task mutation: a
-        // stale assistant id must fail the submit, not wedge the agent busy
         let assistant = self
             .project
             .assistants()
             .assistant(&self.state.assistant_id)?;
-        // clone before the Created event appends the queued assistant message
         let messages = self.history().state().messages.clone();
         let instructions = self.history().instructions().to_string();
         let created = AssistantEvent::Created { created_at: now };
