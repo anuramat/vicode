@@ -1,38 +1,51 @@
 use anyhow::Result;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use tracing::instrument;
 use tracing::trace;
 
 use super::Agent;
 use super::Assistant;
-use crate::agent::task::sink::TurnHandle;
+use crate::agent::task::sink::TaskSink;
 use crate::agent::tool::registry::ToolRegistry;
 use crate::llm::history::AssistantEvent;
+use crate::llm::history::Summary;
+use crate::llm::history::message::CompactMessage;
 use crate::llm::history::message::Message;
-
-// TODO should these ResponseFailed events also coincide with ParentEvent::Error? and if so, should we emit ParentEvent::Error right here or in the HistoryEvent handler in the agent event loop?
+use crate::utils::now;
 
 impl Agent {
-    /// pump one assistant turn from the provider stream into the task sink
-    #[instrument(skip(handle, instructions, messages, assistant, tools))]
+    #[instrument(skip(sink, instructions, messages, assistant, tools))]
     pub async fn turn(
-        handle: TurnHandle,
+        sink: TaskSink,
         assistant: &Assistant,
         tools: ToolRegistry,
         instructions: String,
         messages: Vec<Message>,
     ) -> Result<()> {
-        let started = assistant.stream_turn(instructions, messages, tools).await?;
-        handle
-            .send(AssistantEvent::Started {
-                started_at: started.started_at,
-            })
-            .await?;
-        let mut stream = started.stream;
-        while let Some(event) = stream.next().await {
+        let mut stream = assistant.stream_turn(instructions, messages, tools).await?;
+        let mut completed = false;
+        while let Some(event) = stream.try_next().await? {
             trace!(event = ?event, "Stream chunk received");
-            handle.send(event?).await?;
+            completed = matches!(event, AssistantEvent::Completed { .. });
+            sink.stream(event)?;
         }
+        anyhow::ensure!(completed, "stream ended without completing");
         Ok(())
+    }
+
+    #[instrument(skip(instructions, messages, assistant))]
+    pub async fn summarize(
+        assistant: &Assistant,
+        instructions: String,
+        messages: Vec<Message>,
+    ) -> Result<CompactMessage> {
+        let mut summary = Summary::new(now());
+        let mut stream = assistant
+            .stream_turn(instructions, messages, ToolRegistry::empty())
+            .await?;
+        while let Some(event) = stream.try_next().await? {
+            summary.handle(event)?;
+        }
+        summary.finish()
     }
 }

@@ -15,9 +15,7 @@ pub struct ToolRuntimeContext {
     pub agent_id: AgentId,
     pub project: Project,
     pub router: Router,
-    /// streams output chunks back to the agent
     pub sink: TaskSink,
-    /// parent history for `spawn` calls with inherit=true
     pub inherited_history: Option<History>,
 }
 
