@@ -10,34 +10,41 @@ use std::time::Duration;
 use futures::future::AbortHandle;
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::timeout;
 
 use super::api::RouterError;
-use super::graph::NodeStatus;
 use super::graph::Runtime;
 use super::*;
-use crate::agent::Agent;
+use crate::agent::event::AgentEvent;
+use crate::agent::event::UiEvent;
 use crate::llm::history::AssistantEvent;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::delta::DeltaContent;
 use crate::llm::history::message::AssistantItem;
+use crate::llm::history::message::AssistantStatus;
+use crate::llm::history::message::DeveloperMessage;
+use crate::llm::history::message::Message;
 use crate::llm::history::message::OutputItem;
-use crate::llm::history::message::UserMessage;
 use crate::llm::provider::api::fake::FakeApi;
+use crate::tui::app::AppEvent;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Router {
-    /// register a root whose mailbox the test drives by hand — no runtime
-    /// task, so nothing reports status on its own
+    /// a live, durable root whose mailbox the test drives by hand — no
+    /// runtime task
     pub fn attach_manual(
         &self,
         aid: &AgentId,
-    ) -> UnboundedReceiver<UserMessage> {
+        mailbox: UnboundedSender<AgentEvent>,
+    ) {
         let (abort, _registration) = AbortHandle::new_pair();
-        self.register_root(aid).unwrap();
-        self.lock().go_live(aid, abort).unwrap()
+        let node = AgentNode::live(aid.clone(), None, mailbox, abort);
+        let s = &mut *self.lock();
+        drop(self.project.store().save_graph(aid, &node.record(false)));
+        s.graph.insert(aid.clone(), node);
     }
 
     /// Abort the agent's live runtime; the node stays reachable and the
@@ -60,42 +67,35 @@ impl Router {
         Ok(())
     }
 
-    fn status(
-        &self,
-        aid: &AgentId,
-    ) -> Option<NodeStatus> {
-        self.lock().graph.get(aid).map(AgentNode::status)
-    }
-
-    /// test-facing sync point: poll until `aid` is idle with an assistant
-    /// message reading `text` in its saved history. The output is saved
-    /// while the turn still runs, so idle-after-output is the turn's end,
-    /// never the idle before the mail was handled
-    pub async fn idle_with_output(
+    /// test-facing sync point: poll until `aid`'s saved history holds a
+    /// completed assistant message reading `text`, i.e. the turn that
+    /// wrote it has ended
+    pub async fn completed_output(
         &self,
         aid: &AgentId,
         text: &str,
     ) {
-        let project = self.lock().project.clone();
+        let project = self.project.clone();
         timeout(TIMEOUT, async {
             loop {
                 let answered = project.store().load_state(aid).await.is_ok_and(|state| {
                     state
-                        .context
                         .history
                         .state()
                         .iter()
                         .filter_map(|m| m.try_as_assistant_ref())
-                        .any(|m| m.text_output() == text)
+                        .any(|m| {
+                            matches!(m.status, AssistantStatus::Success) && m.text_output() == text
+                        })
                 });
-                if answered && self.status(aid) == Some(NodeStatus::Idle) {
+                if answered {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("{aid} never went idle on {text:?}"));
+        .unwrap_or_else(|_| panic!("{aid} never completed {text:?}"));
     }
 
     /// poll until `aid` is dead; returns what a send to it reports
@@ -104,7 +104,13 @@ impl Router {
         aid: &AgentId,
     ) -> Result<(), RouterError> {
         timeout(TIMEOUT, async {
-            while self.status(aid) != Some(NodeStatus::Dead) {
+            while !matches!(
+                self.lock().graph.get(aid),
+                Some(AgentNode {
+                    runtime: Runtime::Dead(_),
+                    ..
+                })
+            ) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -120,7 +126,7 @@ struct Rig {
     router: Router,
     primary: AgentId,
     /// the dummy primary's mailbox: nobody runs it
-    primary_mail: UnboundedReceiver<UserMessage>,
+    primary_mail: UnboundedReceiver<AgentEvent>,
     /// the repo's HEAD: the tab's snapshot, and where children start
     commit: String,
 }
@@ -128,7 +134,7 @@ struct Rig {
 impl Rig {
     async fn new(name: &str) -> Self {
         let (project, api) = Project::new_test().unwrap();
-        let router = spawn_router(&project, Default::default());
+        let router = Router::new(unbounded_channel().0, project.clone());
         let (primary, primary_mail) = register_primary(&project, &router, name).await;
         let commit = project.head_commit();
         Self {
@@ -161,7 +167,7 @@ impl Rig {
             .spawn_agent(&parent, &self.commit, None, "go")
             .await
             .unwrap();
-        self.router.idle_with_output(&child, text).await;
+        self.router.completed_output(&child, text).await;
         child
     }
 }
@@ -185,34 +191,12 @@ fn script_turn(
     ]);
 }
 
-/// an app bus nobody renders: drained so agent emits never block
-fn drained_app_tx() -> Sender<AppEvent> {
-    let (app_tx, mut app_rx) = channel(256);
-    tokio::spawn(async move { while app_rx.recv().await.is_some() {} });
-    app_tx
-}
-
-fn spawn_router(
-    project: &Project,
-    records: BTreeMap<AgentId, graph::GraphRecord>,
-) -> Router {
-    let restored = records.keys().map(|a| (a.clone(), None)).collect();
-    RouterState::start(
-        drained_app_tx(),
-        project.clone(),
-        records,
-        Default::default(),
-        restored,
-    )
-}
-
-/// a primary with a workdir + saved state and a dummy (test-held) runtime,
-/// reported idle
+/// a primary with a workdir + saved state and a dummy (test-held) runtime
 async fn register_primary(
     project: &Project,
     router: &Router,
     name: &str,
-) -> (AgentId, UnboundedReceiver<UserMessage>) {
+) -> (AgentId, UnboundedReceiver<AgentEvent>) {
     let aid = AgentId::from(name.to_string());
     tokio::fs::create_dir_all(project.agent_workdir(&aid))
         .await
@@ -222,38 +206,37 @@ async fn register_primary(
         .save_state(&aid, &project.fake_state())
         .await
         .unwrap();
-    let mail = router.attach_manual(&aid);
-    router.report_status(&aid, NodeStatus::Idle);
+    let (mailbox, mail) = unbounded_channel();
+    router.attach_manual(&aid, mailbox);
     (aid, mail)
 }
 
-async fn start_saved_agents(
-    project: &Project,
-    router: &Router,
-    aids: &[AgentId],
-) {
-    for aid in aids {
-        let state = project.store().load_state(aid).await.unwrap();
-        let agent = Agent::new(
-            project.clone(),
-            router.clone(),
-            drained_app_tx(),
-            aid.clone(),
-            state,
-        );
-        router.launch(agent).unwrap();
+/// boot from the store as the app does, and start every restored agent
+async fn reboot(project: &Project) -> Router {
+    let (app_tx, app_rx) = unbounded_channel();
+    let boot = Router::boot(app_tx, project.clone()).await.unwrap();
+    start(boot, app_rx).await
+}
+
+/// launch every restored agent; up once each runtime reports `Started`
+async fn start(
+    boot: boot::Boot,
+    mut app_rx: UnboundedReceiver<AppEvent>,
+) -> Router {
+    let mut down: BTreeSet<AgentId> = boot.agents.iter().map(|l| l.agent.id.clone()).collect();
+    for launch in boot.agents {
+        launch.go();
     }
-    // up once the runtime reports its startup status
     timeout(TIMEOUT, async {
-        while aids
-            .iter()
-            .any(|aid| router.status(aid) == Some(NodeStatus::Spawning))
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        while !down.is_empty() {
+            if let Some(AppEvent::Agent(aid, UiEvent::Started { .. })) = app_rx.recv().await {
+                down.remove(&aid);
+            }
         }
     })
     .await
-    .expect("saved agents never started");
+    .expect("restored agents never started");
+    boot.router
 }
 
 #[test]
@@ -274,7 +257,6 @@ async fn spawn_registers_under_parent() {
     let members = rig.router.list(&rig.primary, false).unwrap();
     let child_member = members.iter().find(|m| m.id == child).unwrap();
     assert_eq!(child_member.parent, Some(rig.primary.clone()));
-    assert_eq!(child_member.status, NodeStatus::Idle);
 }
 
 #[tokio::test]
@@ -285,7 +267,7 @@ async fn send_wakes_an_idle_target() {
     rig.script("second", "second");
     let sent = rig.router.send_message(&rig.primary, &child, "more");
     assert_eq!(sent, Ok(()));
-    rig.router.idle_with_output(&child, "second").await;
+    rig.router.completed_output(&child, "second").await;
 }
 
 /// a child reports back the only way there is: a send into the parent's
@@ -299,32 +281,31 @@ async fn child_reports_to_parent_by_send() {
         rig.router.send_message(&child, &rig.primary, "done"),
         Ok(())
     );
-    let report = timeout(TIMEOUT, rig.primary_mail.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let Some(AgentEvent::Message(report)) =
+        timeout(TIMEOUT, rig.primary_mail.recv()).await.unwrap()
+    else {
+        panic!("no report");
+    };
     assert_eq!(report.text, format!("[from: {child}]\ndone"));
 }
 
+/// a spawn's node joins the graph only once set up: nobody sees it in
+/// progress
 #[tokio::test]
-async fn send_to_still_spawning_child_parks_in_minted_mailbox() {
+async fn spawn_in_progress_is_invisible() {
     let rig = Rig::new("prime").await;
     rig.script("o1", "seeded");
-    // one poll registers the child under the lock and leaves its setup
-    // tail in flight, so we see it still spawning
+    // one poll leaves the setup tail in flight
     let mut spawn = std::pin::pin!(
         rig.router
             .spawn_agent(&rig.primary, &rig.commit, None, "go")
     );
     assert!(futures::poll!(&mut spawn).is_pending());
     let members = rig.router.list(&rig.primary, true).unwrap();
-    let child = members.iter().find(|m| m.id != rig.primary).unwrap();
-    assert_eq!(child.status, NodeStatus::Spawning);
+    assert_eq!(members.len(), 1);
 
-    // parks until the runtime starts — never Unreachable, never blocking
-    let sent = rig.router.send_message(&rig.primary, &child.id, "psst");
-    assert_eq!(sent, Ok(()));
-    timeout(TIMEOUT, spawn).await.unwrap().unwrap();
+    let child = timeout(TIMEOUT, spawn).await.unwrap().unwrap();
+    rig.router.completed_output(&child, "seeded").await;
 }
 
 #[tokio::test]
@@ -421,6 +402,8 @@ async fn archive_tab_reaps_every_member() {
     assert!(records[&child].archived);
 }
 
+/// a restart never wakes an agent: mail buffered before it waits for the
+/// next delivery, and flushes with it into one turn
 #[tokio::test]
 async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let rig = Rig::new("prime").await;
@@ -434,23 +417,32 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     let mut kept_state = rig.project.store().load_state(&kept).await.unwrap();
     kept_state
         .pending_messages
-        .push(crate::llm::history::message::UserMessage::new(
-            "[from: prime]\nresume".into(),
-            10,
-        ));
+        .push(crate::llm::history::message::PeerMessage::new("prime", "buffered", 10).into());
     rig.project
         .store()
         .save_state(&kept, &kept_state)
         .await
         .unwrap();
-    rig.script("resumed", "resumed");
+    rig.script("woken", "woken");
 
-    let records = rig.project.store().load_graph().await.unwrap();
-    let router2 = spawn_router(&rig.project, records);
-    start_saved_agents(&rig.project, &router2, &[rig.primary.clone(), kept.clone()]).await;
+    let router2 = reboot(&rig.project).await;
 
-    router2.idle_with_output(&kept, "resumed").await;
-    assert_eq!(router2.status(&kept), Some(NodeStatus::Idle));
+    router2.send_message(&rig.primary, &kept, "poke").unwrap();
+    router2.completed_output(&kept, "woken").await;
+    let history = rig.project.store().load_state(&kept).await.unwrap().history;
+    let tail: Vec<String> = history.state().messages[history.state().messages.len() - 3..]
+        .iter()
+        .map(|m| match m {
+            Message::Developer(DeveloperMessage::Peer(p)) => p.text.clone(),
+            Message::Assistant(a) => a.text_output().to_string(),
+            m => panic!("unexpected {m:?}"),
+        })
+        .collect();
+    insta::assert_yaml_snapshot!(tail, @r#"
+    - "[from: prime]\nbuffered"
+    - "[from: prime]\npoke"
+    - woken
+    "#);
     assert_eq!(
         router2.send_message(&rig.primary, &archived, "hi"),
         Err(RouterError::Unreachable)
@@ -459,71 +451,95 @@ async fn restart_starts_all_alive_agents_and_excludes_archived() {
     assert!(rig.project.agent_workdir(&archived).exists());
 }
 
+/// partial boot: archived records and an invalid root's whole tab stay out
+/// (state under it is never read), an invalid child is a reachable `Dead`
+/// node, and its valid descendant still starts
 #[tokio::test]
-async fn invalid_child_is_dead_while_valid_descendant_starts() {
+async fn boot_isolates_invalid_agents() {
     let (project, _api) = Project::new_test().unwrap();
-    let prime = AgentId::from("prime".to_string());
-    let bad = AgentId::from("bad".to_string());
-    let descendant = AgentId::from("descendant".to_string());
+    let aid = |s: &str| AgentId::from(s.to_string());
+    let record = |root: &str, parent: Option<&str>, archived| graph::GraphRecord {
+        root: aid(root),
+        parent: parent.map(aid),
+        archived,
+    };
     let records = [
+        ("good", record("good", None, false)),
+        ("bad-root", record("bad-root", None, false)),
+        ("bad-child", record("good", Some("good"), false)),
+        ("grandchild", record("good", Some("bad-child"), false)),
         (
-            prime.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: None,
-                archived: false,
-            },
+            "under-bad-root",
+            record("bad-root", Some("bad-root"), false),
         ),
-        (
-            bad.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: Some(prime.clone()),
-                archived: false,
-            },
-        ),
-        (
-            descendant.clone(),
-            graph::GraphRecord {
-                root: prime.clone(),
-                parent: Some(bad.clone()),
-                archived: false,
-            },
-        ),
+        ("archived", record("archived", None, true)),
     ]
-    .into_iter()
-    .collect();
-    for aid in [&prime, &descendant] {
-        tokio::fs::create_dir_all(project.agent_workdir(aid))
+    .map(|(id, record)| (aid(id), record));
+    project.store().save_graph_batch(&records).await.unwrap();
+    // `bad-*` have no state to load
+    for id in ["good", "grandchild", "under-bad-root", "archived"] {
+        tokio::fs::create_dir_all(project.agent_workdir(&aid(id)))
             .await
             .unwrap();
         project
             .store()
-            .save_state(aid, &project.fake_state())
+            .save_state(&aid(id), &project.fake_state())
             .await
             .unwrap();
     }
-    let restored = [
-        (prime.clone(), None),
-        (bad.clone(), Some("corrupt child row".to_string())),
-        (descendant.clone(), None),
-    ]
-    .into_iter()
-    .collect();
-    let router = RouterState::start(
-        drained_app_tx(),
-        project.clone(),
-        records,
-        Default::default(),
-        restored,
-    );
-    start_saved_agents(&project, &router, &[prime.clone(), descendant.clone()]).await;
 
+    let (app_tx, app_rx) = unbounded_channel();
+    let boot = Router::boot(app_tx, project.clone()).await.unwrap();
+    // the death reason, if any
+    let graph: BTreeMap<AgentId, Option<String>> = boot
+        .router
+        .lock()
+        .graph
+        .iter()
+        .map(|(id, node)| {
+            let death = match &node.runtime {
+                Runtime::Live { .. } => None,
+                Runtime::Dead(reason) => Some(reason.clone()),
+            };
+            (id.clone(), death)
+        })
+        .collect();
+    insta::assert_yaml_snapshot!(serde_json::json!({
+        "tabs": boot.tabs.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        "agents": boot.agents.iter().map(|l| &l.agent.id).collect::<Vec<_>>(),
+        "failures": boot.failures,
+        "graph": graph,
+        "all_ids": boot.router.lock().all_ids,
+    }), @"
+    agents:
+      - good
+      - grandchild
+    all_ids:
+      - archived
+      - bad-child
+      - bad-root
+      - good
+      - grandchild
+      - under-bad-root
+    failures:
+      - - bad-root
+        - agent bad-root not found
+      - - bad-child
+        - agent bad-child not found
+    graph:
+      bad-child: agent bad-child not found
+      good: ~
+      grandchild: ~
+    tabs:
+      - good
+    ");
+
+    // the grandchild starts under its dead parent
+    let router = start(boot, app_rx).await;
     assert_eq!(
-        router.send_message(&prime, &bad, "hi"),
-        Err(RouterError::Dead("corrupt child row".into()))
+        router.send_message(&aid("good"), &aid("bad-child"), "hi"),
+        Err(RouterError::Dead("agent bad-child not found".into()))
     );
-    assert_eq!(router.status(&descendant), Some(NodeStatus::Idle));
 }
 
 #[tokio::test]
@@ -541,28 +557,22 @@ async fn runtime_death_is_terminal_until_restart() {
         .await
         .unwrap_err();
     assert_eq!(err.to_string(), format!("agent {child} is dead"));
-    // A late status report cannot revive or overwrite a terminal node.
-    rig.router.report_status(&child, NodeStatus::Idle);
-    assert_eq!(rig.router.send_message(&rig.primary, &child, "hi"), dead);
     let records = rig.project.store().load_graph().await.unwrap();
     assert!(!records[&child].archived);
 
-    let router2 = spawn_router(&rig.project, records);
-    start_saved_agents(
-        &rig.project,
-        &router2,
-        &[rig.primary.clone(), child.clone()],
-    )
-    .await;
-    assert_eq!(router2.status(&child), Some(NodeStatus::Idle));
+    let router2 = reboot(&rig.project).await;
+    assert!(matches!(
+        router2.lock().graph[&child].runtime,
+        Runtime::Live { .. }
+    ));
 }
 
 #[tokio::test]
 async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
     let (project, api) = Project::new_test().unwrap();
     let prime = AgentId::from("prime".to_string());
-    // Boot with the tab already at the cap. Durable members hold slots even
-    // before their runtimes attach.
+    // Boot with the tab already at the cap. Durable members hold slots
+    // whatever their runtime: these have no state, so they boot `Dead`.
     let member = |i: usize| {
         (
             AgentId::from(format!("m{i}")),
@@ -582,8 +592,8 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         },
     ))
     .chain((1..TAB_AGENT_CAP).map(member))
-    .collect();
-    let router = spawn_router(&project, records);
+    .collect::<Vec<_>>();
+    project.store().save_graph_batch(&records).await.unwrap();
     tokio::fs::create_dir_all(project.agent_workdir(&prime))
         .await
         .unwrap();
@@ -592,7 +602,7 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         .save_state(&prime, &project.fake_state())
         .await
         .unwrap();
-    start_saved_agents(&project, &router, std::slice::from_ref(&prime)).await;
+    let router = reboot(&project).await;
 
     let err = router
         .spawn_agent(&prime, &project.head_commit(), None, "go")
@@ -615,7 +625,7 @@ async fn spawn_errors_at_the_tab_cap_and_archive_frees_a_slot() {
         .spawn_agent(&prime, &project.head_commit(), None, "go")
         .await
         .unwrap();
-    router.idle_with_output(&child, "fits now").await;
+    router.completed_output(&child, "fits now").await;
 }
 
 /// a spawn checks the child out at the requested commit, on its own
@@ -646,7 +656,7 @@ async fn spawn_checks_the_child_out_at_the_requested_commit() {
         .spawn_agent(&rig.primary, &start, None, "go")
         .await
         .unwrap();
-    rig.router.idle_with_output(&child, "done").await;
+    rig.router.completed_output(&child, "done").await;
 
     let workdir = rig.project.agent_workdir(&child);
     assert_eq!(
@@ -660,7 +670,7 @@ async fn spawn_checks_the_child_out_at_the_requested_commit() {
     assert_eq!(branch.get().target().unwrap().to_string(), start);
     // the snapshot stays the tab's
     let state = rig.project.store().load_state(&child).await.unwrap();
-    assert_eq!(state.context.commit, rig.commit);
+    assert_eq!(state.commit, rig.commit);
 }
 
 #[tokio::test]
@@ -723,49 +733,65 @@ async fn failed_spawn_after_checkout_leaves_no_branch() {
     assert_eq!(branches, Vec::<String>::new());
 }
 
+/// a create whose setup fails or panics after making its workdir leaves
+/// no node, state, graph record or dir behind
 #[tokio::test]
-async fn archive_racing_in_flight_spawn_never_resurrects_the_record() {
+async fn create_rolls_back_failed_and_panicking_setups() {
     let rig = Rig::new("prime").await;
-    rig.script("o1", "never collected");
-    let mut spawn = std::pin::pin!(
-        rig.router
-            .spawn_agent(&rig.primary, &rig.commit, None, "go")
-    );
-    assert!(futures::poll!(&mut spawn).is_pending());
-    let members = rig.router.list(&rig.primary, true).unwrap();
-    let child = members
-        .iter()
-        .find(|m| m.id != rig.primary)
-        .unwrap()
-        .id
-        .clone();
+    for panics in [false, true] {
+        let aid = rig.router.allocate_agent_id();
+        let workdir = rig.project.agent_workdir(&aid);
+        let setup = async move {
+            tokio::fs::create_dir_all(&workdir).await?;
+            assert!(!panics, "boom");
+            anyhow::bail!("boom")
+        };
+        let err = rig
+            .router
+            .create(aid.clone(), None, setup)
+            .await
+            .unwrap_err();
+        let expected = if panics {
+            "agent setup panicked: boom"
+        } else {
+            "boom"
+        };
+        assert_eq!(err.to_string(), expected);
+        assert!(!rig.router.lock().graph.contains_key(&aid));
+        assert!(rig.project.store().load_state(&aid).await.is_err());
+        assert!(!rig.project.agent(&aid).exists());
+    }
+    let records = rig.project.store().load_graph().await.unwrap();
+    assert_eq!(records.keys().collect::<Vec<_>>(), vec![&rig.primary]);
+}
 
-    // archive while the spawn tail is (likely) still in flight
+/// the parent archived mid-spawn: the commit finds it gone and rolls the
+/// child back, so it never joins the graph
+#[tokio::test]
+async fn spawn_under_parent_archived_mid_setup_rolls_back() {
+    let rig = Rig::new("prime").await;
+    let child = rig.spawn_idle_child(&rig.primary, "child").await;
+    let mut spawn = std::pin::pin!(rig.router.spawn_agent(&child, &rig.commit, None, "go"));
+    assert!(futures::poll!(&mut spawn).is_pending());
+
     assert_eq!(
         rig.router.archive(&rig.primary, &child).await.unwrap(),
         Ok(())
     );
-    // Let the tail land either way. If archive won before attachment, setup
-    // rolls back; if attachment won, the durable archived graph record wins.
-    drop(timeout(TIMEOUT, spawn).await);
+    let err = timeout(TIMEOUT, spawn).await.unwrap().unwrap_err();
+    assert_eq!(err.to_string(), format!("unknown agent {child}"));
 
     let records = rig.project.store().load_graph().await.unwrap();
-    assert!(records.get(&child).is_none_or(|record| record.archived));
+    let ids: BTreeSet<&AgentId> = records.keys().collect();
+    assert_eq!(ids, BTreeSet::from([&rig.primary, &child]));
+    let dirs: BTreeSet<_> = std::fs::read_dir(rig.project.agents())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(
-        rig.router.send_message(&rig.primary, &child, "hi"),
-        Err(RouterError::Unreachable)
+        dirs,
+        BTreeSet::from([rig.primary.to_string().into(), child.to_string().into()])
     );
-}
-
-#[tokio::test]
-async fn launch_is_one_shot() {
-    let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
-    let aid = AgentId::from("dup".to_string());
-    let _mail = router.attach_manual(&aid);
-
-    let (abort, _registration) = AbortHandle::new_pair();
-    assert!(router.lock().go_live(&aid, abort).is_err());
 }
 
 /// a closed mailbox means the runtime is gone: the send fails, but the
@@ -773,7 +799,7 @@ async fn launch_is_one_shot() {
 #[tokio::test]
 async fn send_to_closed_mailbox_is_rejected_without_recording_a_death() {
     let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
+    let router = Router::new(unbounded_channel().0, project.clone());
     let (aid, mail) = register_primary(&project, &router, "prime").await;
     drop(mail); // the runtime is gone, its supervisor hasn't reported yet
 
@@ -791,7 +817,7 @@ async fn send_to_closed_mailbox_is_rejected_without_recording_a_death() {
 #[tokio::test]
 async fn duplicate_runtime_down_keeps_the_first_terminal_error() {
     let (project, _api) = Project::new_test().unwrap();
-    let router = spawn_router(&project, Default::default());
+    let router = Router::new(unbounded_channel().0, project.clone());
     let (aid, _mail) = register_primary(&project, &router, "prime").await;
 
     router.runtime_down(&aid, "first failure".into());
@@ -827,12 +853,11 @@ async fn send_burst_drains_into_the_target_history() {
         loop {
             let state = rig.project.store().load_state(&child).await.unwrap();
             let texts: Vec<String> = state
-                .context
                 .history
                 .state()
                 .iter()
                 .filter_map(|m| match m {
-                    crate::llm::history::message::Message::User(u) => Some(u.text.clone()),
+                    Message::Developer(DeveloperMessage::Peer(p)) => Some(p.text.clone()),
                     _ => None,
                 })
                 .collect();
@@ -851,18 +876,12 @@ async fn supervised(
     cancel: bool,
 ) -> Result<(), RouterError> {
     let project = Project::new_test().unwrap().0;
-    let (app_tx, _app_rx) = channel(8);
-    let router = RouterState::start(
-        app_tx,
-        project,
-        Default::default(),
-        Default::default(),
-        Default::default(),
-    );
+    let (app_tx, _app_rx) = unbounded_channel();
+    let router = Router::new(app_tx, project);
     let aid = AgentId::from(format!("supervised-{}", uuid::Uuid::new_v4()));
-    router.register_root(&aid).unwrap();
     let (abort, registration) = AbortHandle::new_pair();
-    let _mail = router.lock().go_live(&aid, abort.clone()).unwrap();
+    let node = AgentNode::live(aid.clone(), None, unbounded_channel().0, abort.clone());
+    router.lock().graph.insert(aid.clone(), node);
     tokio::spawn(ops::runtime::supervise(
         aid.clone(),
         router.clone(),
