@@ -338,7 +338,6 @@ impl Agent {
         n_drop: usize,
     ) -> Result<()> {
         anyhow::ensure!(!self.compacting(), "already compacting");
-        // a turn in flight still writes to the last message: leave it out
         let len = self.history().state().len();
         let stable = if self.tasks.in_turn() { len - 1 } else { len };
         let n_drop = n_drop.min(stable);
@@ -349,7 +348,6 @@ impl Agent {
             .assistant(&self.state.assistant_id)?;
         let instructions = self.history().instructions().to_string();
         let messages = self.history().compact_input(n_drop, now);
-        // clears a failure, turning autocompact back on
         self.compaction = None;
         self.tasks.spawn(Task::Compact { n_drop }, |_| async move {
             Self::summarize(&assistant, instructions, messages)
