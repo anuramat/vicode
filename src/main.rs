@@ -17,11 +17,16 @@ mod tools;
 mod tui;
 mod utils;
 
+use std::panic::AssertUnwindSafe;
+
+use anyhow::anyhow;
 use clap::Parser;
+use futures::FutureExt;
 use tui::app::App;
 
 use crate::cli::Cli;
 use crate::config::Config;
+use crate::utils::panic_message;
 
 #[tokio::main]
 async fn main() {
@@ -33,7 +38,10 @@ async fn main() {
     }
 
     let config = Config::load().unwrap_or_else(|err| fatal(&err));
-    let result = App::launch(config).await;
+    let result = AssertUnwindSafe(App::launch(config))
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|panic| Err(anyhow!("app panicked: {}", panic_message(&*panic))));
     App::reset_terminal();
     if let Err(err) = result {
         fatal(&err);

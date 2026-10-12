@@ -6,9 +6,12 @@ use crossterm::event::DisableBracketedPaste;
 use crossterm::event::EnableBracketedPaste;
 use crossterm::event::Event;
 use crossterm::execute;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::enable_raw_mode;
 use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
+use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::time::Duration;
 use tokio::time::sleep_until;
@@ -75,7 +78,14 @@ impl App<'_> {
     }
 
     pub fn setup_terminal(&mut self) -> Result<DefaultTerminal> {
-        let mut term = ratatui::init();
+        // equivalent to ratatui::init() but with a different panic hook:
+        // instead of restoring the terminal on every panic and sending the panic to stderr,
+        // we log the panic and restore the terminal on exit
+        std::panic::set_hook(Box::new(|info| tracing::error!("{info}")));
+        enable_raw_mode()?;
+        execute!(std::io::stdout(), EnterAlternateScreen)?;
+        let mut term = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+
         self.draw(&mut term)?; // first render
         tracing::debug!("first render done");
         self.spawn_crossterm_translator();

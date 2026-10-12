@@ -26,14 +26,10 @@ pub const TAB_AGENT_CAP: usize = 32;
 #[derive(Debug)]
 pub struct RouterInner {
     pub project: Project,
-    /// handed to every agent the router creates
     pub app_tx: UnboundedSender<AppEvent>,
     state: Mutex<RouterState>,
 }
 
-/// the agent graph; every operation is a plain method on [`Router`] that
-/// runs under the lock — nothing awaits while holding it, async work (store
-/// commits, workdir setup) runs in detached tails that lock again to finish
 #[derive(Debug, Default)]
 pub struct RouterState {
     /// only live agents

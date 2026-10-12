@@ -12,6 +12,7 @@ use tokio::task::JoinSet;
 use crate::agent::event::AgentEvent;
 use crate::agent::event::TaskResult;
 use crate::agent::task::sink::TaskSink;
+use crate::utils::panic_message;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -157,14 +158,6 @@ impl Tasks {
         self.executor.abort_all();
         self.by_id.clear();
     }
-}
-
-pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
-    payload
-        .downcast_ref::<&str>()
-        .map(|s| (*s).to_string())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "unknown panic".into())
 }
 
 #[cfg(test)]
