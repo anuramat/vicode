@@ -318,7 +318,6 @@ impl Agent {
             return Ok(());
         };
         let config = self.project.config().compact;
-        // a failure in `compaction` turns autocompact off
         if self.tasks.compacting() || self.compaction.is_some() || !self.past(config.threshold) {
             return Ok(());
         }
