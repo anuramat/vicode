@@ -256,6 +256,7 @@ mod tests {
                 started_at: 1,
                 ended_at: Some(2),
                 ready_at: Some(3),
+                streamed: String::new(),
                 token_count: 0,
                 task: Box::new(task),
             })

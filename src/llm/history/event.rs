@@ -1,11 +1,11 @@
-use crate::llm::history::compact::CompactStart;
+use std::ops::Range;
+
+use crate::llm::history::compaction::Compaction;
 use crate::llm::history::delta::Delta;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
 use crate::llm::history::message::UserMessage;
 use crate::llm::history::timing::now;
-
-pub type HistoryGeneration = u64;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -21,20 +21,56 @@ pub enum AssistantEvent {
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(serde::Serialize))]
 pub enum HistoryUpdate {
-    CompactStart(CompactStart),
-    CompactAbort,
-    CompactResponse(AssistantEvent),
-    GenerationIncremented,
+    /// replace the oldest messages with their summary
+    Compaction(Compaction),
     TurnResponse(AssistantEvent),
     UserMessage(UserMessage),
     DeveloperMessage(DeveloperMessage),
     Pop(usize),
     // TODO expand etc
-    /// abort etc
+    /// a tool task failed
     ToolCallFailed {
         call_id: String,
         error: String,
     },
+    /// a chunk of an in-flight tool call's output
+    ToolOutput {
+        call_id: String,
+        chunk: String,
+    },
+    /// everything in flight is gone: fail the response and every unresolved
+    /// tool call
+    FailUnresolved {
+        message: String,
+        ended_at: u64,
+    },
+}
+
+/// one change a `HistoryUpdate` made: the old messages in `range` became `len`
+/// new ones
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+pub struct Splice {
+    pub range: Range<usize>,
+    pub len: usize,
+}
+
+impl Splice {
+    /// message `idx` changed in place
+    pub fn edit(idx: usize) -> Self {
+        Self {
+            range: idx..idx + 1,
+            len: 1,
+        }
+    }
+
+    /// a message got appended to `len` messages
+    pub fn append(len: usize) -> Self {
+        Self {
+            range: len..len,
+            len: 1,
+        }
+    }
 }
 
 impl AssistantEvent {
@@ -50,12 +86,5 @@ impl AssistantEvent {
     pub fn item_done(mut item: AssistantItem) -> Self {
         item.touch_ended_at(now());
         Self::Item(Box::new(item))
-    }
-
-    pub fn failed(message: String) -> Self {
-        Self::Failed {
-            message,
-            ended_at: now(),
-        }
     }
 }

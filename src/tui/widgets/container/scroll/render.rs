@@ -22,7 +22,6 @@ impl ScrollElements {
         self.width = area.width;
         self.height = area.height;
         self.ctx = ctx;
-        self.set_len(data.len());
 
         if data.is_empty() || area.area() == 0 {
             return;

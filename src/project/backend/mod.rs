@@ -44,14 +44,6 @@ impl Backend {
             unreachable!("compile_error! in main.rs should have fired for this target_os")
         }
     }
-
-    /// paths excluded from diffs etc
-    pub fn excluded_workdir_paths(&self) -> &[String] {
-        match self {
-            Self::Overlay(overlay) => &overlay.shared_paths,
-            Self::Cow(_) => &[],
-        }
-    }
 }
 
 #[async_trait::async_trait]

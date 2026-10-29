@@ -102,6 +102,7 @@ mod tests {
             call_id: "call_id_2".into(),
             started_at: 1,
             ended_at: Some(3),
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(task),
             ready_at: Some(5),
@@ -143,6 +144,7 @@ mod tests {
             started_at: 1,
             ended_at: Some(3),
             ready_at: None,
+            streamed: String::new(),
             token_count: 0,
             task: Box::new(task),
         };

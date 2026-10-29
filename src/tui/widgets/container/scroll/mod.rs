@@ -1,6 +1,9 @@
 pub mod r#move;
 pub mod render;
 
+use std::iter;
+use std::ops::Range;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -90,27 +93,36 @@ impl ScrollElements {
         }
     }
 
-    pub fn set_dirty(
+    /// mirror a change to the data: the elements in `range` became `len` new ones
+    pub fn splice(
         &mut self,
-        idx: usize,
+        range: Range<usize>,
+        len: usize,
     ) {
-        if idx < self.dirty.len() {
-            self.dirty[idx] = true;
+        let (start, end) = (range.start, range.end);
+        self.elements
+            .splice(range.clone(), iter::repeat_with(Element::default).take(len));
+        self.dirty.splice(range, iter::repeat_n(true, len));
+        // keep the view on the same element, if it survived
+        if self.start.idx >= end {
+            self.start.idx = self.start.idx + len - (end - start);
+        } else if self.start.idx >= start + len {
+            self.start = StartLocation::default();
+            self.mode = Mode::Tail;
         }
     }
 
-    pub fn set_len(
-        &mut self,
-        len: usize,
-    ) {
-        if len < self.elements.len() {
-            self.dirty = Vec::new();
-        }
-        self.dirty.resize(len, true);
-        self.elements.resize_with(len, Default::default);
-        if len == 0 || self.start.idx >= len {
-            self.start = StartLocation::default();
-            self.mode = Mode::Tail;
+    /// number of cached elements
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+
+    /// empty cache for `len` elements
+    pub fn new(len: usize) -> Self {
+        Self {
+            dirty: vec![true; len],
+            elements: iter::repeat_with(Element::default).take(len).collect(),
+            ..Default::default()
         }
     }
 
@@ -199,6 +211,61 @@ mod tests {
         fn from(value: &TestElement) -> Self {
             Self::new(value.clone())
         }
+    }
+
+    /// (start idx, tail mode, dirty) after splicing, scrolled to element 3 of 5
+    fn spliced(
+        range: Range<usize>,
+        len: usize,
+    ) -> (usize, bool, Vec<bool>) {
+        let mut scroll = ScrollElements::new(5);
+        scroll.dirty = vec![false; 5];
+        scroll.start.idx = 3;
+        scroll.mode = Mode::Scrolling;
+        scroll.splice(range, len);
+        assert_eq!(scroll.elements.len(), scroll.dirty.len());
+        (
+            scroll.start.idx,
+            matches!(scroll.mode, Mode::Tail),
+            scroll.dirty,
+        )
+    }
+
+    #[test]
+    fn splice_after_start_keeps_the_view() {
+        assert_eq!(
+            spliced(5..5, 1),
+            (3, false, vec![false, false, false, false, false, true])
+        );
+        assert_eq!(
+            spliced(4..5, 1),
+            (3, false, vec![false, false, false, false, true])
+        );
+        assert_eq!(spliced(4..5, 0), (3, false, vec![false; 4]));
+    }
+
+    #[test]
+    fn splice_before_start_shifts_it() {
+        // compaction: the first three become a summary
+        assert_eq!(spliced(0..3, 1), (1, false, vec![true, false, false]));
+        assert_eq!(
+            spliced(1..2, 3),
+            (5, false, vec![false, true, true, true, false, false, false])
+        );
+    }
+
+    #[test]
+    fn splice_in_place_keeps_the_view() {
+        assert_eq!(
+            spliced(3..5, 2),
+            (3, false, vec![false, false, false, true, true])
+        );
+    }
+
+    #[test]
+    fn splice_dropping_start_tails() {
+        assert_eq!(spliced(0..4, 1), (0, true, vec![true, false]));
+        assert_eq!(spliced(3..5, 0), (0, true, vec![false; 3]));
     }
 
     #[test]
