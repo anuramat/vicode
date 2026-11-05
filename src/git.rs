@@ -299,3 +299,32 @@ pub async fn checkout(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use crate::agent::AgentId;
+    use crate::project::Project;
+
+    /// only commit ids resolve -- full, abbreviated, or the worktree's HEAD
+    /// by default; branch names and rev expressions are rejected
+    #[tokio::test]
+    async fn resolve_accepts_only_commit_ids() {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("resolver".to_string());
+        let head = project.head_commit();
+        project.new_agent_workdir(&head, &aid).await.unwrap();
+        let wd = project.agent_workdir(&aid);
+
+        assert_eq!(
+            [None, Some(head.as_str()), Some(&head[..7])]
+                .map(|id| super::resolve(&wd, id).unwrap()),
+            [head.clone(), head.clone(), head.clone()]
+        );
+        let branch = project.worktree_name(&aid);
+        for rev in [branch.as_str(), "HEAD", "HEAD~0"] {
+            assert!(super::resolve(&wd, Some(rev)).is_err(), "{rev} resolved");
+        }
+    }
+}

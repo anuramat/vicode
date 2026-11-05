@@ -91,3 +91,111 @@ fn cut_off(bytes: &[u8]) -> usize {
         _ => 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use super::*;
+    use crate::agent::event::AgentEvent;
+    use crate::agent::task::Task;
+    use crate::agent::task::Tasks;
+
+    #[tokio::test]
+    async fn exec_streams_chunks_and_returns_status_only() {
+        let runner = SandboxRunner {
+            bin: "bash".into(),
+            args: vec![],
+            cwd: std::env::temp_dir(),
+        };
+        let (tx, mut rx) = unbounded_channel();
+        let tid = Tasks::held().register(Task::Turn);
+        let sink = TaskSink::new(tid, tx);
+
+        let result = exec_streaming(
+            &runner,
+            vec!["-c".into()],
+            "echo one; echo two >&2; exit 3".into(),
+            &sink,
+        )
+        .await
+        .unwrap();
+
+        // the text lives in the stream, not the return
+        similar_asserts::assert_eq!(
+            result,
+            BashResult {
+                output: String::new(),
+                exit_status: Some(3),
+                signal: None,
+            }
+        );
+        // every chunk reached the sink, tagged with the task id; composing
+        // the accumulated stream fills the output text
+        let mut streamed = String::new();
+        while let Ok(event) = rx.try_recv() {
+            let AgentEvent::Output(id, chunk) = event else {
+                panic!("expected output, got {event:?}");
+            };
+            assert_eq!(id, tid);
+            streamed.push_str(&chunk);
+        }
+        assert_eq!(streamed.len(), "one\ntwo\n".len());
+        let result = BashArguments::compose(Some(result), streamed.clone()).unwrap();
+        assert_eq!(result.output, streamed);
+    }
+
+    /// a reader that fails on every read
+    struct Broken;
+
+    impl AsyncRead for Broken {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("broken pipe")))
+        }
+    }
+
+    /// what `reader` streams through `drain`, and how the drain ended
+    async fn drained(reader: impl AsyncRead + Unpin) -> (String, Result<(), String>) {
+        let (tx, mut rx) = unbounded_channel();
+        let sink = TaskSink::new(Tasks::held().register(Task::Turn), tx);
+        let result = drain(reader, &sink).await.map_err(|e| e.to_string());
+        let mut streamed = String::new();
+        while let Ok(AgentEvent::Output(_, chunk)) = rx.try_recv() {
+            streamed.push_str(&chunk);
+        }
+        (streamed, result)
+    }
+
+    /// a read error ends the drain with that error, after streaming what
+    /// came before it
+    #[tokio::test]
+    async fn drain_surfaces_read_errors() {
+        assert_eq!(
+            drained(b"partial".chain(Broken)).await,
+            ("partial".into(), Err("broken pipe".into()))
+        );
+    }
+
+    /// characters split across reads come out whole; invalid bytes and a
+    /// character cut off by EOF stay lossy
+    #[tokio::test]
+    async fn drain_joins_characters_split_across_reads() {
+        assert_eq!(
+            [
+                drained(b"\xC3".chain(&b"\xA9!"[..])).await,
+                drained(b"a\xF0".chain(&b"\x9F\x98"[..]).chain(&b"\x80"[..])).await,
+                drained(b"\xFF".chain(&b"\xC3"[..])).await,
+            ],
+            [
+                ("\u{e9}!".into(), Ok(())),
+                ("a\u{1F600}".into(), Ok(())),
+                ("\u{FFFD}\u{FFFD}".into(), Ok(())),
+            ]
+        );
+    }
+}

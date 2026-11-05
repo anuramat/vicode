@@ -394,6 +394,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::agent::task::Tasks;
+    use crate::agent::tool::generic::ToolOutcome;
     use crate::config::CompactionConfig;
     use crate::llm::history::message::CompactionMessage;
     use crate::llm::history::message::Message;
@@ -401,6 +402,8 @@ mod tests {
     use crate::llm::history::message::OutputItem;
     use crate::llm::history::message::PeerMessage;
     use crate::llm::history::message::ToolCallItem;
+    use crate::tools::bash::BashArguments;
+    use crate::tools::bash::BashCall;
     use crate::tools::todo::TodoArguments;
     use crate::tools::todo::TodoCall;
     use crate::tools::todo::TodoResult;
@@ -514,7 +517,7 @@ mod tests {
         AgentEvent::Message(PeerMessage::new("kid", text, 5))
     }
 
-    fn todo_item(output: Option<std::result::Result<TodoResult, String>>) -> ToolCallItem {
+    fn todo_item(output: Option<ToolOutcome<TodoResult>>) -> ToolCallItem {
         ToolCallItem {
             id: Some("call-1".into()),
             call_id: "call-1".into(),
@@ -531,8 +534,23 @@ mod tests {
         }
     }
 
-    fn todo_call(output: Option<std::result::Result<TodoResult, String>>) -> AssistantEvent {
+    fn todo_call(output: Option<ToolOutcome<TodoResult>>) -> AssistantEvent {
         AssistantEvent::Item(Box::new(AssistantItem::ToolCall(todo_item(output))))
+    }
+
+    /// an in-flight call of a tool that keeps what it streams
+    fn bash_call() -> AssistantEvent {
+        let task = Box::new(BashCall {
+            arguments: Some(BashArguments {
+                command: "make".into(),
+            }),
+            meta: None,
+            output: None,
+        });
+        AssistantEvent::Item(Box::new(AssistantItem::ToolCall(ToolCallItem {
+            task,
+            ..todo_item(None)
+        })))
     }
 
     fn text_output(
@@ -719,7 +737,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
-            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .step(2, AgentEvent::Stream(turn, bash_call()))
             .await
             .1
             .task();
@@ -747,7 +765,7 @@ mod tests {
                 ended_at: 3
         tasks: []
         ");
-        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"aborted by user; partial output:\nearly"}"#);
+        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"aborted by user","exit_status":null,"output":"early","signal":null}"#);
     }
 
     /// a turn aborted after its stream completed keeps the success: the
@@ -813,7 +831,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
-            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .step(2, AgentEvent::Stream(turn, bash_call()))
             .await
             .1
             .task();
@@ -841,18 +859,21 @@ mod tests {
               - ToolCall:
                   id: call-1
                   call_id: call-1
-                  name: todo
+                  name: bash
                   arguments:
-                    current: ""
-                    entries: []
+                    command: make
                   meta: ~
                   output:
-                    Err: "lost on restart; partial output:\nearly"
-                  token_count: 29
+                    result:
+                      output: early
+                      exit_status: ~
+                      signal: ~
+                    error: lost on restart
+                  token_count: 35
                   started_at: 2
                   ended_at: 3
                   ready_at: ~
-          token_count: 29
+          token_count: 35
           created_at: 1
           started_at: ~
           ended_at: "[now]"
@@ -1033,7 +1054,7 @@ mod tests {
         // the tool task's terminal resolves the slot and starts the follow-up
         assert_handled!(
             h, 6,
-            AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(todo_item(Some(Ok(TodoResult {}))))))),
+            AgentEvent::Done(tool, Ok(TaskOutput::Tool(Box::new(todo_item(Some(ToolOutcome::ok(TodoResult {}))))))),
             @r#"
         busy: true
         ui:
@@ -1049,7 +1070,8 @@ mod tests {
                       entries: []
                     meta: ~
                     output:
-                      Ok: {}
+                      result: {}
+                      error: ~
                     token_count: 0
                     started_at: 2
                     ended_at: 3
@@ -1070,7 +1092,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
-            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .step(2, AgentEvent::Stream(turn, bash_call()))
             .await
             .1
             .task();
@@ -1113,7 +1135,7 @@ mod tests {
         );
         // the slot itself holds the error (the follow-up Created appended a
         // fresh assistant message after it)
-        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"tool panicked: boom; partial output:\nabc"}"#);
+        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"tool panicked: boom","exit_status":null,"output":"abc","signal":null}"#);
     }
 
     /// a queued message waits for the tool, even with the turn already over:
@@ -1123,7 +1145,7 @@ mod tests {
         let mut h = Harness::with(&[]).await;
         let turn = h.step(1, submit("hi")).await.1.task();
         let tool = h
-            .step(2, AgentEvent::Stream(turn, todo_call(None)))
+            .step(2, AgentEvent::Stream(turn, bash_call()))
             .await
             .1
             .task();
@@ -1149,7 +1171,7 @@ mod tests {
             .0
             .unwrap();
 
-        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"boom; partial output:\nabc"}"#);
+        insta::assert_snapshot!(call_output(&h).unwrap(), @r#"{"error":"boom","exit_status":null,"output":"abc","signal":null}"#);
     }
 
     #[tokio::test]
@@ -1553,7 +1575,9 @@ mod tests {
         h.step(3, user(UserCommand::Abort)).await.0.unwrap();
         let compaction = h.step(4, user(UserCommand::Compact(1))).await.1.summary();
 
-        let (result, step) = h.step(5, AgentEvent::Done(compaction, summary("gist"))).await;
+        let (result, step) = h
+            .step(5, AgentEvent::Done(compaction, summary("gist")))
+            .await;
         result.unwrap();
 
         assert!(!step.starts_turn());
@@ -1608,7 +1632,9 @@ mod tests {
         result.unwrap();
         assert!(!step.starts_turn());
 
-        let (result, step) = h.step(3, AgentEvent::Done(compaction, summary("gist"))).await;
+        let (result, step) = h
+            .step(3, AgentEvent::Done(compaction, summary("gist")))
+            .await;
         result.unwrap();
         assert!(step.starts_turn());
         assert!(!h.compacting());
@@ -1678,7 +1704,9 @@ mod tests {
 
         let compaction = h.step(5, user(UserCommand::Compact(1))).await.1.summary();
         assert!(h.compaction.is_none());
-        let (result, step) = h.step(6, AgentEvent::Done(compaction, summary("gist"))).await;
+        let (result, step) = h
+            .step(6, AgentEvent::Done(compaction, summary("gist")))
+            .await;
         result.unwrap();
         assert!(step.starts_turn());
     }

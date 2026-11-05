@@ -270,24 +270,25 @@ mod tests {
         let store = Store::open(paths.state_db()).unwrap();
 
         let aid = |s: &str| AgentId::from(s.to_string());
-        let record = |root: &str, parent: Option<&str>, state| GraphRecord {
+        let record = |root: &str, parent: Option<&str>, archived| GraphRecord {
             root: aid(root),
             parent: parent.map(aid),
-            state,
+            archived,
         };
         // vis = live tab; sub = its member; arch = archived (awaits memory
-        // extraction); ghost = row predating the graph store; lostsub = row
-        // whose root has no live primary; dangling = record without a row
+        // extraction); ghost = state predating the graph table; lostsub =
+        // state whose root has no live primary; dangling = graph record
+        // without state
         for name in ["vis", "sub", "arch", "ghost", "lostsub"] {
             let state = AgentState::new("test".into(), commit.clone(), "".into());
             store.save_state_sync(&aid(name), &state).unwrap();
         }
         for (name, rec) in [
-            ("vis", record("vis", None, RecordState::Alive)),
-            ("sub", record("vis", Some("vis"), RecordState::Alive)),
-            ("arch", record("arch", None, RecordState::Archived)),
-            ("lostsub", record("gone", Some("gone"), RecordState::Alive)),
-            ("dangling", record("vis", Some("vis"), RecordState::Alive)),
+            ("vis", record("vis", None, false)),
+            ("sub", record("vis", Some("vis"), false)),
+            ("arch", record("arch", None, true)),
+            ("lostsub", record("gone", Some("gone"), false)),
+            ("dangling", record("vis", Some("vis"), false)),
         ] {
             store.save_graph_sync(&aid(name), &rec).unwrap();
         }
@@ -310,15 +311,9 @@ mod tests {
         let stale_snapshot = overlay.snapshot(&paths, "deadbeef");
         std::fs::create_dir_all(&stale_snapshot).unwrap();
 
-        // base refs: kept agents (rows) keep theirs, an orphan ref is garbage
+        // branches: an agent with state keeps its branch; `vc-stale` (created
+        // by the worktree above, no state record) is garbage
         let oid = git2::Oid::from_str(&commit).unwrap();
-        repo.reference("refs/vicode/base/sub", oid, false, "test")
-            .unwrap();
-        repo.reference("refs/vicode/base/orphanref", oid, false, "test")
-            .unwrap();
-
-        // branches: a rowed agent keeps its branch; `vc-stale` (created by
-        // the worktree above, no row) is garbage
         repo.branch("vc-sub", &repo.find_commit(oid).unwrap(), false)
             .unwrap();
 
@@ -333,7 +328,6 @@ mod tests {
                 worktrees: vec!["vc-stale".to_string()],
                 branches: vec!["vc-stale".to_string()],
                 snapshots: vec![stale_snapshot],
-                base_refs: vec!["refs/vicode/base/orphanref".to_string()],
             }
         );
     }

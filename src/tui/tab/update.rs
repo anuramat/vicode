@@ -73,3 +73,57 @@ impl Tab<'_> {
         result.join("\n")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+    use crate::agent::AgentState;
+    use crate::agent::id::AgentId;
+    use crate::project::Project;
+    use crate::tui::tab::TabRuntime;
+
+    fn user(text: &str) -> HistoryUpdate {
+        HistoryUpdate::UserMessage(UserMessage::new(text.into(), 0))
+    }
+
+    /// a tab whose history holds `n` user messages, mirrored by its cache
+    fn tab(n: usize) -> Tab<'static> {
+        let project = Project::new_test().unwrap().0;
+        let aid = AgentId::from("tab-mirror".to_string());
+        let mut tab = Tab::new(TabRuntime::Pending, aid, AgentState::fake(), &project);
+        for i in 0..n {
+            tab.update(user(&i.to_string())).unwrap();
+        }
+        tab
+    }
+
+    /// a splice that doesn't fit the cache is reported, and the cache is
+    /// rebuilt to mirror the history -- without panicking on bad bounds
+    #[test]
+    fn mirror_rebuilds_on_bad_splice() {
+        let mut tab = tab(2);
+        // past the end of the cache
+        let out_of_bounds = tab.mirror(Some(&Splice::edit(5))).unwrap_err();
+        assert_eq!(tab.scroll.len(), 2);
+        // an unreported change
+        tab.history_mut().handle(user("unreported")).unwrap();
+        let unreported = tab.mirror(None).unwrap_err();
+        assert_eq!(tab.scroll.len(), 3);
+
+        insta::assert_snapshot!(format!("{out_of_bounds}\n{unreported}"), @"
+        history view went out of sync and was rebuilt; splice: Some(Splice { range: 5..6, len: 1 })
+        history view went out of sync and was rebuilt; splice: None
+        ");
+    }
+
+    /// a valid splice keeps the cache mirroring the history
+    #[test]
+    fn update_mirrors_history() {
+        let mut tab = tab(3);
+        assert_eq!(tab.scroll.len(), 3);
+        tab.update(HistoryUpdate::Pop(2)).unwrap();
+        assert_eq!(tab.scroll.len(), 1);
+    }
+}

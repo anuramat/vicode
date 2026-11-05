@@ -257,10 +257,13 @@ mod tests {
 
         /// fake state anchored to the test repo's HEAD — worktree creation
         /// needs a real commit
+        pub fn config_mut(&mut self) -> &mut Config {
+            &mut self.config
+        }
+
         pub fn fake_state(&self) -> AgentState {
             let mut state = AgentState::fake();
-            state.context.commit = self.head_commit();
-            state.context.base = state.context.commit.clone();
+            state.commit = self.head_commit();
             state
         }
     }
@@ -301,13 +304,6 @@ mod tests {
         };
         project.store().save_graph(&aid, &record).await.unwrap();
         let repo = Repository::open(project.root()).unwrap();
-        repo.reference(
-            &project.base_ref(&aid),
-            git2::Oid::from_str(&commit).unwrap(),
-            false,
-            "test",
-        )
-        .unwrap();
         // the agent committed: the branch moved off its base — deleted anyway
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         let sig = git2::Signature::now("t", "t@t").unwrap();
@@ -331,7 +327,6 @@ mod tests {
         project.delete_agent(&aid).await.unwrap();
 
         assert!(!project.agent(&aid).exists());
-        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
         assert!(
             repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
                 .is_err()
@@ -349,7 +344,7 @@ mod tests {
     }
 
     /// a failed spawn's rollback leaves no git residue: workdir, worktree
-    /// registration, branch and base ref all gone
+    /// registration and branch all gone
     #[tokio::test]
     async fn delete_agent_workdir_leaves_no_git_residue() {
         let project = Project::new_test().unwrap().0;
@@ -358,13 +353,6 @@ mod tests {
 
         project.new_agent_workdir(&commit, &aid).await.unwrap();
         let repo = Repository::open(project.root()).unwrap();
-        repo.reference(
-            &project.base_ref(&aid),
-            git2::Oid::from_str(&commit).unwrap(),
-            false,
-            "test",
-        )
-        .unwrap();
 
         project.delete_agent_workdir(&aid).await.unwrap();
 
@@ -374,7 +362,74 @@ mod tests {
             repo.find_branch(&project.worktree_name(&aid), git2::BranchType::Local)
                 .is_err()
         );
-        assert!(repo.find_reference(&project.base_ref(&aid)).is_err());
+    }
+
+    /// a spawned workdir sits on the tab's snapshot but is checked out at
+    /// its start commit: modified, added and deleted files (a whole directory
+    /// included) all match it, the branch points at it, and git sees a
+    /// clean tree
+    #[tokio::test]
+    async fn spawned_workdir_is_checked_out_at_its_start_commit() {
+        let project = Project::new_test().unwrap().0;
+        let root = project.root().to_path_buf();
+        let commit_all = |message: &str| {
+            let repo = Repository::open(&root).unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+                .unwrap();
+            index.update_all(["*"], None).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head])
+                .unwrap()
+                .to_string()
+        };
+        std::fs::write(root.join("kept.txt"), "kept\n").unwrap();
+        std::fs::write(root.join("edited.txt"), "v1\n").unwrap();
+        std::fs::write(root.join("doomed.txt"), "bye\n").unwrap();
+        std::fs::create_dir(root.join("dir")).unwrap();
+        std::fs::write(root.join("dir/a.txt"), "a\n").unwrap();
+        let snapshot = commit_all("snapshot");
+        std::fs::write(root.join("edited.txt"), "v2\n").unwrap();
+        std::fs::write(root.join("new.txt"), "new\n").unwrap();
+        std::fs::remove_file(root.join("doomed.txt")).unwrap();
+        std::fs::remove_dir_all(root.join("dir")).unwrap();
+        let start = commit_all("start");
+
+        let aid = AgentId::from("spawned".to_string());
+        project
+            .spawn_agent_workdir(&aid, &snapshot, &start)
+            .await
+            .unwrap();
+
+        let wd = project.agent_workdir(&aid);
+        let read = |name: &str| std::fs::read_to_string(wd.join(name)).ok();
+        assert_eq!(
+            [
+                read("kept.txt"),
+                read("edited.txt"),
+                read("new.txt"),
+                read("doomed.txt"),
+                read("dir/a.txt"),
+            ],
+            [
+                Some("kept\n".into()),
+                Some("v2\n".into()),
+                Some("new\n".into()),
+                None,
+                None,
+            ]
+        );
+        let repo = Repository::open(&wd).unwrap();
+        assert_eq!(repo.head().unwrap().target().unwrap().to_string(), start);
+        assert_eq!(
+            repo.head().unwrap().shorthand(),
+            Some(project.worktree_name(&aid).as_str())
+        );
+        assert!(repo.statuses(None).unwrap().is_empty());
     }
 
     /// `vc-*` is a reserved namespace: a colliding branch is crash residue

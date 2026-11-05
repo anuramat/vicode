@@ -80,3 +80,68 @@ fn copy_xattrs(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn copy_layer_preserves_structure_symlinks_and_xattrs() {
+        let root = std::env::temp_dir().join(format!("vicode-copy-{}", uuid::Uuid::new_v4()));
+        let src = root.join("src");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("file"), "content").unwrap();
+        fs::write(src.join("sub/nested"), "nested").unwrap();
+        std::os::unix::fs::symlink("file", src.join("link")).unwrap();
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join(".git/config"), "junk").unwrap();
+        // xattr marker (opaque-dir analogue); tmpfs without user-xattr
+        // support skips the assertion
+        let marked = xattr::set(src.join("sub"), "user.overlay.test", b"y").is_ok();
+
+        let dst = root.join("dst");
+        copy_layer(&src, &dst).unwrap();
+
+        assert_eq!(fs::read_to_string(dst.join("file")).unwrap(), "content");
+        assert_eq!(
+            fs::read_to_string(dst.join("sub/nested")).unwrap(),
+            "nested"
+        );
+        assert_eq!(
+            fs::read_link(dst.join("link")).unwrap(),
+            std::path::PathBuf::from("file")
+        );
+        assert!(!dst.join(".git").exists());
+        if marked {
+            assert_eq!(
+                xattr::get(dst.join("sub"), "user.overlay.test").unwrap(),
+                Some(b"y".to_vec())
+            );
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn copy_layer_preserves_directory_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("vicode-mode-{}", uuid::Uuid::new_v4()));
+        let src = root.join("src");
+        fs::create_dir_all(src.join("dir")).unwrap();
+        fs::write(src.join("dir/f"), "x").unwrap();
+        // setgid + rwxr-x---: mode is set last, so the restrictive dir still
+        // takes its children first
+        fs::set_permissions(src.join("dir"), fs::Permissions::from_mode(0o2750)).unwrap();
+
+        let dst = root.join("dst");
+        copy_layer(&src, &dst).unwrap();
+
+        assert_eq!(
+            fs::metadata(dst.join("dir")).unwrap().permissions().mode() & 0o7777,
+            0o2750
+        );
+        fs::remove_dir_all(root).ok();
+    }
+}

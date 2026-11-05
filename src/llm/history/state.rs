@@ -120,6 +120,7 @@ impl HistoryState {
 mod tests {
     use similar_asserts::assert_eq;
 
+    use crate::agent::tool::generic::ToolOutcome;
     use crate::llm::history::AssistantEvent;
     use crate::llm::history::History;
     use crate::llm::history::HistoryUpdate;
@@ -148,7 +149,7 @@ mod tests {
         );
     }
 
-    fn bash_call(output: Option<Result<BashResult, String>>) -> HistoryUpdate {
+    fn bash_call(output: Option<ToolOutcome<BashResult>>) -> HistoryUpdate {
         HistoryUpdate::TurnResponse(AssistantEvent::Item(Box::new(AssistantItem::ToolCall(
             ToolCallItem {
                 id: Some("call_1".into()),
@@ -228,7 +229,9 @@ mod tests {
             history.handle(tool_output("call_1", "c")).unwrap(),
             Some(Splice::edit(0))
         );
-        history.handle(bash_call(Some(Ok(result)))).unwrap();
+        history
+            .handle(bash_call(Some(ToolOutcome::ok(result))))
+            .unwrap();
         insta::assert_yaml_snapshot!(history.state().messages[0], @"
         role: assistant
         status: Queued
@@ -242,10 +245,11 @@ mod tests {
                   command: make
                 meta: ~
                 output:
-                  Ok:
+                  result:
                     output: abc
                     exit_status: 0
                     signal: ~
+                  error: ~
                 token_count: 29
                 started_at: 1
                 ended_at: ~
@@ -263,6 +267,48 @@ mod tests {
                 .to_string(),
             "no tool call nope"
         );
+    }
+
+    /// a tool that returns an error after streaming keeps what it streamed
+    #[test]
+    fn streamed_output_folds_into_a_returned_error() {
+        let mut history = History::new(String::new());
+        for update in [
+            HistoryUpdate::TurnResponse(AssistantEvent::Created { created_at: 0 }),
+            bash_call(None),
+            tool_output("call_1", "early"),
+            bash_call(Some(ToolOutcome::failed("broken pipe".into()))),
+        ] {
+            history.handle(update).unwrap();
+        }
+        insta::assert_yaml_snapshot!(history.state().messages[0], @"
+        role: assistant
+        status: Queued
+        content:
+          - - call_1
+            - ToolCall:
+                id: call_1
+                call_id: call_1
+                name: bash
+                arguments:
+                  command: make
+                meta: ~
+                output:
+                  result:
+                    output: early
+                    exit_status: ~
+                    signal: ~
+                  error: broken pipe
+                token_count: 34
+                started_at: 1
+                ended_at: ~
+                ready_at: ~
+        token_count: 34
+        created_at: 0
+        started_at: ~
+        ended_at: ~
+        ready_at: ~
+        ");
     }
 
     /// a failure retokenizes its own message, not the rest of the history

@@ -213,6 +213,61 @@ mod tests {
         }
     }
 
+    /// (start idx, tail mode, dirty) after splicing, scrolled to element 3 of 5
+    fn spliced(
+        range: Range<usize>,
+        len: usize,
+    ) -> (usize, bool, Vec<bool>) {
+        let mut scroll = ScrollElements::new(5);
+        scroll.dirty = vec![false; 5];
+        scroll.start.idx = 3;
+        scroll.mode = Mode::Scrolling;
+        scroll.splice(range, len);
+        assert_eq!(scroll.elements.len(), scroll.dirty.len());
+        (
+            scroll.start.idx,
+            matches!(scroll.mode, Mode::Tail),
+            scroll.dirty,
+        )
+    }
+
+    #[test]
+    fn splice_after_start_keeps_the_view() {
+        assert_eq!(
+            spliced(5..5, 1),
+            (3, false, vec![false, false, false, false, false, true])
+        );
+        assert_eq!(
+            spliced(4..5, 1),
+            (3, false, vec![false, false, false, false, true])
+        );
+        assert_eq!(spliced(4..5, 0), (3, false, vec![false; 4]));
+    }
+
+    #[test]
+    fn splice_before_start_shifts_it() {
+        // compaction: the first three become a summary
+        assert_eq!(spliced(0..3, 1), (1, false, vec![true, false, false]));
+        assert_eq!(
+            spliced(1..2, 3),
+            (5, false, vec![false, true, true, true, false, false, false])
+        );
+    }
+
+    #[test]
+    fn splice_in_place_keeps_the_view() {
+        assert_eq!(
+            spliced(3..5, 2),
+            (3, false, vec![false, false, false, true, true])
+        );
+    }
+
+    #[test]
+    fn splice_dropping_start_tails() {
+        assert_eq!(spliced(0..4, 1), (0, true, vec![true, false]));
+        assert_eq!(spliced(3..5, 0), (0, true, vec![false; 3]));
+    }
+
     #[test]
     fn scroll_ops_display_in_config_format() {
         assert_eq!(ScrollOp::HalfPageDown.to_string(), "half_page_down");

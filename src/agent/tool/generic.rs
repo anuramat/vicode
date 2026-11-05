@@ -114,3 +114,81 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq;
+
+    use super::*;
+    use crate::agent::tool::traits::ToolCallSerializable;
+    use crate::tools::agent::archive::ArchiveCall;
+    use crate::tools::agent::list::ListCall;
+    use crate::tools::bash::BashCall;
+    use crate::tools::bash::BashResult;
+
+    /// a bash call that failed after streaming `streamed`
+    fn failed_bash(streamed: &str) -> BashCall {
+        let mut call = BashCall {
+            arguments: None,
+            meta: None,
+            output: None,
+        };
+        assert!(call.fail_unresolved("boom"));
+        call.compose(streamed.into());
+        call
+    }
+
+    /// a failed call reports a subset of a successful call's fields at the
+    /// same paths, plus `error`
+    #[test]
+    fn failed_call_keeps_the_shape_of_a_successful_one() {
+        let success = BashCall {
+            arguments: None,
+            meta: None,
+            output: Some(ToolOutcome::ok(BashResult {
+                output: "done".into(),
+                exit_status: Some(0),
+                signal: None,
+            })),
+        };
+        insta::assert_snapshot!(success.output().unwrap(), @r#"{"output":"done","exit_status":0,"signal":null}"#);
+        insta::assert_snapshot!(failed_bash("early").output().unwrap(), @r#"{"error":"boom","exit_status":null,"output":"early","signal":null}"#);
+    }
+
+    /// a result that isn't an object has nothing to keep
+    #[test]
+    fn failed_call_without_a_partial_result_reports_only_the_error() {
+        let mut list = ListCall {
+            arguments: None,
+            meta: None,
+            output: None,
+        };
+        let mut archive = ArchiveCall {
+            arguments: None,
+            meta: None,
+            output: None,
+        };
+        list.fail_unresolved("boom");
+        archive.fail_unresolved("boom");
+        assert_eq!(
+            [failed_bash("").output(), list.output(), archive.output()],
+            [(); 3].map(|()| Some(r#"{"error":"boom"}"#.to_string()))
+        );
+    }
+
+    /// both fields are optional: without the strict parse, anything else
+    /// would load as an outcome with neither a result nor an error
+    #[test]
+    fn unknown_outcome_format_fails_to_load() {
+        let saved = r#"{"arguments":null,"meta":null,"output":{"Err":"boom"}}"#;
+        assert!(serde_json::from_str::<BashCall>(saved).is_err());
+    }
+
+    #[test]
+    fn partial_result_survives_a_save() {
+        let call: Box<dyn ToolCallSerializable> = Box::new(failed_bash("early"));
+        let saved = serde_json::to_string(&call).unwrap();
+        let restored: Box<dyn ToolCallSerializable> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.output(), call.output());
+    }
+}
