@@ -16,6 +16,10 @@ pub struct ToolCallItem {
     pub call_id: String,
     #[serde(flatten)]
     pub task: Box<dyn ToolCallSerializable>,
+    /// output streamed so far while in flight; resolving the call folds it
+    /// in
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub streamed: String,
 
     pub token_count: usize,
 
@@ -46,6 +50,20 @@ impl ToolCallItem {
 
     pub fn touch_ready_at_now(&mut self) {
         touch(&mut self.ready_at, now());
+    }
+
+    /// give the call an error output, plus whatever it streamed; a no-op if
+    /// output exists. Returns whether it failed the call
+    pub fn fail(
+        &mut self,
+        msg: &str,
+    ) -> bool {
+        let streamed = std::mem::take(&mut self.streamed);
+        let failed = self.task.fail_unresolved(msg);
+        if failed {
+            self.task.compose(streamed);
+        }
+        failed
     }
 }
 

@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::bail;
 
 use crate::llm::history::HistoryState;
 use crate::llm::history::event::AssistantEvent;
@@ -32,7 +31,9 @@ impl HistoryState {
                 self.complete_response(ended_at)?;
             }
             AssistantEvent::Failed { message, ended_at } => {
-                self.fail_response(message, ended_at)?;
+                if let Ok(msg) = self.last_assistant_msg_mut() {
+                    msg.fail_response(message, ended_at);
+                }
             }
         }
         Ok(())
@@ -42,19 +43,25 @@ impl HistoryState {
         &mut self,
         mut new_item: AssistantItem,
     ) -> Result<()> {
-        // HACK ideally we would somehow make sure that we initialize token count properly
-        new_item.recount();
         let msg = self.last_assistant_msg_mut()?;
 
         // if item already exists -- preserve started_at, keep the latest ended_at
-        if let Some(existing_item) = msg.content.get(&new_item.id()) {
+        if let Some(existing_item) = msg.content.get_mut(&new_item.id()) {
             if let Some(started_at) = existing_item.started_at() {
                 new_item.set_started_at(started_at);
             }
             if let Some(ended_at) = existing_item.ended_at() {
                 new_item.touch_ended_at(ended_at);
             }
+            // a resolved tool call folds in what it streamed
+            if let (AssistantItem::ToolCall(existing), AssistantItem::ToolCall(new)) =
+                (existing_item, &mut new_item)
+            {
+                new.task.compose(std::mem::take(&mut existing.streamed));
+            }
         }
+        // HACK ideally we would somehow make sure that we initialize token count properly
+        new_item.recount();
 
         // touch the message
         if let Some(ended_at) = new_item.ended_at() {
@@ -80,23 +87,30 @@ impl HistoryState {
         Ok(())
     }
 
-    pub fn fail_response(
+    /// fail whatever the last response left in flight; returns whether it
+    /// changed anything
+    pub fn fail_last_unresolved(
         &mut self,
-        error_msg: String,
+        msg: &str,
         ended_at: u64,
-    ) -> Result<()> {
-        let msg = self.last_assistant_msg_mut()?;
-        msg.touch_ended_at(ended_at);
-        match msg.status {
-            AssistantStatus::Error(_) => return Ok(()), // keep the first error
-            AssistantStatus::Success => {
-                bail!("cannot fail a successful response");
-            }
-            AssistantStatus::Queued | AssistantStatus::InProgress => {
-                msg.status = AssistantStatus::Error(error_msg);
-            }
+    ) -> bool {
+        let failed = self
+            .last_assistant_msg_mut()
+            .is_ok_and(|last| last.fail_unresolved(msg, ended_at));
+        self.recount_last();
+        failed
+    }
+
+    /// fail whatever every response left in flight
+    pub fn fail_all_unresolved(
+        &mut self,
+        msg: &str,
+        ended_at: u64,
+    ) {
+        for assistant in self.iter_mut().filter_map(|m| m.try_as_assistant_mut()) {
+            assistant.fail_unresolved(msg, ended_at);
         }
-        Ok(())
+        self.recount();
     }
 
     pub fn status(&self) -> Option<AssistantStatus> {
@@ -106,7 +120,7 @@ impl HistoryState {
             .cloned()
     }
 
-    fn last_assistant_msg_mut(&mut self) -> Result<&mut AssistantMessage> {
+    pub fn last_assistant_msg_mut(&mut self) -> Result<&mut AssistantMessage> {
         self.last_mut()
             .and_then(|v| v.try_as_assistant_mut())
             .context("no last assistant message")

@@ -50,9 +50,13 @@ pub trait Function<TMeta = (), TResult = ()>: Send + Sync {
         false
     }
 
+    /// fold the call's streamed output into its result; a failed call has
+    /// no result, and keeps what this returns as a partial one, which must
+    /// serialize to an object
     fn compose(
-        _result: &mut TResult,
+        result: Option<TResult>,
         _streamed: String,
-    ) {
+    ) -> Option<TResult> {
+        result
     }
 }

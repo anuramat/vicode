@@ -81,6 +81,41 @@ impl AssistantMessage {
         Ok(())
     }
 
+    /// fail the response if it's still in flight, a no-op otherwise: a
+    /// finished response keeps its outcome, a failed one its first error.
+    /// Returns whether it failed the response
+    pub fn fail_response(
+        &mut self,
+        error_msg: String,
+        ended_at: u64,
+    ) -> bool {
+        if !matches!(
+            self.status,
+            AssistantStatus::Queued | AssistantStatus::InProgress
+        ) {
+            return false;
+        }
+        self.touch_ended_at(ended_at);
+        self.status = AssistantStatus::Error(error_msg);
+        true
+    }
+
+    /// fail whatever was left in flight: the response and every unresolved
+    /// tool call. Returns whether it changed anything
+    pub fn fail_unresolved(
+        &mut self,
+        msg: &str,
+        ended_at: u64,
+    ) -> bool {
+        let mut failed = self.fail_response(msg.into(), ended_at);
+        for item in self.content.values_mut() {
+            if let AssistantItem::ToolCall(call) = item {
+                failed |= call.fail(msg);
+            }
+        }
+        failed
+    }
+
     pub fn touch_ended_at(
         &mut self,
         ms: u64,

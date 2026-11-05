@@ -51,18 +51,21 @@ impl From<&BashCall> for Element {
             .map(|x| command(&x.command))
             .unzip();
 
-        let (output, status) = match value.output.as_ref() {
-            Some(Ok(result)) => (output(result), status(result)),
-            Some(Err(err)) => (vec![app_error(err.clone())], None),
-            None => (Vec::new(), None), // TODO show elapsed time
-        };
+        // TODO show elapsed time
+        let outcome = value.output.as_ref();
+        let result = outcome.and_then(|o| o.result.as_ref());
+        let error = outcome.and_then(|o| o.error.clone());
 
         BashWidget(SectionList {
-            sections: cmd.into_iter().chain(output).collect(),
+            sections: cmd
+                .into_iter()
+                .chain(result.map(output))
+                .chain(error.map(app_error))
+                .collect(),
             promote_at_width: cmd_width.flatten(),
             skip_first_header: true,
             title: "bash".into(),
-            _right_title: status,
+            _right_title: result.and_then(status),
             style: style(),
         })
         .into()
@@ -84,26 +87,12 @@ fn command(cmd: &str) -> (Section, Option<u16>) {
     (element, width)
 }
 
-fn output(result: &BashResult) -> Vec<Section> {
-    let mut sections = Vec::new();
-
-    let stdout = Section::new(
-        "stdout",
-        wrapped(result.stdout.trim_end().to_string()),
+fn output(result: &BashResult) -> Section {
+    Section::new(
+        "output",
+        wrapped(result.output.trim_end().to_string()),
         style(),
-    );
-    sections.push(stdout);
-
-    let stderr_trimmed = result.stderr.trim_end();
-    if !stderr_trimmed.is_empty() {
-        sections.push(Section::new(
-            "stderr",
-            wrapped(stderr_trimmed.to_string()),
-            style(),
-        ));
-    }
-
-    sections
+    )
 }
 
 fn app_error(message: String) -> Section {
