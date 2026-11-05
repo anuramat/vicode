@@ -14,7 +14,6 @@ pub const AGENT_WORKDIR_DIRNAME: &str = "workdir";
 const PROJECT_LOCK_FILENAME: &str = "project.lock";
 const STATE_FILENAME: &str = "state.redb";
 const WORKTREE_NAME_PREFIX: &str = "vc-";
-const BASE_REF_PREFIX: &str = "refs/vicode/base/";
 
 #[derive(Debug, Clone, Getters)]
 pub struct Paths {
@@ -28,11 +27,6 @@ pub struct Paths {
 
 pub fn worktree_name_to_agent_id(name: &str) -> Option<AgentId> {
     name.strip_prefix(WORKTREE_NAME_PREFIX)
-        .map(|s| AgentId::from(s.to_string()))
-}
-
-pub fn base_ref_to_agent_id(name: &str) -> Option<AgentId> {
-    name.strip_prefix(BASE_REF_PREFIX)
         .map(|s| AgentId::from(s.to_string()))
 }
 
@@ -99,12 +93,5 @@ impl Paths {
         aid: &AgentId,
     ) -> String {
         format!("{WORKTREE_NAME_PREFIX}{aid}")
-    }
-
-    pub fn base_ref(
-        &self,
-        aid: &AgentId,
-    ) -> String {
-        format!("{BASE_REF_PREFIX}{aid}")
     }
 }

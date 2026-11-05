@@ -54,10 +54,6 @@ impl Workspace {
         }
     }
 
-    pub fn excluded_workdir_paths(&self) -> &[String] {
-        self.backend.excluded_workdir_paths()
-    }
-
     pub async fn mount_agent(
         &self,
         commit: &str,
@@ -70,43 +66,19 @@ impl Workspace {
         self.backend.unmount_all(&self.paths).await
     }
 
-    pub fn pin_base(
+    /// a fresh workdir on the tab's snapshot, moved to `start` by a hard
+    /// reset through the mount: only the files that differ get written, and
+    /// the overlay records them in the agent's own upper
+    pub async fn spawn_agent_workdir(
         &self,
         aid: &AgentId,
-        commit: &str,
+        snapshot: &str,
+        start: &str,
     ) -> Result<()> {
-        let repo = Repository::open(self.root())?;
-        repo.reference(
-            &self.base_ref(aid),
-            git2::Oid::from_str(commit)?,
-            true,
-            "inspect base",
-        )?;
-        Ok(())
-    }
-
-    pub async fn mint_spawn_base(
-        &self,
-        dst: &AgentId,
-        base: &str,
-        commit: &str,
-    ) -> Result<String> {
-        self.mount_agent(commit, dst).await?;
-        let this = self.clone();
-        let (dst, base) = (dst.clone(), base.to_string());
-        tokio::task::spawn_blocking(move || {
-            let tree =
-                crate::git::workdir_tree(&this.agent_workdir(&dst), this.excluded_workdir_paths())?;
-            let repo = Repository::open(this.root())?;
-            let tree = repo.find_tree(tree)?;
-            let parent = repo.find_commit(git2::Oid::from_str(&base)?)?;
-            let sig = git2::Signature::new("vicode", "vicode", &git2::Time::new(0, 0))?;
-            let oid = repo.commit(None, &sig, &sig, "spawn base", &tree, &[&parent])?;
-            let oid = oid.to_string();
-            this.pin_base(&dst, &oid)?;
-            Ok(oid)
-        })
-        .await?
+        self.new_agent_workdir(snapshot, aid).await?;
+        self.mount_agent(snapshot, aid).await?;
+        let (workdir, start) = (self.agent_workdir(aid), start.to_string());
+        tokio::task::spawn_blocking(move || crate::git::reset_hard(&workdir, &start)).await?
     }
 
     pub fn sandbox_runner(
@@ -147,7 +119,6 @@ impl Workspace {
         let name = self.worktree_name(aid);
         crate::git::prune_worktree(&repo, &name)?;
         crate::git::delete_branch_if_exists(&repo, &name)?;
-        crate::git::delete_ref_if_exists(&repo, &self.base_ref(aid))?;
         Ok(())
     }
 
