@@ -1,12 +1,9 @@
 use anyhow::Result;
 
-use crate::agent::AgentStatus;
-use crate::llm::history::HistoryGeneration;
 use crate::llm::history::HistoryUpdate;
+use crate::llm::history::Splice;
 use crate::llm::history::message::Message;
 use crate::llm::history::message::UserMessage;
-use crate::project::layout::LayoutTrait;
-use crate::tui::app::AppEvent;
 use crate::tui::osc7::set_osc7;
 use crate::tui::tab::Tab;
 
@@ -18,7 +15,6 @@ impl Tab<'_> {
 
     pub fn update(
         &mut self,
-        generation: HistoryGeneration,
         event: HistoryUpdate,
     ) -> Result<()> {
         let input = if let HistoryUpdate::Pop(n) = &event {
@@ -26,34 +22,39 @@ impl Tab<'_> {
         } else {
             None
         };
-        self.history_mut().handle(generation, event)?;
+        let splice = self.history_mut().handle(event)?;
         if let Some(input) = input {
             self.input.prepend_text(input);
             self.update_input_title();
         }
-        // NOTE for now we only change the last element, or drop/add stuff. if in the future we edit messages in the middle, we will need to change this logic
-        let len = self.state.history.state().messages.len();
-        self.scroll.set_dirty(len.saturating_sub(1));
-        self.scroll.set_len(len);
+        self.mirror(splice.as_ref())
+    }
+
+    /// apply the history's splice to the scroll cache; a splice that doesn't
+    /// fit it is a bug, so the cache is rebuilt instead of rendering a
+    /// corrupt view, and the bug is reported
+    fn mirror(
+        &mut self,
+        splice: Option<&Splice>,
+    ) -> Result<()> {
+        if splice.is_some_and(|s| s.range.end > self.scroll.len()) {
+            return self.resync(splice);
+        }
+        if let Some(Splice { range, len }) = splice.cloned() {
+            self.scroll.splice(range, len);
+        }
+        if self.scroll.len() != self.state.history.state().messages.len() {
+            return self.resync(splice);
+        }
         Ok(())
     }
 
-    pub async fn set_state(
+    fn resync(
         &mut self,
-        status: AgentStatus,
-    ) -> Result<bool> {
-        if self.state.status == status {
-            return Ok(false);
-        }
-        self.state.status = status;
-        self.refresh_file_completion()?;
-        if let Some(router) = &self.router {
-            router
-                .app_tx()
-                .send(AppEvent::TabStatusChanged(self.aid.clone()))
-                .await?;
-        }
-        Ok(true)
+        splice: Option<&Splice>,
+    ) -> Result<()> {
+        self.reset_scroll();
+        anyhow::bail!("history view went out of sync and was rebuilt; splice: {splice:?}")
     }
 
     pub fn combined_user_msgs(

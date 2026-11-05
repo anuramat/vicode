@@ -1,6 +1,9 @@
 pub mod r#move;
 pub mod render;
 
+use std::iter;
+use std::ops::Range;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -90,27 +93,36 @@ impl ScrollElements {
         }
     }
 
-    pub fn set_dirty(
+    /// mirror a change to the data: the elements in `range` became `len` new ones
+    pub fn splice(
         &mut self,
-        idx: usize,
+        range: Range<usize>,
+        len: usize,
     ) {
-        if idx < self.dirty.len() {
-            self.dirty[idx] = true;
+        let (start, end) = (range.start, range.end);
+        self.elements
+            .splice(range.clone(), iter::repeat_with(Element::default).take(len));
+        self.dirty.splice(range, iter::repeat_n(true, len));
+        // keep the view on the same element, if it survived
+        if self.start.idx >= end {
+            self.start.idx = self.start.idx + len - (end - start);
+        } else if self.start.idx >= start + len {
+            self.start = StartLocation::default();
+            self.mode = Mode::Tail;
         }
     }
 
-    pub fn set_len(
-        &mut self,
-        len: usize,
-    ) {
-        if len < self.elements.len() {
-            self.dirty = Vec::new();
-        }
-        self.dirty.resize(len, true);
-        self.elements.resize_with(len, Default::default);
-        if len == 0 || self.start.idx >= len {
-            self.start = StartLocation::default();
-            self.mode = Mode::Tail;
+    /// number of cached elements
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+
+    /// empty cache for `len` elements
+    pub fn new(len: usize) -> Self {
+        Self {
+            dirty: vec![true; len],
+            elements: iter::repeat_with(Element::default).take(len).collect(),
+            ..Default::default()
         }
     }
 
