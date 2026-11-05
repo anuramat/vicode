@@ -1,4 +1,3 @@
-use crate::llm::history::Activity;
 use crate::llm::history::History;
 use crate::llm::history::message::AssistantItem;
 use crate::llm::history::message::DeveloperMessage;
@@ -6,16 +5,24 @@ use crate::llm::history::message::Message;
 
 const SUBAGENT_HEADER: &str = r"
 You are a subagent, assisting your parent agent.
-Messages above are from the conversation between the user and your parent agent.
-The parent agent will provide you with a task in the next user message, and you should closely follow the instructions in it.
+The parent agent will provide you with a task in the next developer message, and you should closely follow the instructions in it.
+Your working directory is your own git branch, checked out at the commit your parent spawned you from.
 
 - Do NOT converse, ask questions, or suggest next steps
 - Do NOT editorialize or add meta-commentary
-- Do NOT emit text between tool calls. Use tools silently, then report once at the end.
+- Do NOT emit text between tool calls. Use tools silently, then report once at the end, by `send`ing the report to your parent (the `[from: <id>]` of your task message) -- your final text reaches no one.
 - Stay strictly within your directive's scope. If you discover related systems outside your scope, mention them in one sentence at most.
 - Keep your report under 500 words unless the directive specifies otherwise. Be factual and concise.
-- Do NOT describe the file changes you made in your report -- parent agent will receive the file diffs separately.
+- Commit the file changes you want your parent to see: it reads them from your branch, and never sees uncommitted ones. Do NOT describe them in your report.
 ";
+
+const INHERITED_NOTE: &str = r"
+Messages above are from the conversation between the user and your parent agent. Changes your parent made but did not commit are NOT in your working directory, even if mentioned above.
+";
+
+fn header(text: String) -> Message {
+    Message::Developer(DeveloperMessage::misc(text))
+}
 
 impl History {
     /// messages for subagent -- full copy of latest state but with tool calls dropped in the last message
@@ -26,21 +33,27 @@ impl History {
                 .retain(|_, content| !matches!(content, AssistantItem::ToolCall(_)));
             msg.recount_shallow();
         }
-        messages.push(Message::Developer(DeveloperMessage::misc(
-            SUBAGENT_HEADER.to_string(),
-        )));
+        messages.push(header(format!("{SUBAGENT_HEADER}{INHERITED_NOTE}")));
         messages
     }
 
+    /// an inheriting subagent's history: the parent's conversation, then
+    /// the subagent header
     pub fn subagent(&self) -> Self {
         Self {
             instructions: self.instructions.clone(),
-            generation: 0,
-            activity: Activity::Normal {
-                state: self.subagent_messages().into(),
-            },
+            state: self.subagent_messages().into(),
             archive: Vec::new(),
         }
+    }
+
+    /// a non-inheriting subagent's history: just the subagent header
+    pub fn new_subagent(instructions: String) -> Self {
+        let mut history = Self::new(instructions);
+        history
+            .state_mut()
+            .push(header(SUBAGENT_HEADER.to_string()));
+        history
     }
 }
 
